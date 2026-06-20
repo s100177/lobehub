@@ -323,6 +323,16 @@ export function readableFromAsyncIterable<T>(
           return;
         }
 
+        // "Premature close" is a Node.js undici false alarm — the HTTP
+        // connection was closed after all data (including [DONE]) was already
+        // received. Suppress it so the stream completes normally; emitting an
+        // error would cause downstream consumers to discard valid tool_calls /
+        // text / usage that were already delivered upstream.
+        if (error.message?.includes('Premature') || error.message?.includes('premature')) {
+          controller.close();
+          return;
+        }
+
         controller.enqueue(buildStreamErrorPayload(error, context) as T);
         controller.close();
       }
@@ -359,6 +369,12 @@ export const convertIterableToStream = <T>(
           return;
         }
 
+        // Premature close: see comment above.
+        if (error.message?.includes('Premature') || error.message?.includes('premature')) {
+          controller.close();
+          return;
+        }
+
         controller.enqueue(buildStreamErrorPayload(error, context) as T);
         controller.close();
       }
@@ -374,6 +390,12 @@ export const convertIterableToStream = <T>(
 
         if (isAbortError(error)) {
           controller.enqueue(ABORT_CHUNK as T);
+          controller.close();
+          return;
+        }
+
+        // Premature close: see comment above.
+        if (error.message?.includes('Premature') || error.message?.includes('premature')) {
           controller.close();
           return;
         }
