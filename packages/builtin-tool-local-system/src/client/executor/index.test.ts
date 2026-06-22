@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { localSystemExecutor } from './index';
 
-const { globFilesMock } = vi.hoisted(() => ({
+const { executeLocalSystemToolMock, globFilesMock } = vi.hoisted(() => ({
+  executeLocalSystemToolMock: vi.fn(),
   globFilesMock: vi.fn(),
 }));
 
@@ -12,9 +13,47 @@ vi.mock('@/services/electron/localFileService', () => ({
   },
 }));
 
+vi.mock('@/services/device', () => ({
+  deviceService: {
+    executeLocalSystemTool: executeLocalSystemToolMock,
+  },
+}));
+
 describe('LocalSystemExecutor', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  describe('runCommand remote device proxy', () => {
+    it('routes to the active remote device instead of Electron IPC', async () => {
+      executeLocalSystemToolMock.mockResolvedValue({
+        content: 'hello from device',
+        success: true,
+      });
+
+      const result = await localSystemExecutor.runCommand(
+        { command: 'python3 -c "print(1)"', run_in_background: false } as any,
+        {
+          messageId: 'tool-message-id',
+          operationId: 'op-1',
+          stepContext: { activeDeviceId: 'device-123' },
+        },
+      );
+
+      expect(executeLocalSystemToolMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          apiName: 'runCommand',
+          deviceId: 'device-123',
+          operationId: 'op-1',
+        }),
+      );
+      expect(JSON.parse(executeLocalSystemToolMock.mock.calls[0][0].arguments)).toEqual({
+        background: false,
+        command: 'python3 -c "print(1)"',
+        run_in_background: false,
+      });
+      expect(result).toMatchObject({ content: 'hello from device', success: true });
+    });
   });
 
   describe('globFiles', () => {

@@ -1,3 +1,4 @@
+import { LocalSystemApiName, LocalSystemIdentifier } from '@lobechat/builtin-tool-local-system';
 import { REMOTE_HETEROGENEOUS_AGENT_CONFIGS } from '@lobechat/heterogeneous-agents';
 import type { DeviceChannel, DeviceListItem, DeviceScope, WorkingDirEntry } from '@lobechat/types';
 import { z } from 'zod';
@@ -21,6 +22,13 @@ const remotePlatformEnum = z.enum(
   REMOTE_HETEROGENEOUS_AGENT_CONFIGS.map((c) => c.type) as [
     (typeof REMOTE_HETEROGENEOUS_AGENT_CONFIGS)[number]['type'],
     ...(typeof REMOTE_HETEROGENEOUS_AGENT_CONFIGS)[number]['type'][],
+  ],
+);
+
+const localSystemApiNameEnum = z.enum(
+  Object.values(LocalSystemApiName) as [
+    (typeof LocalSystemApiName)[keyof typeof LocalSystemApiName],
+    ...(typeof LocalSystemApiName)[keyof typeof LocalSystemApiName][],
   ],
 );
 
@@ -97,6 +105,38 @@ export const deviceRouter = router({
       } catch {
         return { available: false, reason: 'Invalid response from device' };
       }
+    }),
+
+  /**
+   * Execute a Local System tool on an already-connected desktop device.
+   * Restricted to lobe-local-system so the browser client cannot proxy arbitrary
+   * tool identifiers through the device gateway.
+   */
+  executeLocalSystemTool: deviceProcedure
+    .input(
+      z.object({
+        apiName: localSystemApiNameEnum,
+        arguments: z.string(),
+        deviceId: z.string(),
+        operationId: z.string().optional(),
+        timeout: z.number().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      return deviceGateway.executeToolCall(
+        {
+          deviceId: input.deviceId,
+          operationId: input.operationId,
+          userId: ctx.userId,
+          workspaceId: ctx.workspaceId,
+        },
+        {
+          apiName: input.apiName,
+          arguments: input.arguments,
+          identifier: LocalSystemIdentifier,
+        },
+        input.timeout,
+      );
     }),
 
   /**

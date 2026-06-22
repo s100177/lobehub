@@ -16,7 +16,8 @@ import type {
   SubAgentResultPayload,
   SubAgentsBatchResultPayload,
 } from '@lobechat/agent-runtime';
-import { UsageCounter } from '@lobechat/agent-runtime';
+import { findInMessages, UsageCounter } from '@lobechat/agent-runtime';
+import { LocalSystemManifest } from '@lobechat/builtin-tool-local-system';
 import { countContextTokens, type ToolsEngine } from '@lobechat/context-engine';
 import { chainCompressContext } from '@lobechat/prompts';
 import {
@@ -26,6 +27,7 @@ import {
   type MessageMetadata,
   type MessageToolCall,
   type ModelUsage,
+  type RuntimeStepContext,
   TraceNameMap,
 } from '@lobechat/types';
 import { dedupeBy } from '@lobechat/utils';
@@ -125,6 +127,37 @@ const localizeError = (error: ChatMessageError): ChatMessageError => {
   }
 
   return error;
+};
+
+const getActiveDeviceIdFromMessages = (
+  messages: GeneralAgentCallLLMInstructionPayload['messages'],
+): string | undefined =>
+  findInMessages(
+    messages as any,
+    (msg) => {
+      if (msg.plugin?.identifier !== 'lobe-remote-device') return undefined;
+      const id = (msg.pluginState as { metadata?: { activeDeviceId?: unknown } } | undefined)
+        ?.metadata?.activeDeviceId;
+      return typeof id === 'string' && id ? id : undefined;
+    },
+    { role: 'tool' },
+  );
+
+const mergeDetailedTools = (
+  base: ResolvedAgentConfig,
+  additional: ReturnType<ToolsEngine['generateToolsDetailed']>,
+): ResolvedAgentConfig => {
+  if (!additional.tools?.length) return base;
+
+  return {
+    ...base,
+    enabledManifests: dedupeBy(
+      [...(base.enabledManifests || []), ...additional.enabledManifests],
+      (manifest) => manifest.identifier,
+    ),
+    enabledToolIds: [...new Set([...(base.enabledToolIds || []), ...additional.enabledToolIds])],
+    tools: dedupeBy([...(base.tools || []), ...additional.tools], (tool) => tool.function.name),
+  };
 };
 
 /**
@@ -312,49 +345,37 @@ export const createAgentExecutors = (context: {
       let finalUsage: ModelUsage | undefined;
       let finalToolCalls: MessageToolCall[] | undefined;
 
-      // Expand dynamically activated tools (from lobe-activator activateTools API)
-      // and merge them into the agent config for this LLM call.
-      // Built before the StreamingHandler so we can bind the offered tool
-      // names into the transformToolCalls callback ().
-      const activatedToolIds = runtimeContext?.stepContext?.activatedToolIds;
+      // Expand dynamically activated tools and device-scoped Local System tools
+      // into this LLM call. Built before the StreamingHandler so we can bind the
+      // offered tool names into the transformToolCalls callback.
+      const activeDeviceId =
+        runtimeContext?.stepContext?.activeDeviceId ??
+        getActiveDeviceIdFromMessages(state.messages);
+      const effectiveStepContext: RuntimeStepContext | undefined = activeDeviceId
+        ? { ...runtimeContext?.stepContext, activeDeviceId }
+        : runtimeContext?.stepContext;
+      const dynamicToolIds = [
+        ...(runtimeContext?.stepContext?.activatedToolIds || []),
+        ...(activeDeviceId ? [LocalSystemManifest.identifier] : []),
+      ].filter((id, index, ids) => id && ids.indexOf(id) === index);
       let resolvedAgentConfig = context.agentConfig;
 
-      if (activatedToolIds?.length && context.toolsEngine) {
+      if (dynamicToolIds.length && context.toolsEngine) {
         const additional = context.toolsEngine.generateToolsDetailed({
           context: { isExplicitActivation: true },
           model: agentConfigData.model,
           provider: agentConfigData.provider!,
           skipDefaultTools: true,
-          toolIds: activatedToolIds,
+          toolIds: dynamicToolIds,
         });
 
-        if (additional.tools?.length) {
-          const mergedEnabledManifests = dedupeBy(
-            [...(context.agentConfig.enabledManifests || []), ...additional.enabledManifests],
-            (manifest) => manifest.identifier,
-          );
-          const mergedEnabledToolIds = [
-            ...new Set([
-              ...(context.agentConfig.enabledToolIds || []),
-              ...additional.enabledToolIds,
-            ]),
-          ];
-          const mergedTools = dedupeBy(
-            [...(context.agentConfig.tools || []), ...additional.tools],
-            (tool) => tool.function.name,
-          );
-
-          resolvedAgentConfig = {
-            ...context.agentConfig,
-            enabledManifests: mergedEnabledManifests,
-            enabledToolIds: mergedEnabledToolIds,
-            tools: mergedTools,
-          };
-
+        const nextResolvedAgentConfig = mergeDetailedTools(resolvedAgentConfig, additional);
+        if (nextResolvedAgentConfig !== resolvedAgentConfig) {
+          resolvedAgentConfig = nextResolvedAgentConfig;
           log(
-            `${stagePrefix} Injected %d activated tools: %o`,
-            activatedToolIds.length,
-            activatedToolIds,
+            `${stagePrefix} Injected %d dynamic tools: %o`,
+            dynamicToolIds.length,
+            dynamicToolIds,
           );
         }
       }
@@ -473,7 +494,7 @@ export const createAgentExecutors = (context: {
         },
         initialContext: runtimeContext?.initialContext,
         metadata: context.metadata,
-        stepContext: runtimeContext?.stepContext,
+        stepContext: effectiveStepContext,
         trace: {
           traceId,
           topicId: topicId ?? undefined,

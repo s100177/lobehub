@@ -13,9 +13,10 @@ import type {
   WriteLocalFileParams,
 } from '@lobechat/electron-client-ipc';
 import { LocalSystemExecutionRuntime } from '@lobechat/tool-runtime';
-import type { BuiltinToolResult } from '@lobechat/types';
+import type { BuiltinToolContext, BuiltinToolResult } from '@lobechat/types';
 import { BaseExecutor } from '@lobechat/types';
 
+import { deviceService } from '@/services/device';
 import { localFileService } from '@/services/electron/localFileService';
 
 import { LocalSystemIdentifier } from '../../types';
@@ -82,9 +83,36 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     return { content: safeContent, state: output.state, success: true };
   }
 
+  private async proxyToActiveDevice(
+    apiName: string,
+    params: any,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult | undefined> {
+    const activeDeviceId = ctx?.stepContext?.activeDeviceId;
+    if (!activeDeviceId) return undefined;
+
+    try {
+      const result = await deviceService.executeLocalSystemTool({
+        apiName,
+        arguments: JSON.stringify(params ?? {}),
+        deviceId: activeDeviceId,
+        operationId: ctx?.operationId,
+      });
+      return this.toResult(result);
+    } catch (error) {
+      return this.errorResult(error);
+    }
+  }
+
   // ==================== File Operations ====================
 
-  listFiles = async (params: ListLocalFileParams): Promise<BuiltinToolResult> => {
+  listFiles = async (
+    params: ListLocalFileParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const remoteResult = await this.proxyToActiveDevice(LocalSystemApiEnum.listFiles, params, ctx);
+    if (remoteResult) return remoteResult;
+
     try {
       const result = await this.runtime.listFiles({
         directoryPath: params.path,
@@ -98,7 +126,13 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     }
   };
 
-  readFile = async (params: LocalReadFileParams): Promise<BuiltinToolResult> => {
+  readFile = async (
+    params: LocalReadFileParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const remoteResult = await this.proxyToActiveDevice(LocalSystemApiEnum.readFile, params, ctx);
+    if (remoteResult) return remoteResult;
+
     try {
       const result = await this.runtime.readFile({
         endLine: params.loc?.[1],
@@ -111,7 +145,13 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     }
   };
 
-  readFiles = async (params: LocalReadFilesParams): Promise<BuiltinToolResult> => {
+  readFiles = async (
+    params: LocalReadFilesParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const remoteResult = await this.proxyToActiveDevice(LocalSystemApiEnum.readFiles, params, ctx);
+    if (remoteResult) return remoteResult;
+
     try {
       const result = await this.runtime.readFiles(params);
       return this.toResult(result);
@@ -120,7 +160,17 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     }
   };
 
-  searchFiles = async (params: LocalSearchFilesParams): Promise<BuiltinToolResult> => {
+  searchFiles = async (
+    params: LocalSearchFilesParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const remoteResult = await this.proxyToActiveDevice(
+      LocalSystemApiEnum.searchFiles,
+      params,
+      ctx,
+    );
+    if (remoteResult) return remoteResult;
+
     try {
       const resolvedParams = resolveArgsWithScope(params, 'directory');
       const result = await this.runtime.searchFiles({
@@ -133,7 +183,13 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     }
   };
 
-  moveFiles = async (params: MoveLocalFilesParams): Promise<BuiltinToolResult> => {
+  moveFiles = async (
+    params: MoveLocalFilesParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const remoteResult = await this.proxyToActiveDevice(LocalSystemApiEnum.moveFiles, params, ctx);
+    if (remoteResult) return remoteResult;
+
     try {
       const result = await this.runtime.moveFiles({
         operations: params.items.map((item) => ({
@@ -147,7 +203,13 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     }
   };
 
-  writeFile = async (params: WriteLocalFileParams): Promise<BuiltinToolResult> => {
+  writeFile = async (
+    params: WriteLocalFileParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const remoteResult = await this.proxyToActiveDevice(LocalSystemApiEnum.writeFile, params, ctx);
+    if (remoteResult) return remoteResult;
+
     try {
       const result = await this.runtime.writeFile(params);
       return this.toResult(result);
@@ -156,7 +218,13 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     }
   };
 
-  editFile = async (params: EditLocalFileParams): Promise<BuiltinToolResult> => {
+  editFile = async (
+    params: EditLocalFileParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const remoteResult = await this.proxyToActiveDevice(LocalSystemApiEnum.editFile, params, ctx);
+    if (remoteResult) return remoteResult;
+
     try {
       const result = await this.runtime.editFile({
         all: params.replace_all,
@@ -172,23 +240,44 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
 
   // ==================== Shell Commands ====================
 
-  runCommand = async (params: RunCommandParams): Promise<BuiltinToolResult> => {
+  runCommand = async (
+    params: RunCommandParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const normalizedParams = {
+      ...params,
+      background: params.run_in_background,
+    };
+    const remoteResult = await this.proxyToActiveDevice(
+      LocalSystemApiEnum.runCommand,
+      normalizedParams,
+      ctx,
+    );
+    if (remoteResult) return remoteResult;
+
     try {
       // The manifest exposes `run_in_background`, but ComputerRuntime's RunCommandState
       // reads `args.background` for the `isBackground` field — without this normalize
       // the UI/state would always say foreground even for background commands.
       // The IPC handler reads `run_in_background` itself, so we keep that field too.
-      const result = await this.runtime.runCommand({
-        ...params,
-        background: params.run_in_background,
-      } as any);
+      const result = await this.runtime.runCommand(normalizedParams as any);
       return this.toResult(result);
     } catch (error) {
       return this.errorResult(error);
     }
   };
 
-  getCommandOutput = async (params: GetCommandOutputParams): Promise<BuiltinToolResult> => {
+  getCommandOutput = async (
+    params: GetCommandOutputParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const remoteResult = await this.proxyToActiveDevice(
+      LocalSystemApiEnum.getCommandOutput,
+      params,
+      ctx,
+    );
+    if (remoteResult) return remoteResult;
+
     try {
       const result = await this.runtime.getCommandOutput({
         commandId: params.shell_id,
@@ -200,7 +289,17 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     }
   };
 
-  killCommand = async (params: KillCommandParams): Promise<BuiltinToolResult> => {
+  killCommand = async (
+    params: KillCommandParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const remoteResult = await this.proxyToActiveDevice(
+      LocalSystemApiEnum.killCommand,
+      params,
+      ctx,
+    );
+    if (remoteResult) return remoteResult;
+
     try {
       const result = await this.runtime.killCommand({
         commandId: params.shell_id,
@@ -213,7 +312,17 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
 
   // ==================== Search & Find ====================
 
-  grepContent = async (params: GrepContentParams): Promise<BuiltinToolResult> => {
+  grepContent = async (
+    params: GrepContentParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const remoteResult = await this.proxyToActiveDevice(
+      LocalSystemApiEnum.grepContent,
+      params,
+      ctx,
+    );
+    if (remoteResult) return remoteResult;
+
     try {
       const resolvedParams = resolveArgsWithScope(params, 'path');
       // Forward the full IPC params (glob / output_mode / -i / -A / -B / -C / -n /
@@ -228,7 +337,13 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     }
   };
 
-  globFiles = async (params: GlobFilesParams): Promise<BuiltinToolResult> => {
+  globFiles = async (
+    params: GlobFilesParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const remoteResult = await this.proxyToActiveDevice(LocalSystemApiEnum.globFiles, params, ctx);
+    if (remoteResult) return remoteResult;
+
     try {
       const result = await this.runtime.globFiles({
         directory: params.scope,

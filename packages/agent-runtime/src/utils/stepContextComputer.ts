@@ -14,6 +14,10 @@ export interface ComputeStepContextParams {
    */
   activatedToolIds?: string[];
   /**
+   * Active remote desktop device selected by lobe-remote-device
+   */
+  activeDeviceId?: string;
+  /**
    * Whether there are queued user messages waiting to be processed
    */
   hasQueuedMessages?: boolean;
@@ -38,12 +42,14 @@ export interface ComputeStepContextParams {
  * @returns RuntimeStepContext assembled from the provided values
  */
 export const computeStepContext = ({
+  activeDeviceId,
   activatedSkills,
   activatedToolIds,
   hasQueuedMessages,
   todos,
 }: ComputeStepContextParams): RuntimeStepContext => {
   return {
+    ...(activeDeviceId && { activeDeviceId }),
     ...(activatedSkills?.length && { activatedSkills }),
     ...(activatedToolIds?.length && { activatedToolIds }),
     ...(hasQueuedMessages && { hasQueuedMessages }),

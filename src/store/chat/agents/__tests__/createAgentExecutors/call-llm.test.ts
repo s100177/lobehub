@@ -11,6 +11,7 @@ import {
   createAssistantMessage,
   createCallLLMInstruction,
   createMockStore,
+  createToolMessage,
   createUserMessage,
 } from './fixtures';
 import {
@@ -280,6 +281,95 @@ describe('call_llm executor', () => {
               tools: [notebookTool, activatedTool],
             }),
           }),
+        }),
+      );
+    });
+
+    it('should inject local system after a remote device is activated', async () => {
+      const mockStore = createMockStore();
+      const context = createTestContext();
+      const userMsg = createUserMessage({ content: 'Run python on device' });
+      const instruction = createCallLLMInstruction({
+        model: 'gpt-4',
+        provider: 'openai',
+        messages: [userMsg],
+      });
+      const activatedDeviceMessage = createToolMessage({
+        plugin: {
+          apiName: 'activateDevice',
+          arguments: JSON.stringify({ deviceId: 'device-123' }),
+          identifier: 'lobe-remote-device',
+          type: 'builtin',
+        },
+        pluginState: { metadata: { activeDeviceId: 'device-123' } },
+      });
+      const state = createInitialState({ messages: [activatedDeviceMessage] as any });
+      const localSystemTool = {
+        function: { name: 'lobe-local-system____runCommand' },
+        type: 'function',
+      } as const;
+      const toolsEngine = {
+        generateToolsDetailed: vi.fn().mockReturnValue({
+          enabledManifests: [{ identifier: 'lobe-local-system' }],
+          enabledToolIds: ['lobe-local-system'],
+          tools: [localSystemTool],
+        }),
+      };
+
+      mockStreamResponse({ content: 'AI response' });
+      mockStore.dbMessagesMap[context.messageKey] = [];
+      mockStore.operations[context.operationId] = {
+        abortController: new AbortController(),
+        childOperationIds: [],
+        context: {
+          agentId: context.agentId,
+          messageId: context.parentId,
+          topicId: context.topicId,
+        },
+        id: context.operationId,
+        metadata: { startTime: Date.now() },
+        status: 'running',
+        type: 'execAgentRuntime',
+      } as any;
+
+      const executors = createAgentExecutors({
+        agentConfig: {
+          agentConfig: { model: 'gpt-4', provider: 'openai' } as any,
+          chatConfig: {} as any,
+          enabledManifests: [],
+          enabledToolIds: [],
+          isBuiltinAgent: false,
+          plugins: [],
+          tools: [],
+        },
+        get: () => mockStore,
+        messageKey: context.messageKey,
+        operationId: context.operationId,
+        parentId: context.parentId,
+        toolsEngine: toolsEngine as any,
+      });
+
+      await executors.call_llm!(instruction, state, {
+        initialContext: {},
+        phase: 'init',
+        stepContext: {},
+      } as any);
+
+      expect(toolsEngine.generateToolsDetailed).toHaveBeenCalledWith(
+        expect.objectContaining({
+          skipDefaultTools: true,
+          toolIds: ['lobe-local-system'],
+        }),
+      );
+      expect(chatService.createAssistantMessageStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          params: expect.objectContaining({
+            resolvedAgentConfig: expect.objectContaining({
+              enabledToolIds: ['lobe-local-system'],
+              tools: [localSystemTool],
+            }),
+          }),
+          stepContext: expect.objectContaining({ activeDeviceId: 'device-123' }),
         }),
       );
     });

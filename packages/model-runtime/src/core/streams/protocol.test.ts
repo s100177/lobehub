@@ -256,6 +256,36 @@ describe('convertIterableToStream', () => {
     return chunks;
   };
 
+  it('should suppress Premature close during pull after valid chunks', async () => {
+    async function* prematureCloseStream() {
+      yield 'tool_calls';
+      throw new Error('Premature close');
+    }
+
+    const chunks = await drain(
+      convertIterableToStream(prematureCloseStream()).pipeThrough(
+        createFirstErrorHandleTransformer(),
+      ),
+    );
+
+    expect(chunks).toEqual(['tool_calls']);
+  });
+
+  it('should suppress Premature close during start without emitting an error chunk', async () => {
+    async function* prematureCloseStream(): AsyncGenerator<string> {
+      yield* [];
+      throw new Error('premature close');
+    }
+
+    const chunks = await drain(
+      convertIterableToStream(prematureCloseStream()).pipeThrough(
+        createFirstErrorHandleTransformer(),
+      ),
+    );
+
+    expect(chunks).toEqual([]);
+  });
+
   it('should surface errors from subsequent pulls as error chunks', async () => {
     async function* erroringStream() {
       yield 'first';
@@ -533,6 +563,32 @@ describe('convertIterableToStream', () => {
 });
 
 describe('readableFromAsyncIterable', () => {
+  const drain = async (readable: ReadableStream<any>) => {
+    const reader = readable.getReader();
+    const chunks: any[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    return chunks;
+  };
+
+  it('should suppress Premature close after valid chunks', async () => {
+    async function* prematureCloseStream() {
+      yield 'tool_calls';
+      throw new Error('Premature close');
+    }
+
+    const chunks = await drain(
+      readableFromAsyncIterable(prematureCloseStream()).pipeThrough(
+        createFirstErrorHandleTransformer(),
+      ),
+    );
+
+    expect(chunks).toEqual(['tool_calls']);
+  });
+
   it('should emit ABORT_CHUNK when abort error occurs during pull', async () => {
     async function* abortingStream() {
       yield 'first';

@@ -55,6 +55,7 @@ import { messageMapKey } from '../../../utils/messageMapKey';
 import {
   selectActivatedSkillsFromMessages,
   selectActivatedToolIdsFromMessages,
+  selectActiveDeviceIdFromMessages,
   selectTodosFromMessages,
 } from '../../message/selectors/dbMessage';
 import { buildRunLifecycle } from './runLifecycle/buildRunLifecycle';
@@ -623,8 +624,10 @@ export class StreamingExecutorActionImpl {
       );
       // Accumulate activated skills from activateSkill messages
       const activatedSkills = selectActivatedSkillsFromMessages(currentDBMessages);
+      const activeDeviceId = selectActiveDeviceIdFromMessages(currentDBMessages);
       const hasQueuedMessages = (this.#get().queuedMessages[contextKey]?.length ?? 0) > 0;
       const stepContext = computeStepContext({
+        activeDeviceId,
         activatedSkills,
         activatedToolIds,
         hasQueuedMessages,

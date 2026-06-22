@@ -188,6 +188,12 @@ const isAbortError = (error: unknown): boolean => {
   );
 };
 
+const isPrematureCloseError = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : undefined;
+
+  return typeof message === 'string' && /premature/i.test(message);
+};
+
 /**
  * Optional diagnostic context attached to errors that surface from the
  * provider SDK iterator. Lets the FIRST_CHUNK_ERROR payload carry
@@ -328,7 +334,7 @@ export function readableFromAsyncIterable<T>(
         // received. Suppress it so the stream completes normally; emitting an
         // error would cause downstream consumers to discard valid tool_calls /
         // text / usage that were already delivered upstream.
-        if (error.message?.includes('Premature') || error.message?.includes('premature')) {
+        if (isPrematureCloseError(error)) {
           controller.close();
           return;
         }
@@ -370,7 +376,7 @@ export const convertIterableToStream = <T>(
         }
 
         // Premature close: see comment above.
-        if (error.message?.includes('Premature') || error.message?.includes('premature')) {
+        if (isPrematureCloseError(error)) {
           controller.close();
           return;
         }
@@ -395,7 +401,7 @@ export const convertIterableToStream = <T>(
         }
 
         // Premature close: see comment above.
-        if (error.message?.includes('Premature') || error.message?.includes('premature')) {
+        if (isPrematureCloseError(error)) {
           controller.close();
           return;
         }

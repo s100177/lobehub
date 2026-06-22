@@ -189,6 +189,20 @@ export const selectActivatedToolIdsFromMessages = (
   return ids.size > 0 ? [...ids] : undefined;
 };
 
+/**
+ * Return the most recently activated remote desktop device id.
+ */
+export const selectActiveDeviceIdFromMessages = (messages: UIChatMessage[]): string | undefined => {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role !== 'tool' || msg.plugin?.identifier !== 'lobe-remote-device') continue;
+
+    const id = (msg.pluginState as { metadata?: { activeDeviceId?: unknown } } | undefined)
+      ?.metadata?.activeDeviceId;
+    if (typeof id === 'string' && id) return id;
+  }
+};
+
 // ============= Activated Skills Selectors ========== //
 
 /**
@@ -349,6 +363,7 @@ export const dbMessageSelectors = {
   latestUserMessage,
   selectActivatedSkillsFromMessages,
   selectActivatedToolIdsFromMessages,
+  selectActiveDeviceIdFromMessages,
   selectCurrentTurnTodosFromMessages,
   selectTodosFromMessages,
 };

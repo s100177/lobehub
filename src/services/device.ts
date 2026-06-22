@@ -12,6 +12,11 @@ class DeviceService {
     return lambdaClient.device.listDevices.query();
   }
 
+  /** Execute a Local System tool on a connected remote device via the server gateway. */
+  executeLocalSystemTool(input: Parameters<DeviceClient['executeLocalSystemTool']['mutate']>[0]) {
+    return lambdaClient.device.executeLocalSystemTool.mutate(input);
+  }
+
   /** Update user-editable device fields (defaultCwd / friendlyName / workingDirs). */
   updateDevice(input: Parameters<DeviceClient['updateDevice']['mutate']>[0]) {
     return lambdaClient.device.updateDevice.mutate(input);
