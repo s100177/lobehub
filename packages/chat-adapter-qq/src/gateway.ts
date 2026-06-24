@@ -64,6 +64,7 @@ export class QQGatewayConnection {
   private sessionId: string | null = null;
   private seq: number | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatStartTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatAcked = true;
   private reconnectAttempts = 0;
   private gatewayUrl: string | null = null;
@@ -383,14 +384,20 @@ export class QQGatewayConnection {
     this.stopHeartbeat();
     this.heartbeatAcked = true;
 
-    // Send first heartbeat after a random jitter (as per spec)
+    // Send first heartbeat after a random jitter (as per spec). Mark the ACK
+    // pending immediately after each send, otherwise the interval never checks
+    // whether the first heartbeat was acknowledged.
     const jitter = Math.random() * intervalMs;
-    setTimeout(() => {
-      if (this.closed || this.abortSignal?.aborted) return;
+    this.heartbeatStartTimer = setTimeout(() => {
+      this.heartbeatStartTimer = null;
+      if (this.closed || this.abortSignal?.aborted || this.ws?.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      this.heartbeatAcked = false;
       this.sendHeartbeat();
 
       this.heartbeatTimer = setInterval(() => {
-        if (this.closed || this.abortSignal?.aborted) {
+        if (this.closed || this.abortSignal?.aborted || this.ws?.readyState !== WebSocket.OPEN) {
           this.stopHeartbeat();
           return;
         }
@@ -408,6 +415,10 @@ export class QQGatewayConnection {
   }
 
   private stopHeartbeat(): void {
+    if (this.heartbeatStartTimer) {
+      clearTimeout(this.heartbeatStartTimer);
+      this.heartbeatStartTimer = null;
+    }
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
@@ -432,9 +443,15 @@ export class QQGatewayConnection {
       headers: { 'Content-Type': 'application/json' },
       method: 'POST',
       signal: AbortSignal.timeout(30_000),
-    }).catch((err) => {
-      this.log('Failed to forward event %s to webhook: %O', payload.t, err);
-    });
+    })
+      .then((response) => {
+        if (!response.ok) {
+          this.log('Forwarded event %s rejected by webhook: status=%d', payload.t, response.status);
+        }
+      })
+      .catch((err) => {
+        this.log('Failed to forward event %s to webhook: %O', payload.t, err);
+      });
   }
 
   // ---------- Reconnection ----------

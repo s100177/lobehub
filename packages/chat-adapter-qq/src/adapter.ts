@@ -32,9 +32,14 @@ import { QQ_EVENT_TYPES, QQ_OP_CODES } from './types';
 
 export class QQAdapter implements Adapter<QQThreadId, QQRawMessage> {
   readonly name = 'qq';
+  private static readonly passiveReplyTtlMs = 5 * 60 * 1000;
   private readonly api: QQApiClient;
   private readonly clientSecret: string;
   private readonly formatConverter: QQFormatConverter;
+  private readonly passiveReplyContexts = new Map<
+    string,
+    { eventId?: string; expiresAt: number; msgId?: string; nextSeq: number }
+  >();
   private _userName: string;
   private _botUserId?: string;
   private chat!: ChatInstance;
@@ -134,10 +139,13 @@ export class QQAdapter implements Adapter<QQThreadId, QQRawMessage> {
       return Response.json({ ok: true });
     }
 
+    this.rememberPassiveReplyContext(threadId, payload.id, eventData.id);
+
     // Create message via factory
     const messageFactory = () => this.parseRawEvent(eventData, threadId, eventType!);
 
     // Delegate to Chat SDK pipeline
+    this.logger.info('Received QQ %s for thread=%s', eventType, threadId);
     this.chat.processMessage(this, threadId, messageFactory, options);
 
     return Response.json({ ok: true });
@@ -220,29 +228,32 @@ export class QQAdapter implements Adapter<QQThreadId, QQRawMessage> {
   ): Promise<RawMessage<QQRawMessage>> {
     const { type, id, guildId } = this.decodeThreadId(threadId);
     const text = this.formatConverter.renderPostable(message);
+    const replyOptions = this.consumePassiveReplyContext(threadId);
 
     let response;
     switch (type) {
       case 'group': {
-        response = await this.api.sendGroupMessage(id, text);
+        response = await this.api.sendGroupMessage(id, text, replyOptions);
         break;
       }
       case 'guild': {
-        response = await this.api.sendGuildMessage(id, text);
+        response = await this.api.sendGuildMessage(id, text, replyOptions);
         break;
       }
       case 'c2c': {
-        response = await this.api.sendC2CMessage(id, text);
+        response = await this.api.sendC2CMessage(id, text, replyOptions);
         break;
       }
       case 'dms': {
-        response = await this.api.sendDmsMessage(guildId || id, text);
+        response = await this.api.sendDmsMessage(guildId || id, text, replyOptions);
         break;
       }
       default: {
         throw new Error(`Unknown thread type: ${type}`);
       }
     }
+
+    this.logger.info('Sent QQ message to thread=%s reply=%s', threadId, !!replyOptions);
 
     return {
       id: response.id,
@@ -326,6 +337,7 @@ export class QQAdapter implements Adapter<QQThreadId, QQRawMessage> {
       },
       formatted,
       id: raw.id,
+      isMention: this.detectBotMention(raw),
       metadata: {
         dateSent: new Date(raw.timestamp),
         edited: false,
@@ -364,6 +376,7 @@ export class QQAdapter implements Adapter<QQThreadId, QQRawMessage> {
       group_openid: data.group_openid,
       guild_id: data.guild_id,
       id: data.id || '',
+      mentions: data.mentions,
       timestamp: data.timestamp || new Date().toISOString(),
     };
 
@@ -374,6 +387,7 @@ export class QQAdapter implements Adapter<QQThreadId, QQRawMessage> {
       author,
       formatted,
       id: data.id || '',
+      isMention: this.detectBotMention(data, _eventType),
       metadata: {
         dateSent: new Date(data.timestamp || Date.now()),
         edited: false,
@@ -382,6 +396,56 @@ export class QQAdapter implements Adapter<QQThreadId, QQRawMessage> {
       text: cleanText,
       threadId,
     });
+  }
+
+  /**
+   * QQ emits GROUP_AT_MESSAGE_CREATE / AT_MESSAGE_CREATE only when the bot was
+   * explicitly addressed. Preserve that platform signal so the shared bot
+   * router does not drop it as an ordinary group message.
+   */
+  private detectBotMention(
+    message: QQWebhookEventData | QQRawMessage,
+    eventType?: string,
+  ): boolean {
+    if (
+      eventType === QQ_EVENT_TYPES.GROUP_AT_MESSAGE_CREATE ||
+      eventType === QQ_EVENT_TYPES.AT_MESSAGE_CREATE
+    ) {
+      return true;
+    }
+
+    const botUserId = this._botUserId;
+    if (!botUserId) return false;
+    return message.mentions?.some((m) => m.id === botUserId) === true;
+  }
+
+  private rememberPassiveReplyContext(threadId: string, eventId?: string, msgId?: string): void {
+    if (!eventId && !msgId) return;
+
+    this.passiveReplyContexts.set(threadId, {
+      eventId,
+      expiresAt: Date.now() + QQAdapter.passiveReplyTtlMs,
+      msgId,
+      nextSeq: 1,
+    });
+  }
+
+  private consumePassiveReplyContext(
+    threadId: string,
+  ): { eventId?: string; msgId?: string; msgSeq?: number } | undefined {
+    const context = this.passiveReplyContexts.get(threadId);
+    if (!context) return undefined;
+
+    if (Date.now() > context.expiresAt) {
+      this.passiveReplyContexts.delete(threadId);
+      return undefined;
+    }
+
+    const msgSeq = context.nextSeq;
+    context.nextSeq += 1;
+
+    if (context.msgId) return { msgId: context.msgId, msgSeq };
+    return { eventId: context.eventId };
   }
 
   // ------------------------------------------------------------------

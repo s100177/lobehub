@@ -163,7 +163,7 @@ describe('QQAdapter', () => {
         t: undefined as any,
       };
       const res = await adapter.handleWebhook(makeRequest(body));
-      const data = await res.json();
+      const data = (await res.json()) as { plain_token: string; signature: string };
       expect(data.plain_token).toBe('tok');
       expect(data.signature).toBe('mock_sig');
     });
@@ -180,12 +180,37 @@ describe('QQAdapter', () => {
       expect(mockChat.processMessage).not.toHaveBeenCalled();
     });
 
-    it('should process group message', async () => {
+    it('should process group message and preserve the @mention signal', async () => {
       const payload = makeWebhookPayload(QQ_EVENT_TYPES.GROUP_AT_MESSAGE_CREATE, {});
       const res = await adapter.handleWebhook(makeRequest(payload));
 
       expect(res.status).toBe(200);
       expect(mockChat.processMessage).toHaveBeenCalledTimes(1);
+
+      const factory = vi.mocked(mockChat.processMessage).mock.calls[0]?.[2];
+      const message = await factory?.();
+      expect(message?.isMention).toBe(true);
+    });
+
+    it('should not mark ordinary C2C messages as mentions without mention metadata', async () => {
+      const payload = makeWebhookPayload(QQ_EVENT_TYPES.C2C_MESSAGE_CREATE, {
+        group_openid: undefined,
+      });
+      const res = await adapter.handleWebhook(makeRequest(payload));
+
+      expect(res.status).toBe(200);
+      const factory = vi.mocked(mockChat.processMessage).mock.calls[0]?.[2];
+      const message = await factory?.();
+      expect(message?.isMention).toBe(false);
+    });
+
+    it('should mark raw messages as mentions when bot is in mentions metadata', () => {
+      (adapter as any)._botUserId = 'bot_123';
+      const raw = makeQQRawMessage({ mentions: [{ id: 'bot_123' }] });
+
+      const message = adapter.parseMessage(raw);
+
+      expect(message.isMention).toBe(true);
     });
 
     it('should skip empty content with no attachments', async () => {
@@ -426,6 +451,55 @@ describe('QQAdapter', () => {
       expect(data.length).toBe(4);
 
       vi.unstubAllGlobals();
+    });
+  });
+
+  // ---------- postMessage passive replies ----------
+
+  describe('postMessage passive replies', () => {
+    it('should include inbound msg_id when replying to a group @ event', async () => {
+      const sendGroupMessage = vi
+        .spyOn((adapter as any).api, 'sendGroupMessage')
+        .mockResolvedValue({ id: 'out_001', timestamp: '2024-01-01T00:00:01Z' });
+
+      const payload = makeWebhookPayload(QQ_EVENT_TYPES.GROUP_AT_MESSAGE_CREATE, {
+        group_openid: 'group_abc',
+        id: 'msg_in_001',
+      });
+
+      await adapter.handleWebhook(makeRequest(payload));
+      await adapter.postMessage('qq:group:group_abc', 'hello back');
+
+      expect(sendGroupMessage).toHaveBeenCalledWith('group_abc', 'hello back', {
+        msgId: 'msg_in_001',
+        msgSeq: 1,
+      });
+    });
+
+    it('should increment msg_seq for multiple passive replies to the same inbound group message', async () => {
+      const sendGroupMessage = vi
+        .spyOn((adapter as any).api, 'sendGroupMessage')
+        .mockResolvedValue({ id: 'out_001', timestamp: '2024-01-01T00:00:01Z' });
+
+      await adapter.handleWebhook(
+        makeRequest(makeWebhookPayload(QQ_EVENT_TYPES.GROUP_AT_MESSAGE_CREATE, {})),
+      );
+
+      await adapter.postMessage('qq:group:group_abc', 'first');
+      await adapter.postMessage('qq:group:group_abc', 'second');
+
+      expect(sendGroupMessage.mock.calls[0]?.[2]).toMatchObject({ msgSeq: 1 });
+      expect(sendGroupMessage.mock.calls[1]?.[2]).toMatchObject({ msgSeq: 2 });
+    });
+
+    it('should fall back to active group send when no passive reply context exists', async () => {
+      const sendGroupMessage = vi
+        .spyOn((adapter as any).api, 'sendGroupMessage')
+        .mockResolvedValue({ id: 'out_001', timestamp: '2024-01-01T00:00:01Z' });
+
+      await adapter.postMessage('qq:group:group_abc', 'standalone');
+
+      expect(sendGroupMessage).toHaveBeenCalledWith('group_abc', 'standalone', undefined);
     });
   });
 

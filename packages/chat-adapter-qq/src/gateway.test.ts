@@ -182,6 +182,35 @@ describe('QQGatewayConnection', () => {
   });
 
   describe('heartbeat', () => {
+    it('should cancel the jittered first heartbeat when closing before it fires', async () => {
+      vi.spyOn(Math, 'random').mockReturnValueOnce(0.5);
+      const { conn, connectPromise, ws } = await connectAndGetWs();
+
+      ws.simulateMessage({ op: QQ_WS_OP_CODES.HELLO, d: { heartbeat_interval: 45000 } });
+      await vi.advanceTimersByTimeAsync(10);
+
+      ws.simulateMessage({
+        d: {
+          session_id: 'sess_1',
+          shard: [0, 1],
+          user: { bot: true, id: 'bot_1', username: 'TestBot' },
+          version: 1,
+        },
+        op: QQ_WS_OP_CODES.DISPATCH,
+        s: 1,
+        t: 'READY',
+      });
+      await connectPromise;
+
+      conn.close();
+      await vi.advanceTimersByTimeAsync(30000);
+
+      const heartbeats = ws.sentMessages
+        .map((m) => JSON.parse(m))
+        .filter((p) => p.op === QQ_WS_OP_CODES.HEARTBEAT);
+      expect(heartbeats).toHaveLength(0);
+    });
+
     it('should send heartbeat after jittered interval', async () => {
       const { connectPromise, ws } = await connectAndGetWs();
 

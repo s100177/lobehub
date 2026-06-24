@@ -69,6 +69,7 @@ export interface QQWebhookEventData {
     joined_at: string;
     roles?: string[];
   };
+  mentions?: QQAuthor[];
   plain_token?: string;
   timestamp?: string;
 }
