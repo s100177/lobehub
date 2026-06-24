@@ -3,7 +3,7 @@ import {
   RemoteDeviceApiName,
   RemoteDeviceManifest,
 } from '@lobechat/builtin-tool-remote-device';
-import type { BaseExecutor, type BuiltinToolResult, DeviceListItem } from '@lobechat/types';
+import { BaseExecutor, type BuiltinToolResult, type DeviceListItem } from '@lobechat/types';
 
 import { deviceService } from '@/services/device';
 
