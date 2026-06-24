@@ -1,0 +1,180 @@
+name: lobehub-s100177
+
+services:
+  lobe:
+    image: s100177/lobehub:local
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        USE_CN_MIRROR: ${USE_CN_MIRROR:-true}
+    container_name: lobehub
+    ports:
+      - '${LOBE_PORT}:3210'
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
+      device-gateway:
+        condition: service_healthy
+    environment:
+      - 'APP_URL=${APP_URL}'
+      - 'KEY_VAULTS_SECRET=${KEY_VAULTS_SECRET}'
+      - 'AUTH_SECRET=${AUTH_SECRET}'
+      - 'JWKS_KEY=${JWKS_KEY}'
+      - 'DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgresql:5432/${LOBE_DB_NAME}'
+      - 'INTERNAL_APP_URL=http://lobe:3210'
+      - 'S3_ENDPOINT=${S3_ENDPOINT}'
+      - 'S3_BUCKET=${RUSTFS_LOBE_BUCKET}'
+      - 'S3_ENABLE_PATH_STYLE=1'
+      - 'S3_ACCESS_KEY=${RUSTFS_ACCESS_KEY}'
+      - 'S3_ACCESS_KEY_ID=${RUSTFS_ACCESS_KEY}'
+      - 'S3_SECRET_ACCESS_KEY=${RUSTFS_SECRET_KEY}'
+      - 'LLM_VISION_IMAGE_USE_BASE64=1'
+      - 'S3_SET_ACL=0'
+      - 'SEARXNG_URL=http://searxng:8080'
+      - 'REDIS_URL=redis://redis:6379'
+      - 'REDIS_PREFIX=lobechat'
+      - 'REDIS_TLS=0'
+      - 'DEVICE_GATEWAY_URL=http://device-gateway:8787'
+      - 'DEVICE_GATEWAY_SERVICE_TOKEN=${DEVICE_GATEWAY_SERVICE_TOKEN}'
+    env_file:
+      - .env
+    restart: always
+    networks:
+      - lobe-network
+
+  device-gateway:
+    image: s100177/lobehub-device-gateway:local
+    build:
+      context: https://github.com/lobehub/lobehub-gateway.git#7052a333d6effd11634683d0615b08fe686fc897:device-gateway-go
+      dockerfile_inline: |
+        FROM golang:1.23-alpine AS builder
+        ENV GOPROXY=https://goproxy.cn,direct
+        WORKDIR /src
+        COPY go.mod ./
+        COPY cmd ./cmd
+        COPY internal ./internal
+        RUN go build -trimpath -ldflags='-s -w' -o /out/device-gateway-go ./cmd/device-gateway-go
+        FROM alpine:3.20
+        RUN adduser -D -H -u 10001 appuser
+        USER appuser
+        EXPOSE 8787
+        ENV PORT=8787
+        COPY --from=builder /out/device-gateway-go /usr/local/bin/device-gateway-go
+        ENTRYPOINT ["device-gateway-go"]
+    container_name: lobe-device-gateway
+    ports:
+      - '${DEVICE_GATEWAY_PORT}:8787'
+    environment:
+      - 'SERVICE_TOKEN=${DEVICE_GATEWAY_SERVICE_TOKEN}'
+      - 'JWKS_PUBLIC_KEY=${DEVICE_GATEWAY_JWKS_PUBLIC_KEY}'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:8787/health >/dev/null 2>&1 || exit 1']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: always
+    networks:
+      - lobe-network
+
+  postgresql:
+    image: paradedb/paradedb:latest-pg17
+    container_name: lobe-postgres
+    ports:
+      - '${POSTGRES_PORT:-5435}:5432'
+    volumes:
+      - './data:/var/lib/postgresql/data'
+    environment:
+      - 'POSTGRES_DB=${LOBE_DB_NAME}'
+      - 'POSTGRES_PASSWORD=${POSTGRES_PASSWORD}'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+    networks:
+      - lobe-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: lobe-redis
+    ports:
+      - '${REDIS_PORT:-6380}:6379'
+    command: redis-server --save 60 1000 --appendonly yes
+    volumes:
+      - 'redis_data:/data'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: always
+    networks:
+      - lobe-network
+
+  rustfs:
+    image: rustfs/rustfs:latest
+    container_name: lobe-rustfs
+    ports:
+      - '${RUSTFS_PORT}:9000'
+      - '${RUSTFS_ADMIN_PORT}:9001'
+    environment:
+      - RUSTFS_CONSOLE_ENABLE=true
+      - RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY}
+      - RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY}
+    volumes:
+      - 'rustfs-data:/data'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:9000/health >/dev/null 2>&1 || exit 1']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    command:
+      ['--access-key', '${RUSTFS_ACCESS_KEY}', '--secret-key', '${RUSTFS_SECRET_KEY}', '/data']
+    restart: always
+    networks:
+      - lobe-network
+
+  rustfs-init:
+    image: minio/mc:latest
+    container_name: lobe-rustfs-init
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    volumes:
+      - ./bucket.config.json:/bucket.config.json:ro
+    entrypoint: /bin/sh
+    command: -c ' set -eux; mc alias set rustfs "http://rustfs:9000" "${RUSTFS_ACCESS_KEY}" "${RUSTFS_SECRET_KEY}"; mc mb "rustfs/lobe" --ignore-existing; mc anonymous set-json "/bucket.config.json" "rustfs/lobe"; '
+    restart: 'no'
+    networks:
+      - lobe-network
+
+  searxng:
+    image: searxng/searxng
+    container_name: lobe-searxng
+    volumes:
+      - './searxng-settings.yml:/etc/searxng/settings.yml'
+    environment:
+      - 'SEARXNG_SETTINGS_FILE=/etc/searxng/settings.yml'
+    restart: always
+    networks:
+      - lobe-network
+    env_file:
+      - .env
+
+networks:
+  lobe-network:
+    driver: bridge
+
+volumes:
+  redis_data:
+    driver: local
+  rustfs-data:
+    driver: local
