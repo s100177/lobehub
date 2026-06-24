@@ -33,7 +33,11 @@ import type {
 } from '../../types';
 import type { ILobeAgentRuntimeErrorType } from '../../types/error';
 import { AgentRuntimeErrorType } from '../../types/error';
-import type { CreateImagePayload, CreateImageResponse } from '../../types/image';
+import type {
+  CreateImageMethodOptions,
+  CreateImagePayload,
+  CreateImageResponse,
+} from '../../types/image';
 import type {
   CreateVideoPayload,
   CreateVideoResponse,
@@ -58,6 +62,7 @@ import {
 } from '../../utils/resolveSafeMaxTokens';
 import { StreamingResponse } from '../../utils/response';
 import type { LobeRuntimeAI } from '../BaseAI';
+import { normalizeToolsParameters } from '../contextBuilders/normalizeToolSchema';
 import { convertOpenAIMessages, convertOpenAIResponseInputs } from '../contextBuilders/openai';
 import { resolveModelSamplingParameters } from '../parameterResolver';
 import type { OpenAIStreamOptions } from '../streams';
@@ -507,6 +512,12 @@ export const createOpenAICompatibleRuntime = <T extends Record<string, any> = an
 
         log('chat called with model: %s, stream: %s', payload.model, payload.stream ?? true);
 
+        // Normalize tool parameter schemas before they fan out to the
+        // Chat-Completions / Responses paths. User MCP tools may emit boolean
+        // sub-schemas (`items: true`) or array properties missing `type`, which
+        // upstream validators (OpenAI/DeepSeek, Gemini) reject. See LOBE-10066.
+        if (payload.tools) payload.tools = normalizeToolsParameters(payload.tools as any) as any;
+
         let processedPayload: any = payload;
         const userApiMode = (payload as any).apiMode as string | undefined;
         const modelId = (payload as any).model as string | undefined;
@@ -622,7 +633,7 @@ export const createOpenAICompatibleRuntime = <T extends Record<string, any> = an
             apiMode: 'chat_completions',
             includeUsageRequested,
             model: payload.model,
-            pricing: await getModelPricing(payload.model, this.id),
+            pricing: await getModelPricing(payload.model, this.id, options?.pricingContext),
             provider: this.id,
           },
         };
@@ -744,7 +755,7 @@ export const createOpenAICompatibleRuntime = <T extends Record<string, any> = an
       }
     }
 
-    async createImage(payload: CreateImagePayload) {
+    async createImage(payload: CreateImagePayload, options?: CreateImageMethodOptions) {
       const log = debug(`${this.logPrefix}:createImage`);
 
       // If custom createImage implementation is provided, use it
@@ -761,6 +772,7 @@ export const createOpenAICompatibleRuntime = <T extends Record<string, any> = an
       log('using default createOpenAICompatibleImage');
       // Use the new createOpenAICompatibleImage function
       return createOpenAICompatibleImage(this.client, payload, this.id, {
+        pricingContext: options?.pricingContext,
         pricingModel: payload.model,
         requestModel: resolveMappedModelId(payload.model, this.modelIdMappingOptions),
         routingModel: payload.model,
@@ -969,7 +981,7 @@ export const createOpenAICompatibleRuntime = <T extends Record<string, any> = an
           !!schema,
         );
 
-        const pricing = await getModelPricing(model, this.id);
+        const pricing = await getModelPricing(model, this.id, options?.pricingContext);
         const usagePayload = { model, pricing, provider: this.id };
 
         if (tools) {
@@ -1126,7 +1138,7 @@ export const createOpenAICompatibleRuntime = <T extends Record<string, any> = an
         );
 
         if (res.usage && options?.onUsage) {
-          const pricing = await getModelPricing(payload.model, this.id);
+          const pricing = await getModelPricing(payload.model, this.id, options?.pricingContext);
           await options.onUsage(
             convertOpenAIUsage(res.usage as any, {
               model: payload.model,
@@ -1438,7 +1450,7 @@ export const createOpenAICompatibleRuntime = <T extends Record<string, any> = an
         payload: {
           apiMode: 'responses',
           model: usageModel,
-          pricing: await getModelPricing(usageModel, this.id),
+          pricing: await getModelPricing(usageModel, this.id, options?.pricingContext),
           provider: this.id,
         },
       };

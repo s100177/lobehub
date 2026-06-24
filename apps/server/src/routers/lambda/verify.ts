@@ -1,3 +1,5 @@
+import { VerifySkill } from '@lobechat/builtin-skills';
+import type { VerifyCheckItem } from '@lobechat/types';
 import { TRPCError } from '@trpc/server';
 import { asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
@@ -25,7 +27,19 @@ import {
   VerifyExecutorService,
   VerifyFeedbackService,
   VerifyPlanGeneratorService,
+  VerifyReporterService,
 } from '@/server/services/verify';
+
+/**
+ * Skills that `verify.getSkillBundle` will materialize to a builder's disk via
+ * `lh verify init`. Keyed by identifier; add future pullable skills here. The
+ * portable verify skill lives in @lobechat/builtin-skills but is intentionally
+ * NOT in its `builtinSkills` runtime array (kept out of the homogeneous agent
+ * runtime / tool picker), so it is referenced directly here.
+ */
+const PULLABLE_SKILLS: Record<string, typeof VerifySkill> = {
+  [VerifySkill.identifier]: VerifySkill,
+};
 
 const verifierTypeSchema = z.enum(['program', 'agent', 'llm']);
 const onFailSchema = z.enum(['manual', 'auto_repair']);
@@ -64,8 +78,8 @@ const checkItemSchema = z.object({
   index: z.number(),
   onFail: onFailSchema,
   required: z.boolean(),
-  sourceCriterionId: z.string().nullable().optional(),
-  sourceRubricId: z.string().nullable().optional(),
+  sourceCriterionId: z.string().nullish(),
+  sourceRubricId: z.string().nullish(),
   title: z.string(),
   verifierConfig: z.record(z.unknown()),
   verifierType: verifierTypeSchema,
@@ -100,6 +114,7 @@ const verifyProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts) =
       operationModel: new AgentOperationModel(ctx.serverDB, ctx.userId, workspaceId),
       planGenerator: new VerifyPlanGeneratorService(ctx.serverDB, ctx.userId, workspaceId),
       reportModel: new VerifyReportModel(ctx.serverDB, ctx.userId, workspaceId),
+      reporterService: new VerifyReporterService(ctx.serverDB, ctx.userId, workspaceId),
       resultModel: new VerifyCheckResultModel(ctx.serverDB, ctx.userId, workspaceId),
       rubricModel: new VerifyRubricModel(ctx.serverDB, ctx.userId, workspaceId),
       runModel: new VerifyRunModel(ctx.serverDB, ctx.userId, workspaceId),
@@ -132,6 +147,18 @@ const resolveCheckResult = async (
   return result;
 };
 
+/** Resolve a run from an Agent Run operation id — the handle a builder has in
+ * the run-start gap, before any result rows (and thus checkResultIds) exist. */
+const resolveRunByOperation = async (ctx: { runModel: VerifyRunModel }, operationId: string) => {
+  const run = await ctx.runModel.findByOperation(operationId);
+
+  if (!run) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'No verification run for this operation' });
+  }
+
+  return run;
+};
+
 export const verifyRouter = router({
   // ---- criteria (reusable atomic standards) ----
   createCriterion: verifyProcedure
@@ -158,8 +185,8 @@ export const verifyRouter = router({
       z.object({
         id: z.string(),
         value: z.object({
-          description: z.string().nullable().optional(),
-          documentId: z.string().nullable().optional(),
+          description: z.string().nullish(),
+          documentId: z.string().nullish(),
           onFail: onFailSchema.optional(),
           required: z.boolean().optional(),
           title: z.string().optional(),
@@ -212,7 +239,7 @@ export const verifyRouter = router({
         id: z.string(),
         value: z.object({
           config: rubricConfigSchema.optional(),
-          description: z.string().nullable().optional(),
+          description: z.string().nullish(),
           title: z.string().optional(),
         }),
       }),
@@ -237,10 +264,46 @@ export const verifyRouter = router({
         modelConfig: modelConfigSchema.optional(),
         operationId: z.string(),
         verifyCriteriaIds: z.array(z.string()).optional(),
-        verifyRubricId: z.string().nullable().optional(),
+        verifyRubricId: z.string().nullish(),
       }),
     )
     .mutation(async ({ ctx, input }) => ctx.planGenerator.generateDraftPlan(input)),
+
+  /**
+   * Config-time: turn a one-sentence acceptance requirement into proposed
+   * criteria for the user to review/edit. Traced (TRACING_SCENARIOS.VerifyPlanGen),
+   * returns drafts only — nothing persisted, no operation needed.
+   */
+  generateCriteria: verifyProcedure
+    .input(
+      z.object({
+        context: z.string().optional(),
+        goal: z.string().min(1),
+        maxCriteria: z.number().int().min(1).max(8).optional(),
+        modelConfig: modelConfigSchema,
+      }),
+    )
+    .mutation(async ({ ctx, input }) => ctx.planGenerator.generateCriteria(input)),
+
+  /** Persist (user-edited) drafts as standalone criteria; returns their ids in order. */
+  createCriteria: verifyProcedure
+    .input(
+      z.object({
+        drafts: z.array(
+          z.object({
+            description: z.string().optional(),
+            documentId: z.string().nullable().optional(),
+            instruction: z.string().optional(),
+            onFail: onFailSchema.optional(),
+            required: z.boolean().optional(),
+            title: z.string().min(1),
+            verifierConfig: z.record(z.unknown()).optional(),
+            verifierType: verifierTypeSchema.optional(),
+          }),
+        ),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => ctx.planGenerator.createCriteriaFromDrafts(input.drafts)),
 
   getVerifierThread: verifyProcedure
     .input(z.object({ operationId: z.string() }))
@@ -267,6 +330,31 @@ export const verifyRouter = router({
         provider: row.provider ?? null,
       };
     }),
+
+  /**
+   * Serve a pullable skill bundle (`SKILL.md` + inline resource files) by
+   * identifier so `lh verify init` can materialize it into a builder's working
+   * directory. Dynamic-by-design: the source is the server's deployed
+   * `@lobechat/builtin-skills`, so updating the skill + redeploying reaches every
+   * builder on the next pull — no CLI re-release. Auth-gated (verifyProcedure);
+   * returns NOT_FOUND for any identifier not in the pullable registry.
+   */
+  getSkillBundle: verifyProcedure.input(z.object({ identifier: z.string() })).query(({ input }) => {
+    const skill = PULLABLE_SKILLS[input.identifier];
+    if (!skill)
+      throw new TRPCError({
+        code: 'NOT_FOUND',
+        message: `No pullable skill with identifier "${input.identifier}"`,
+      });
+    return {
+      content: skill.content,
+      files: Object.fromEntries(
+        Object.entries(skill.resources ?? {}).map(([path, meta]) => [path, meta.content ?? '']),
+      ),
+      identifier: skill.identifier,
+      name: skill.name,
+    };
+  }),
 
   getVerifyState: verifyProcedure
     .input(z.object({ operationId: z.string() }))
@@ -324,16 +412,30 @@ export const verifyRouter = router({
   createRun: verifyProcedure
     .input(
       z.object({
+        // The active scenario's context, rendered as the report's scope header.
+        context: z
+          .object({
+            branch: z.string().optional(),
+            commit: z.string().optional(),
+            entry: z.string().optional(),
+            focus: z.string().optional(),
+            surfaces: z.array(z.string()).optional(),
+            testedAt: z.string().optional(),
+          })
+          .optional(),
         goal: z.string().optional(),
         operationId: z.string().optional(),
+        scenario: z.enum(['coding']).optional(),
         source: runSourceSchema.optional(),
         title: z.string().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) =>
       ctx.runModel.create({
+        context: input.context,
         goal: input.goal,
         operationId: input.operationId,
+        scenario: input.scenario,
         source: input.source ?? 'agent-testing',
         title: input.title,
       }),
@@ -401,11 +503,119 @@ export const verifyRouter = router({
       });
     }),
 
+  /**
+   * Builder self-evidence contract: submit a check item's verdict AND its
+   * evidence in one call. The check_result row is created lazily (idempotent
+   * upsert on `(verifyRunId, checkItemId)`) so the builder doesn't need a
+   * pre-existing `checkResultId` — solving the run-start handle gap. Evidence
+   * is optional (attach mid-run) and verdict is optional (set later by review).
+   */
+  submitCheckEvidence: verifyProcedure
+    .input(
+      z
+        .object({
+          checkItemId: z.string(),
+          checkItemIndex: z.number().optional(),
+          checkItemTitle: z.string().optional(),
+          confidence: z.number().min(0).max(1).optional(),
+          evidence: z
+            .array(
+              z
+                .object({
+                  capturedBy: evidenceCapturedBySchema.optional(),
+                  content: z.string().min(1).optional(),
+                  description: z.string().optional(),
+                  fileId: z.string().min(1).optional(),
+                  type: evidenceTypeSchema,
+                })
+                .refine((e) => Boolean(e.content) !== Boolean(e.fileId), {
+                  message: 'Provide exactly one of `content` or `fileId`.',
+                }),
+            )
+            .optional(),
+          // The builder may hold only its Agent Run operationId (run-start gap);
+          // either handle resolves the session.
+          operationId: z.string().optional(),
+          required: z.boolean().optional(),
+          status: checkStatusSchema.optional(),
+          suggestion: z.string().optional(),
+          toulmin: toulminSchema.optional(),
+          verdict: verdictSchema.optional(),
+          verifierType: verifierTypeSchema.optional(),
+          verifyRunId: z.string().optional(),
+        })
+        .refine((d) => Boolean(d.verifyRunId) || Boolean(d.operationId), {
+          message: 'Provide either `verifyRunId` or `operationId`.',
+        }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const run = input.verifyRunId
+        ? await resolveVerifyRun(ctx, input.verifyRunId)
+        : await resolveRunByOperation(ctx, input.operationId!);
+
+      // `required` / `verifierType` / index / title are stable per plan item, so
+      // hydrate them from the run plan rather than hardcoding defaults — otherwise
+      // an evidence-only submit would flip a soft criterion to required:true on the
+      // conflict-update. `status` is mutable lifecycle state: omit it when there's
+      // no verdict so an existing row keeps its status (and a new row falls to the
+      // DB default 'pending') instead of being reset to 'running'. drizzle omits
+      // undefined fields from both the insert and the conflict-update.
+      const planItem = (run.plan as VerifyCheckItem[] | null)?.find(
+        (i) => i.id === input.checkItemId,
+      );
+
+      const checkResult = await ctx.resultModel.upsertByCheckItem({
+        checkItemId: input.checkItemId,
+        checkItemIndex: input.checkItemIndex ?? planItem?.index,
+        checkItemTitle: input.checkItemTitle ?? planItem?.title,
+        completedAt: input.verdict ? new Date() : undefined,
+        confidence: input.confidence,
+        required: input.required ?? planItem?.required,
+        status: input.status ?? (input.verdict ? statusForVerdict(input.verdict) : undefined),
+        suggestion: input.suggestion,
+        toulmin: input.toulmin,
+        verdict: input.verdict,
+        verifierType: input.verifierType ?? planItem?.verifierType ?? 'agent',
+        verifyRunId: run.id,
+      });
+
+      const evidence = input.evidence?.length
+        ? await Promise.all(
+            input.evidence.map((e) =>
+              ctx.evidenceModel.create({
+                capturedAt: new Date(),
+                capturedBy: e.capturedBy ?? null,
+                checkResultId: checkResult.id,
+                content: e.content ?? null,
+                description: e.description ?? null,
+                fileId: e.fileId ?? null,
+                type: e.type,
+              }),
+            ),
+          )
+        : [];
+
+      return { checkResult, evidence };
+    }),
+
   listEvidence: verifyProcedure
     .input(z.object({ checkResultId: z.string() }))
     .query(async ({ ctx, input }) => {
       const result = await resolveCheckResult(ctx, input.checkResultId);
       return ctx.evidenceModel.listByCheckResult(result.id);
+    }),
+
+  deleteEvidence: verifyProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const evidence = await ctx.evidenceModel.findById(input.id);
+
+      if (!evidence) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Verification evidence not found' });
+      }
+
+      await ctx.evidenceModel.delete(evidence.id);
+      return { id: evidence.id, success: true };
     }),
 
   upsertReport: verifyProcedure
@@ -444,6 +654,30 @@ export const verifyRouter = router({
     const run = await resolveVerifyRun(ctx, input.verifyRunId);
     return ctx.reportModel.findByRun(run.id);
   }),
+
+  /**
+   * Server-side LLM report: generate the narrative from the session's results +
+   * evidence (verdict / stats computed deterministically). Distinct from
+   * `upsertReport`, which stores a report a standalone harness computed itself.
+   */
+  regenerateReport: verifyProcedure
+    .input(
+      z.object({
+        deliverable: z.string(),
+        goal: z.string(),
+        modelConfig: modelConfigSchema,
+        verifyRunId: z.string(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const run = await resolveVerifyRun(ctx, input.verifyRunId);
+      return ctx.reporterService.generateReport({
+        deliverable: input.deliverable,
+        goal: input.goal,
+        modelConfig: input.modelConfig,
+        verifyRunId: run.id,
+      });
+    }),
 
   /**
    * One-shot payload for the standalone report viewer: the session, its report,

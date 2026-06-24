@@ -16,6 +16,10 @@ import { buildWorkspacePayload, buildWorkspaceWhere } from '../utils/workspace';
 export interface VerifyRunState {
   verifyPlan: VerifyCheckItem[] | null;
   verifyPlanConfirmedAt: Date | null;
+  /** The session id — exposed so a builder holding only its operationId can
+   * resolve the handle needed by `verify.submitCheckEvidence` before any
+   * result rows exist (the run-start gap). */
+  verifyRunId: string | null;
   verifyStatus: VerifyRunStatus | null;
 }
 
@@ -24,6 +28,7 @@ const toState = (run: VerifyRunItem | null | undefined): VerifyRunState | null =
     ? {
         verifyPlan: (run.plan ?? null) as VerifyCheckItem[] | null,
         verifyPlanConfirmedAt: run.planConfirmedAt ?? null,
+        verifyRunId: run.id,
         verifyStatus: (run.status ?? null) as VerifyRunStatus | null,
       }
     : null;
@@ -175,6 +180,18 @@ export class VerifyRunModel {
     await this.db
       .update(verifyRuns)
       .set({ planConfirmedAt: confirmedAt })
+      .where(and(eq(verifyRuns.id, runId), this.ownership()));
+  };
+
+  /**
+   * Replace the session's generic policy/extension bag (`metadata`). Used to
+   * stamp per-run knobs like the task's `maxRepairRounds` override, and to carry
+   * them onto a repair round's run so it derives the same cap.
+   */
+  setMetadata = async (runId: string, metadata: Record<string, unknown>): Promise<void> => {
+    await this.db
+      .update(verifyRuns)
+      .set({ metadata })
       .where(and(eq(verifyRuns.id, runId), this.ownership()));
   };
 
