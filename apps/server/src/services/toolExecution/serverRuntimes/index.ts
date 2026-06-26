@@ -16,6 +16,7 @@ import { agentSignalReflectionRuntime } from './agentSignalReflection';
 import { agentSignalReviewRuntime } from './agentSignalReview';
 import { agentSignalSkillManagementRuntime } from './agentSignalSkillManagement';
 import { briefRuntime } from './brief';
+import { browserRuntime } from './browser';
 import { calculatorRuntime } from './calculator';
 import { cloudSandboxRuntime } from './cloudSandbox';
 import { credsRuntime } from './creds';
@@ -59,6 +60,7 @@ const registerRuntimes = (runtimes: ServerRuntimeRegistration[]) => {
 registerRuntimes([
   agentBuilderRuntime,
   webBrowsingRuntime,
+  browserRuntime,
   cloudSandboxRuntime,
   calculatorRuntime,
   agentDocumentsRuntime,

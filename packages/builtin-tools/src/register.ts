@@ -23,6 +23,12 @@ import {
   AgentManagementStreamings,
 } from '@lobechat/builtin-tool-agent-management/client';
 import {
+  BrowserManifest,
+  BrowserPortal,
+  BrowserPortalTitle,
+  BrowserRenders,
+} from '@lobechat/builtin-tool-browser/client';
+import {
   ClaudeCodeIdentifier,
   ClaudeCodeInspectors,
   ClaudeCodeInterventions,
@@ -194,6 +200,7 @@ export const registerBuiltinToolSurfaces = (): void => {
     [LobeActivatorManifest.identifier]: LobeActivatorRenders as Record<string, BuiltinRender>,
     [WebBrowsingManifest.identifier]: WebBrowsingRenders as Record<string, BuiltinRender>,
     [WebOnboardingManifest.identifier]: WebOnboardingRenders as Record<string, BuiltinRender>,
+    [BrowserManifest.identifier]: BrowserRenders as Record<string, BuiltinRender>,
     codex: {
       ...CodexRenders,
       command_execution: RunCommandRender as BuiltinRender,
@@ -322,11 +329,13 @@ export const registerBuiltinToolSurfaces = (): void => {
     portals: {
       [LobeDeliveryCheckerManifest.identifier]: LobeDeliveryCheckerPortal as BuiltinPortal,
       [WebBrowsingManifest.identifier]: WebBrowsingPortal as BuiltinPortal,
+      [BrowserManifest.identifier]: BrowserPortal as BuiltinPortal,
     },
     titles: {
       [LobeDeliveryCheckerManifest.identifier]:
         LobeDeliveryCheckerPortalTitle as BuiltinPortalTitle,
       [WebBrowsingManifest.identifier]: WebBrowsingPortalTitle as BuiltinPortalTitle,
+      [BrowserManifest.identifier]: BrowserPortalTitle as BuiltinPortalTitle,
     },
   });
 
