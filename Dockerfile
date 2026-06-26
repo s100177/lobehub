@@ -97,21 +97,7 @@ COPY . .
 
 # pnpm install ran before COPY, so workspace packages added after that
 # point (e.g. new builtin-tool-* packages) need explicit symlinks.
-RUN node -e "
-  const {readdirSync, existsSync, symlinkSync} = require('fs');
-  const {resolve} = require('path');
-  const pkgs = readdirSync('packages').filter(f => f.startsWith('builtin-tool-'));
-  for (const pkg of pkgs) {
-    const pj = resolve('packages', pkg, 'package.json');
-    if (!existsSync(pj)) continue;
-    const name = require(pj).name;
-    const target = resolve('node_modules', name);
-    if (!existsSync(target)) {
-      symlinkSync('../../packages/' + pkg, target);
-      console.log('Linked: ' + name);
-    }
-  }
-"
+RUN node -e "const {readdirSync,existsSync,symlinkSync}=require('fs');const {resolve}=require('path');const pkgs=readdirSync('packages').filter(f=>f.startsWith('builtin-tool-'));for(const pkg of pkgs){const pj=resolve('packages',pkg,'package.json');if(!existsSync(pj))continue;const name=require(pj).name;const target=resolve('node_modules',name);if(!existsSync(target)){symlinkSync('../../packages/'+pkg,target);console.log('Linked: '+name);}}"
 
 # Prebuild: env checks (checkDeprecatedAuth, checkRequiredEnvVars, printEnvInfo) then remove desktop-only code
 RUN pnpm exec tsx scripts/dockerPrebuild.mts
