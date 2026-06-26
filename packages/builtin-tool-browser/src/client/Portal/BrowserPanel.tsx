@@ -67,7 +67,7 @@ interface BrowserPanelProps {
   state: BrowserState;
 }
 
-const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult }) => {
+const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, messageId }) => {
   if (!state) {
     return (
       <div className={styles.empty}>No browser data yet. Ask the AI to navigate somewhere.</div>
