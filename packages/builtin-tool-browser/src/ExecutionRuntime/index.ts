@@ -23,17 +23,18 @@ export interface BrowserRuntimeService {
 export class BrowserExecutionRuntime {
   private service: BrowserRuntimeService;
 
-  constructor(service: BrowserRuntimeService) {
-    this.service = service;
-  }
+  constructor(
+    private service: BrowserRuntimeService,
+    private sessionId: string,
+  ) {}
 
   async navigate(args: { url: string; timeout?: number }): Promise<BuiltinServerRuntimeOutput> {
     try {
       const state = await this.service.navigate(args);
 
       return {
-        content: `Navigated to ${state.url}\nTitle: ${state.title}\nViewport: ${state.viewport?.width}x${state.viewport?.height}`,
-        state: { ...state },
+        content: `Navigated to ${state.url}\nTitle: ${state.title}`,
+        state: { ...state, sessionId: this.sessionId },
         success: true,
       };
     } catch (error) {

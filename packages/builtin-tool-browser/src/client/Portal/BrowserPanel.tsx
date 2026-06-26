@@ -10,16 +10,15 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
   container: css`
     display: flex;
     flex-direction: column;
-    gap: 8px;
-
+    gap: 4px;
     height: 100%;
-    padding: 12px;
   `,
   urlBar: css`
     display: flex;
     gap: 8px;
     align-items: center;
 
+    margin-inline: 8px;
     padding-block: 6px;
     padding-inline: 12px;
     border: 1px solid ${cssVar.colorBorder};
@@ -30,13 +29,11 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
 
     background: ${cssVar.colorFillQuaternary};
   `,
-  screenshot: css`
+  iframe: css`
+    flex: 1;
     width: 100%;
-    height: auto;
-    border: 1px solid ${cssVar.colorBorderSecondary};
-    border-radius: 8px;
-
-    object-fit: contain;
+    border: none;
+    border-radius: 0;
   `,
   empty: css`
     display: flex;
@@ -50,7 +47,8 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
   result: css`
     overflow: auto;
 
-    max-height: 200px;
+    max-height: 120px;
+    margin: 8px;
     padding: 12px;
     border-radius: 8px;
 
@@ -64,6 +62,7 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
 }));
 
 interface BrowserPanelProps {
+  messageId: string;
   showResult?: boolean;
   state: BrowserState;
 }
@@ -75,11 +74,13 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult }) => {
     );
   }
 
-  const { screenshot, url, title, result } = state;
+  const { url, title, result } = state;
 
   return (
     <Flexbox className={styles.container}>
-      {title && <div style={{ fontSize: 15, fontWeight: 600 }}>{title}</div>}
+      {title && (
+        <div style={{ fontSize: 15, fontWeight: 600, marginInline: 12, marginTop: 8 }}>{title}</div>
+      )}
       {url && (
         <div className={styles.urlBar}>
           <span style={{ opacity: 0.5 }}>🔗</span>
@@ -88,17 +89,15 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult }) => {
           </span>
         </div>
       )}
-      {screenshot && (
-        <img
-          alt={title ?? 'Screenshot'}
-          className={styles.screenshot}
-          src={`data:image/png;base64,${screenshot}`}
+      {url ? (
+        <iframe
+          className={styles.iframe}
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+          src={`/api/browser/proxy?session=${encodeURIComponent(messageId)}`}
+          title={title ?? 'Browser'}
         />
-      )}
-      {!screenshot && !result && (
-        <div className={styles.empty}>
-          Page loaded. Screenshot will appear after the AI interacts with the page.
-        </div>
+      ) : (
+        <div className={styles.empty}>Navigate to a URL first. Ask the AI to open a webpage.</div>
       )}
       {showResult && result !== undefined && (
         <div className={styles.result}>

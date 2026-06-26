@@ -75,7 +75,7 @@ export const browserRuntime: ServerRuntimeRegistration = {
       },
     };
 
-    return new BrowserExecutionRuntime(service);
+    return new BrowserExecutionRuntime(service, sessionId);
   },
   identifier: BrowserIdentifier,
 };

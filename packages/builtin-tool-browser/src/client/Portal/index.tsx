@@ -4,7 +4,9 @@ import { memo } from 'react';
 import { BrowserApiName } from '../../types';
 import BrowserPanel from './BrowserPanel';
 
-const BrowserPortal = memo<BuiltinPortalProps>(({ arguments: args, state, apiName }) => {
+const BrowserPortal = memo<BuiltinPortalProps>(({ arguments: args, state, apiName, messageId }) => {
+  const sessionId = (state as any)?.sessionId || messageId;
+
   switch (apiName) {
     case BrowserApiName.navigate:
     case BrowserApiName.click:
@@ -13,15 +15,15 @@ const BrowserPortal = memo<BuiltinPortalProps>(({ arguments: args, state, apiNam
     case BrowserApiName.screenshot:
     case BrowserApiName.back:
     case BrowserApiName.forward: {
-      return <BrowserPanel state={state} />;
+      return <BrowserPanel messageId={sessionId} state={state} />;
     }
 
     case BrowserApiName.evaluate: {
-      return <BrowserPanel showResult state={state} />;
+      return <BrowserPanel showResult messageId={sessionId} state={state} />;
     }
   }
 
-  return <BrowserPanel state={state} />;
+  return <BrowserPanel messageId={sessionId} state={state} />;
 });
 
 BrowserPortal.displayName = 'BrowserPortal';
