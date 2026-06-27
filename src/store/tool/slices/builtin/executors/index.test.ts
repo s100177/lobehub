@@ -1,3 +1,4 @@
+import { BrowserApiName, BrowserIdentifier } from '@lobechat/builtin-tool-browser';
 import { LobeAgentApiName, LobeAgentIdentifier } from '@lobechat/builtin-tool-lobe-agent';
 import {
   WebOnboardingApiName,
@@ -53,6 +54,13 @@ describe('builtin executor registry', () => {
     await registerBuiltinToolExecutors();
 
     expect(hasExecutor(LobeAgentIdentifier, LobeAgentApiName.analyzeVisualMedia)).toBe(true);
+  }, 30_000);
+
+  it('registers browser executor APIs', async () => {
+    await registerBuiltinToolExecutors();
+
+    expect(hasExecutor(BrowserIdentifier, BrowserApiName.navigate)).toBe(true);
+    expect(getApiNamesForIdentifier(BrowserIdentifier)).toEqual(Object.values(BrowserApiName));
   }, 30_000);
 
   it('rejects nested sub-agent execution', async () => {

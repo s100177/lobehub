@@ -90,7 +90,7 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
 const BrowserCard = memo<BuiltinRenderProps<Record<string, any>, BrowserState>>(
   ({ pluginState, content, identifier, messageId, apiName }) => {
     const openToolUI = useChatStore((s) => s.openToolUI);
-    const isOpen = useChatStore(chatPortalSelectors.isPluginUIOpen(identifier));
+    const isOpen = useChatStore(chatPortalSelectors.isPluginUIOpen(messageId || ''));
     const autoOpenedRef = useRef<string | undefined>(undefined);
 
     const handleOpen = useCallback(() => {

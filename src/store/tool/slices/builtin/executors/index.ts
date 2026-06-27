@@ -22,6 +22,7 @@ import { taskExecutor } from '@lobechat/builtin-tool-task/client/executor';
 import type { BuiltinToolContext, BuiltinToolResult, IBuiltinToolExecutor } from '../types';
 import { activatorExecutor } from './lobe-activator';
 import { agentDocumentsExecutor } from './lobe-agent-documents';
+import { browserExecutor } from './lobe-browser';
 import { messageExecutor } from './lobe-message';
 import { notebookExecutor } from './lobe-notebook';
 import { pageAgentExecutor } from './lobe-page-agent';
@@ -141,6 +142,7 @@ export const registerBuiltinToolExecutors = (): void => {
     agentBuilderExecutor,
     agentDocumentsExecutor,
     agentManagementExecutor,
+    browserExecutor,
     calculatorExecutor,
     cloudSandboxExecutor,
     credsExecutor,
