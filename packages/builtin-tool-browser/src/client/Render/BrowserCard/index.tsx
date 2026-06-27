@@ -3,7 +3,7 @@
 import { type BuiltinRenderProps } from '@lobechat/types';
 import { Flexbox } from '@lobehub/ui';
 import { createStaticStyles } from 'antd-style';
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useEffect, useRef } from 'react';
 
 import { useChatStore } from '@/store/chat';
 import { chatPortalSelectors } from '@/store/chat/selectors';
@@ -91,12 +91,22 @@ const BrowserCard = memo<BuiltinRenderProps<Record<string, any>, BrowserState>>(
   ({ pluginState, content, identifier, messageId, apiName }) => {
     const openToolUI = useChatStore((s) => s.openToolUI);
     const isOpen = useChatStore(chatPortalSelectors.isPluginUIOpen(identifier));
+    const autoOpenedRef = useRef<string | undefined>(undefined);
 
     const handleOpen = useCallback(() => {
       if (!isOpen) {
         openToolUI(messageId!, identifier, { apiName });
       }
     }, [messageId, identifier, apiName, isOpen, openToolUI]);
+
+    const url = pluginState?.url;
+
+    useEffect(() => {
+      if (!url || !messageId || isOpen || autoOpenedRef.current === messageId) return;
+
+      autoOpenedRef.current = messageId;
+      openToolUI(messageId, identifier, { apiName });
+    }, [apiName, identifier, isOpen, messageId, openToolUI, url]);
 
     if (!pluginState) {
       return (
@@ -106,7 +116,7 @@ const BrowserCard = memo<BuiltinRenderProps<Record<string, any>, BrowserState>>(
       );
     }
 
-    const { url, title, result } = pluginState;
+    const { title, result } = pluginState;
 
     return (
       <div className={styles.card}>
