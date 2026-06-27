@@ -106,7 +106,7 @@ const BrowserCard = memo<BuiltinRenderProps<Record<string, any>, BrowserState>>(
       );
     }
 
-    const { screenshot, url, title, result } = pluginState;
+    const { url, title, result } = pluginState;
 
     return (
       <div className={styles.card}>
@@ -119,14 +119,6 @@ const BrowserCard = memo<BuiltinRenderProps<Record<string, any>, BrowserState>>(
             Open
           </button>
         </div>
-
-        {screenshot && (
-          <img
-            alt={title ?? 'Screenshot'}
-            className={styles.screenshot}
-            src={`data:image/png;base64,${screenshot}`}
-          />
-        )}
 
         {result !== undefined && (
           <div className={styles.evalResult}>
