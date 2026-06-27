@@ -62,12 +62,12 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
 }));
 
 interface BrowserPanelProps {
-  messageId: string;
+  sessionId: string;
   showResult?: boolean;
   state: BrowserState;
 }
 
-const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, messageId }) => {
+const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) => {
   if (!state) {
     return (
       <div className={styles.empty}>No browser data yet. Ask the AI to navigate somewhere.</div>
@@ -93,7 +93,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, messageId }) 
         <iframe
           className={styles.iframe}
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-          src={`/api/browser/proxy?session=${encodeURIComponent(messageId)}`}
+          src={`/api/browser/proxy?session=${encodeURIComponent(sessionId)}`}
           title={title ?? 'Browser'}
         />
       ) : (

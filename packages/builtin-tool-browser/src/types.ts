@@ -40,7 +40,8 @@ export interface EvaluateParams {
 
 export interface BrowserState {
   result?: any;
-  screenshot?: string; // base64
+  screenshot?: string; // base64 fallback / live-viewer frame source
+  sessionId?: string;
   title?: string;
   url?: string;
   viewport?: { width: number; height: number };

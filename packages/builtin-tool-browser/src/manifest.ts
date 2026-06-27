@@ -7,7 +7,7 @@ export const BrowserManifest: BuiltinToolManifest = {
   api: [
     {
       description:
-        'Navigate to a URL. Opens the page and waits for it to load. Returns the page title, URL, and a screenshot.',
+        'Navigate to a URL. Opens the page in the shared live browser session and returns the current title, URL, and viewport state.',
       name: BrowserApiName.navigate,
       parameters: {
         properties: {
@@ -25,7 +25,8 @@ export const BrowserManifest: BuiltinToolManifest = {
       },
     },
     {
-      description: 'Click an element on the page by CSS selector. Returns an updated screenshot.',
+      description:
+        'Click an element on the shared browser page by CSS selector and returns the updated page state.',
       name: BrowserApiName.click,
       parameters: {
         properties: {
@@ -43,7 +44,8 @@ export const BrowserManifest: BuiltinToolManifest = {
       },
     },
     {
-      description: 'Fill a form field with text. Returns an updated screenshot.',
+      description:
+        'Fill a form field in the shared browser page and returns the updated page state.',
       name: BrowserApiName.fill,
       parameters: {
         properties: {
@@ -61,7 +63,8 @@ export const BrowserManifest: BuiltinToolManifest = {
       },
     },
     {
-      description: 'Scroll the page by the given x/y offset. Returns an updated screenshot.',
+      description:
+        'Scroll the shared browser page by the given x/y offset and returns the updated page state.',
       name: BrowserApiName.scroll,
       parameters: {
         properties: {
@@ -73,7 +76,7 @@ export const BrowserManifest: BuiltinToolManifest = {
     },
     {
       description:
-        'Take a screenshot of the current page. Returns the screenshot and current URL/title.',
+        'Capture the current shared browser page as a screenshot fallback, plus URL/title.',
       name: BrowserApiName.screenshot,
       parameters: {
         properties: {},
@@ -96,8 +99,7 @@ export const BrowserManifest: BuiltinToolManifest = {
       },
     },
     {
-      description:
-        'Go back to the previous page in browser history. Returns an updated screenshot.',
+      description: 'Go back in the shared browser history and returns the updated page state.',
       name: BrowserApiName.back,
       parameters: {
         properties: {},
@@ -105,7 +107,7 @@ export const BrowserManifest: BuiltinToolManifest = {
       },
     },
     {
-      description: 'Go forward to the next page in browser history. Returns an updated screenshot.',
+      description: 'Go forward in the shared browser history and returns the updated page state.',
       name: BrowserApiName.forward,
       parameters: {
         properties: {},
@@ -120,7 +122,7 @@ export const BrowserManifest: BuiltinToolManifest = {
     avatar: '🌐',
     description: 'Control a web browser to navigate, click, fill forms, and execute JavaScript',
     readme:
-      'This tool gives you full control of a headless Chromium browser. You can navigate to URLs, click elements, fill form fields, scroll, execute JavaScript, and take screenshots. Each conversation gets its own isolated browser session.',
+      'This tool gives you control of an isolated Chromium browser. The same session is displayed in the right-side live browser panel, where the user can also interact with the page.',
     title: 'Browser',
   },
   systemRole: systemPrompt,

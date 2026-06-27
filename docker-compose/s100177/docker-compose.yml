@@ -22,6 +22,8 @@ services:
         condition: service_completed_successfully
       device-gateway:
         condition: service_healthy
+      browser-service:
+        condition: service_healthy
     environment:
       - 'APP_URL=${APP_URL}'
       - 'KEY_VAULTS_SECRET=${KEY_VAULTS_SECRET}'
@@ -41,10 +43,31 @@ services:
       - 'REDIS_URL=redis://redis:6379'
       - 'REDIS_PREFIX=lobechat'
       - 'REDIS_TLS=0'
+      - 'BROWSER_SERVICE_URL=http://browser-service:3100'
       - 'DEVICE_GATEWAY_URL=http://device-gateway:8787'
       - 'DEVICE_GATEWAY_SERVICE_TOKEN=${DEVICE_GATEWAY_SERVICE_TOKEN}'
     env_file:
       - .env
+    restart: always
+    networks:
+      - lobe-network
+
+  browser-service:
+    image: s100177/lobehub-browser-service:local
+    build:
+      context: ../../browser-service
+    container_name: lobe-browser
+    ports:
+      - '${BROWSER_SERVICE_PORT:-3100}:3100'
+    environment:
+      - 'PORT=3100'
+      - 'MAX_SESSIONS=${BROWSER_MAX_SESSIONS:-20}'
+      - 'SESSION_IDLE_MS=${BROWSER_SESSION_IDLE_MS:-300000}'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:3100/status >/dev/null 2>&1 || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: always
     networks:
       - lobe-network

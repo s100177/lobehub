@@ -45,33 +45,25 @@ export const browserRuntime: ServerRuntimeRegistration = {
         return fetchBrowser('/navigate', sessionId, args) as Promise<BrowserState>;
       },
       click: async (args) => {
-        return fetchBrowser('/click', sessionId, args) as Promise<Pick<BrowserState, 'screenshot'>>;
+        return fetchBrowser('/click', sessionId, args) as Promise<BrowserState>;
       },
       fill: async (args) => {
-        return fetchBrowser('/fill', sessionId, args) as Promise<Pick<BrowserState, 'screenshot'>>;
+        return fetchBrowser('/fill', sessionId, args) as Promise<BrowserState>;
       },
       scroll: async (args) => {
-        return fetchBrowser('/scroll', sessionId, args) as Promise<
-          Pick<BrowserState, 'screenshot'>
-        >;
+        return fetchBrowser('/scroll', sessionId, args) as Promise<BrowserState>;
       },
       screenshot: async () => {
-        return fetchBrowser('/screenshot', sessionId, {}) as Promise<
-          Pick<BrowserState, 'screenshot' | 'url' | 'title'>
-        >;
+        return fetchBrowser('/screenshot', sessionId, {}) as Promise<BrowserState>;
       },
       evaluate: async (args) => {
-        return fetchBrowser('/evaluate', sessionId, args) as Promise<{ result?: any }>;
+        return fetchBrowser('/evaluate', sessionId, args) as Promise<BrowserState>;
       },
       back: async () => {
-        return fetchBrowser('/back', sessionId, {}) as Promise<
-          Pick<BrowserState, 'screenshot' | 'url' | 'title'>
-        >;
+        return fetchBrowser('/back', sessionId, {}) as Promise<BrowserState>;
       },
       forward: async () => {
-        return fetchBrowser('/forward', sessionId, {}) as Promise<
-          Pick<BrowserState, 'screenshot' | 'url' | 'title'>
-        >;
+        return fetchBrowser('/forward', sessionId, {}) as Promise<BrowserState>;
       },
     };
 

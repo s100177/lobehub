@@ -116,7 +116,7 @@ const BrowserCard = memo<BuiltinRenderProps<Record<string, any>, BrowserState>>(
             {url && <div className={styles.url}>{url}</div>}
           </Flexbox>
           <button className={styles.openBtn} type="button" onClick={handleOpen}>
-            Open
+            Open live browser
           </button>
         </div>
 

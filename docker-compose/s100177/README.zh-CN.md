@@ -8,6 +8,7 @@
 - `lobe-remote-device` 在线设备查询和激活。
 - 激活设备后的 `activeDeviceId` 上下文传递。
 - Web 端经 device gateway 执行 `lobe-local-system`，避免错误退回 `lobe-skills` / `lobe-cloud-sandbox` 导致 `MARKET_AUTH_REQUIRED`。
+- 浏览器工具右侧 live browser 面板：AI 用 Playwright 控制页面，用户在右侧面板看到并交互同一个浏览器会话。
 
 ## 使用方式
 
@@ -48,7 +49,7 @@ openssl rand -base64 32
 构建并启动：
 
 ```bash
-docker compose build lobe device-gateway
+docker compose build lobe device-gateway browser-service
 docker compose up -d
 ```
 
@@ -88,6 +89,24 @@ build:
 ```
 
 并用 `dockerfile_inline` 修正构建上下文路径，避免上游 Dockerfile 路径与子目录构建上下文不匹配。
+
+## Browser Service
+
+浏览器工具依赖 `browser-service` 服务。它位于仓库内的 `browser-service/`，由本 compose 构建：
+
+```yaml
+browser-service:
+  build:
+    context: ../../browser-service
+```
+
+Lobe 容器通过内网环境变量访问它：
+
+```text
+BROWSER_SERVICE_URL=http://browser-service:3100
+```
+
+不要把它替换成官方镜像；官方部署不包含这个 fork 的 live browser viewer/input/SSE 改动。
 
 ## 手动验证远程设备修复
 
