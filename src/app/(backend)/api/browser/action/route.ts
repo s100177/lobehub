@@ -7,6 +7,7 @@ const ALLOWED_ACTIONS = new Set([
   'navigate',
   'click',
   'fill',
+  'submit',
   'scroll',
   'screenshot',
   'evaluate',

@@ -11,6 +11,7 @@ export interface BrowserRuntimeService {
   navigate: (args: { url: string; timeout?: number }) => Promise<BrowserState>;
   screenshot: () => Promise<BrowserState>;
   scroll: (args: { x?: number; y?: number }) => Promise<BrowserState>;
+  submit: (args: { selector: string; timeout?: number }) => Promise<BrowserState>;
 }
 
 export class BrowserExecutionRuntime {
@@ -91,6 +92,24 @@ export class BrowserExecutionRuntime {
     } catch (error) {
       return {
         content: `Failed to scroll: ${error instanceof Error ? error.message : String(error)}`,
+        error,
+        success: false,
+      };
+    }
+  }
+
+  async submit(args: { selector: string; timeout?: number }): Promise<BuiltinServerRuntimeOutput> {
+    try {
+      const state = await this.service.submit(args);
+
+      return {
+        content: `Submitted form for "${args.selector}"\nURL: ${state.url ?? 'blank'}\nTitle: ${state.title ?? ''}`,
+        state: { ...state, sessionId: this.sessionId } as BrowserState,
+        success: true,
+      };
+    } catch (error) {
+      return {
+        content: `Failed to submit form for "${args.selector}": ${error instanceof Error ? error.message : String(error)}`,
         error,
         success: false,
       };

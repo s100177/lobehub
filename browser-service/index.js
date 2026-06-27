@@ -6,6 +6,9 @@ const MAX_SESSIONS = Number.parseInt(process.env.MAX_SESSIONS || '20', 10);
 const SESSION_IDLE_MS = Number.parseInt(process.env.SESSION_IDLE_MS || '300000', 10);
 const STREAM_INTERVAL_MS = Number.parseInt(process.env.STREAM_INTERVAL_MS || '900', 10);
 const VIEWPORT = { width: 1280, height: 800 };
+const USER_AGENT =
+  process.env.BROWSER_USER_AGENT ||
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36';
 
 const sessions = new Map();
 const sessionCreations = new Map();
@@ -49,10 +52,28 @@ async function getOrCreateSession(sessionId) {
     }
 
     const browser = await chromium.launch({
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-blink-features=AutomationControlled',
+      ],
       headless: true,
     });
-    const context = await browser.newContext({ locale: 'zh-CN', viewport: VIEWPORT });
+    const context = await browser.newContext({
+      extraHTTPHeaders: {
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      },
+      locale: 'zh-CN',
+      timezoneId: 'Asia/Shanghai',
+      userAgent: USER_AGENT,
+      viewport: VIEWPORT,
+    });
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+    });
     const page = await context.newPage();
     const session = { browser, context, lastUsed: Date.now(), page };
     sessions.set(sessionId, session);
@@ -87,6 +108,107 @@ async function getPageState(page, options = {}) {
     viewport: VIEWPORT,
     ...(screenshot ? { screenshot: screenshot.toString('base64') } : {}),
   };
+}
+
+async function fillElementWithDomFallback(page, selector, text) {
+  return await page.evaluate(
+    ({ selector, text }) => {
+      const element = document.querySelector(selector);
+      if (!element) return { ok: false, reason: 'not_found' };
+
+      const setNativeValue = (target, value) => {
+        const prototype =
+          target instanceof HTMLTextAreaElement
+            ? HTMLTextAreaElement.prototype
+            : target instanceof HTMLInputElement
+              ? HTMLInputElement.prototype
+              : undefined;
+        const setter = prototype && Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+
+        if (setter) setter.call(target, value);
+        else target.value = value;
+      };
+
+      if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+        setNativeValue(element, text ?? '');
+      } else if (element.isContentEditable) {
+        element.textContent = text ?? '';
+      } else {
+        return { ok: false, reason: 'unsupported_element' };
+      }
+
+      element.dispatchEvent(
+        new InputEvent('input', {
+          bubbles: true,
+          data: text ?? '',
+          inputType: 'insertText',
+        }),
+      );
+      element.dispatchEvent(new Event('change', { bubbles: true }));
+
+      return {
+        ok: true,
+        value:
+          element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+            ? element.value
+            : element.textContent,
+      };
+    },
+    { selector, text },
+  );
+}
+
+async function clickElementWithDomFallback(page, selector) {
+  return await page.evaluate((selector) => {
+    const element = document.querySelector(selector);
+    if (!element) return { ok: false, reason: 'not_found' };
+
+    element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }));
+    element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+    element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    if (typeof element.click === 'function') element.click();
+
+    return { ok: true };
+  }, selector);
+}
+
+async function submitElementForm(page, selector) {
+  return await page.evaluate((selector) => {
+    const element = document.querySelector(selector);
+    if (!element) return { ok: false, reason: 'not_found' };
+
+    const form =
+      element instanceof HTMLFormElement ? element : element.closest('form') || element.form;
+    if (!form) return { ok: false, reason: 'form_not_found' };
+
+    if (typeof form.requestSubmit === 'function') form.requestSubmit();
+    else form.submit();
+
+    return { ok: true };
+  }, selector);
+}
+
+async function waitForPageAfterSubmit(page, { beforeTitle, beforeUrl, expectedText, timeout }) {
+  await Promise.race([
+    page
+      .waitForFunction(
+        ({ beforeTitle, beforeUrl, expectedText }) => {
+          const text = document.body?.innerText || '';
+          return (
+            location.href !== beforeUrl &&
+            (document.title !== beforeTitle || !expectedText || text.includes(expectedText))
+          );
+        },
+        { beforeTitle, beforeUrl, expectedText },
+        { timeout },
+      )
+      .catch(() => null),
+    page.waitForTimeout(timeout),
+  ]);
+  await page.waitForLoadState('domcontentloaded', { timeout: 3000 }).catch(() => null);
+  await page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => null);
 }
 
 function getSessionId(req) {
@@ -411,8 +533,13 @@ app.post('/click', sessionMiddleware, async (req, res) => {
     if (!selector) return res.status(400).json({ error: 'Missing selector' });
 
     const { page } = await getOrCreateSession(req.sessionId);
-    await page.waitForSelector(selector, { timeout });
-    await page.click(selector);
+    try {
+      await page.waitForSelector(selector, { state: 'visible', timeout });
+      await page.click(selector);
+    } catch (err) {
+      const fallback = await clickElementWithDomFallback(page, selector);
+      if (!fallback.ok) throw err;
+    }
     await page.waitForTimeout(500);
     res.json(await getPageState(page, { screenshot: false }));
   } catch (err) {
@@ -426,9 +553,46 @@ app.post('/fill', sessionMiddleware, async (req, res) => {
     if (!selector) return res.status(400).json({ error: 'Missing selector' });
 
     const { page } = await getOrCreateSession(req.sessionId);
-    await page.waitForSelector(selector, { timeout });
-    await page.fill(selector, text ?? '');
+    try {
+      await page.waitForSelector(selector, { state: 'visible', timeout });
+      await page.fill(selector, text ?? '');
+    } catch (err) {
+      const fallback = await fillElementWithDomFallback(page, selector, text);
+      if (!fallback.ok) throw err;
+    }
     await page.waitForTimeout(300);
+    res.json(await getPageState(page, { screenshot: false }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/submit', sessionMiddleware, async (req, res) => {
+  try {
+    const { selector, timeout = 10000 } = req.body;
+    if (!selector) return res.status(400).json({ error: 'Missing selector' });
+
+    const { page } = await getOrCreateSession(req.sessionId);
+    await page.waitForSelector(selector, { state: 'attached', timeout });
+    const beforeTitle = await page.title().catch(() => '');
+    const beforeUrl = page.url();
+    const expectedText = await page
+      .$eval(selector, (element) =>
+        element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+          ? element.value
+          : element.textContent,
+      )
+      .catch(() => undefined);
+
+    const navigation = page
+      .waitForNavigation({ timeout, waitUntil: 'networkidle' })
+      .catch(() => null);
+    const submitted = await submitElementForm(page, selector);
+    if (!submitted.ok)
+      return res.status(400).json({ error: `Failed to submit form: ${submitted.reason}` });
+
+    await navigation;
+    await waitForPageAfterSubmit(page, { beforeTitle, beforeUrl, expectedText, timeout });
     res.json(await getPageState(page, { screenshot: false }));
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -64,6 +64,27 @@ export const BrowserManifest: BuiltinToolManifest = {
     },
     {
       description:
+        'Submit the form associated with a field, button, or form selector. Use this after filling a search box or form input to perform the search or submit action.',
+      name: BrowserApiName.submit,
+      parameters: {
+        properties: {
+          selector: {
+            description:
+              'CSS selector of the input, button, or form to submit. For search boxes, pass the input selector.',
+            type: 'string',
+          },
+          timeout: {
+            description:
+              'Timeout in milliseconds to wait for the submit/navigation (default: 10000)',
+            type: 'number',
+          },
+        },
+        required: ['selector'],
+        type: 'object',
+      },
+    },
+    {
+      description:
         'Scroll the shared browser page by the given x/y offset and returns the updated page state.',
       name: BrowserApiName.scroll,
       parameters: {

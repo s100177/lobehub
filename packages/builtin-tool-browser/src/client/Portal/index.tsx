@@ -11,6 +11,7 @@ const BrowserPortal = memo<BuiltinPortalProps>(({ arguments: args, state, apiNam
     case BrowserApiName.navigate:
     case BrowserApiName.click:
     case BrowserApiName.fill:
+    case BrowserApiName.submit:
     case BrowserApiName.scroll:
     case BrowserApiName.screenshot:
     case BrowserApiName.back:

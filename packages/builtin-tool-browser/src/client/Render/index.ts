@@ -7,6 +7,7 @@ export const BrowserRenders: Record<string, BuiltinRender> = {
   [BrowserApiName.navigate]: BrowserCard,
   [BrowserApiName.click]: BrowserCard,
   [BrowserApiName.fill]: BrowserCard,
+  [BrowserApiName.submit]: BrowserCard,
   [BrowserApiName.scroll]: BrowserCard,
   [BrowserApiName.screenshot]: BrowserCard,
   [BrowserApiName.evaluate]: BrowserCard,

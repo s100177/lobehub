@@ -45,6 +45,7 @@ const createBrowserRuntimeService = (
   navigate: (args) => callBrowserAction(sessionId, BrowserApiName.navigate, args, signal),
   screenshot: () => callBrowserAction(sessionId, BrowserApiName.screenshot, undefined, signal),
   scroll: (args) => callBrowserAction(sessionId, BrowserApiName.scroll, args, signal),
+  submit: (args) => callBrowserAction(sessionId, BrowserApiName.submit, args, signal),
 });
 
 class BrowserExecutor extends BaseExecutor<typeof BrowserApiName> {
@@ -53,7 +54,10 @@ class BrowserExecutor extends BaseExecutor<typeof BrowserApiName> {
 
   private runtime(ctx?: BuiltinToolContext) {
     const sessionId = createBrowserSessionId(ctx);
-    return new BrowserExecutionRuntime(createBrowserRuntimeService(sessionId, ctx?.signal), sessionId);
+    return new BrowserExecutionRuntime(
+      createBrowserRuntimeService(sessionId, ctx?.signal),
+      sessionId,
+    );
   }
 
   navigate = async (
@@ -76,11 +80,18 @@ class BrowserExecutor extends BaseExecutor<typeof BrowserApiName> {
     ctx?: BuiltinToolContext,
   ): Promise<BuiltinToolResult> => this.runtime(ctx).scroll(params);
 
+  submit = async (
+    params: { selector: string; timeout?: number },
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => this.runtime(ctx).submit(params);
+
   screenshot = async (_params: unknown, ctx?: BuiltinToolContext): Promise<BuiltinToolResult> =>
     this.runtime(ctx).screenshot();
 
-  evaluate = async (params: { code: string }, ctx?: BuiltinToolContext): Promise<BuiltinToolResult> =>
-    this.runtime(ctx).evaluate(params);
+  evaluate = async (
+    params: { code: string },
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => this.runtime(ctx).evaluate(params);
 
   back = async (_params: unknown, ctx?: BuiltinToolContext): Promise<BuiltinToolResult> =>
     this.runtime(ctx).back();

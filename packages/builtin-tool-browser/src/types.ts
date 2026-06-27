@@ -3,12 +3,13 @@ export const BrowserIdentifier = 'lobe-browser';
 export const BrowserApiName = {
   navigate: 'navigate',
   click: 'click',
-  fill: 'fill',
-  scroll: 'scroll',
-  screenshot: 'screenshot',
-  evaluate: 'evaluate',
   back: 'back',
+  evaluate: 'evaluate',
+  fill: 'fill',
   forward: 'forward',
+  screenshot: 'screenshot',
+  scroll: 'scroll',
+  submit: 'submit',
 } as const;
 
 export type BrowserApiNameType = (typeof BrowserApiName)[keyof typeof BrowserApiName];
@@ -26,6 +27,11 @@ export interface ClickParams {
 export interface FillParams {
   selector: string;
   text: string;
+  timeout?: number;
+}
+
+export interface SubmitParams {
+  selector: string;
   timeout?: number;
 }
 
