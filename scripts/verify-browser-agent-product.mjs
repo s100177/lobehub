@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -24,6 +24,55 @@ const dependencyServiceDir = existsSync(path.resolve(browserServiceDir, 'node_mo
 const require = createRequire(import.meta.url);
 const { chromium } = require(require.resolve('playwright', { paths: [playwrightResolveDir] }));
 let browserServiceRuntimeDir;
+const skillPacksDir = mkdtempSync(path.resolve(tmpdir(), 'lobe-browser-skill-packs-'));
+
+writeFileSync(
+  path.join(skillPacksDir, 'expense-approval.json'),
+  JSON.stringify(
+    {
+      ambiguityRules: ['部门缺失时必须询问用户'],
+      confirmationPoints: [
+        {
+          id: 'before_submit',
+          reason: '提交后进入审批流',
+          title: '提交前确认',
+        },
+      ],
+      description: '费用审批业务表单',
+      entities: ['department', 'amount', 'reason'],
+      fillGaps: [{ field: 'department', mode: 'ask_user', reason: '部门影响审批流' }],
+      match: {
+        keywords: ['费用审批', '报销金额'],
+        pageType: 'form',
+        paths: ['/business-expense'],
+      },
+      page: 'expense_approval_form',
+      pageType: 'form',
+      riskActions: ['submit_expense'],
+      safeActions: ['inspect_form', 'fill_reason'],
+      site: '127.0.0.1',
+      workflows: [
+        {
+          goal: '补齐费用审批表单并停在提交前',
+          intent: 'expense_approval',
+          steps: [
+            { id: 'inspect', title: '读取费用审批表单', type: 'inspect' },
+            { gaps: ['department'], id: 'collect_department', title: '确认报销部门', type: 'ask' },
+            { id: 'verify_amount', title: '核对报销金额', type: 'verify' },
+            {
+              id: 'risk_gate',
+              risk: 'submit',
+              title: '提交审批前等待用户确认',
+              type: 'risk_gate',
+            },
+          ],
+        },
+      ],
+    },
+    null,
+    2,
+  ),
+);
 
 const html = (title, body) => `<!doctype html>
 <html lang="zh-CN">
@@ -139,6 +188,17 @@ const pages = {
     <form onsubmit="event.preventDefault(); document.body.dataset.query=document.querySelector('#kw').value;">
       <label>搜索 <input id="kw" name="wd" placeholder="请输入搜索词" /></label>
       <button id="search" type="submit">搜索</button>
+    </form>`,
+  ),
+  '/business-expense': html(
+    '费用审批',
+    `<h1>费用审批</h1>
+    <p>报销金额 ¥128.00。请补齐部门并在提交审批前停下。</p>
+    <form onsubmit="event.preventDefault(); document.body.dataset.submitted='1';">
+      <label>报销部门 <select id="department"><option value="">请选择</option><option>研发部</option><option>市场部</option></select></label>
+      <label>报销原因 <input id="reason" value="客户现场支持" /></label>
+      <strong>报销金额 ¥128.00</strong>
+      <button class="risk" id="submit-expense" type="submit">提交审批</button>
     </form>`,
   ),
 };
@@ -295,7 +355,7 @@ async function assertRemoteViewerPostsUserInput() {
 
 const browserService = spawn(process.execPath, ['index.js'], {
   cwd: createBrowserServiceRuntimeDir(),
-  env: { ...process.env, PORT: String(browserPort) },
+  env: { ...process.env, BROWSER_SKILL_PACKS_DIR: skillPacksDir, PORT: String(browserPort) },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 
@@ -383,6 +443,39 @@ try {
     `Expected login_required gap, got ${JSON.stringify(login.pageState?.gaps)}`,
   );
 
+  const expense = await request(
+    '/navigate',
+    { mode: 'remote', url: `${pageOrigin}/business-expense` },
+    'verify-agent-expense',
+  );
+  assert(
+    expense.skillPack?.page === 'expense_approval_form' &&
+      expense.skillPack?.source === 'file:expense-approval.json',
+    `Expected external expense skill pack, got ${JSON.stringify(expense.skillPack)}`,
+  );
+  assert(
+    expense.plan?.source === 'skill_pack' && expense.plan.intent === 'expense_approval',
+    `Expected external expense workflow plan, got ${JSON.stringify(expense.plan)}`,
+  );
+  const expenseExecution = await request('/execute-plan', { maxSteps: 4 }, 'verify-agent-expense');
+  assert(
+    expenseExecution.executionEvents?.some(
+      (event) => event.id === 'collect_department' && event.status === 'blocked',
+    ),
+    `Expected expense execution to stop for department clarification, got ${JSON.stringify(
+      expenseExecution.executionEvents,
+    )}`,
+  );
+  const expenseSubmitted = await request(
+    '/evaluate',
+    { code: 'document.body.dataset.submitted' },
+    'verify-agent-expense',
+  );
+  assert(
+    expenseSubmitted.result === undefined,
+    `Expected external expense plan not to submit, got ${expenseSubmitted.result}`,
+  );
+
   await request(
     '/navigate',
     { mode: 'remote', url: `${pageOrigin}/kiki-cloud-buy-risk` },
@@ -463,6 +556,7 @@ try {
   await waitForProcessExit(browserService);
   await closeServer(testPageServer).catch(() => {});
   cleanupBrowserServiceRuntimeDir();
+  rmSync(skillPacksDir, { force: true, recursive: true });
 }
 
 function createBrowserServiceRuntimeDir() {

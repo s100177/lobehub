@@ -225,6 +225,7 @@ export interface BrowserPageSkillPack {
   riskActions?: string[];
   safeActions?: string[];
   site: string;
+  source?: string;
   workflows?: BrowserSkillPackWorkflow[];
 }
 

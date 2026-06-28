@@ -37,6 +37,11 @@
       "reason": "可根据目标自动推荐"
     }
   ],
+  "match": {
+    "keywords": ["页面关键词"],
+    "pageType": "form",
+    "paths": ["/business/path"]
+  },
   "page": "page_id",
   "pageType": "form",
   "riskActions": ["risk_action_a", "risk_action_b"],
@@ -135,6 +140,16 @@ AI 可以直接执行的动作，例如：
 
 用户目标对应的标准执行流。
 
+### 3.10 `match`
+
+运行时匹配规则，用于把当前网页绑定到外部技能包。
+
+- `paths`：URL path 包含任意值时匹配。
+- `keywords`：URL、标题或页面文本包含任意值时匹配。
+- `pageType`：inspect 推导出的页面类型匹配时生效。
+
+如果不提供 `match`，默认只按 `site` 匹配；生产环境建议至少提供 `paths` 或 `keywords`，避免同站点多个页面误匹配。
+
 ## 4. 推荐写法
 
 - 一个页面一个技能包。
@@ -142,6 +157,8 @@ AI 可以直接执行的动作，例如：
 - 风险动作宁可多拦，不可漏拦。
 - 没有把握的字段默认 `ask_user`。
 - 能从页面自动读出来的字段，优先 `auto_suggest`。
+- 外部技能包可以放到 `BROWSER_SKILL_PACKS_DIR` 指向的目录中，文件格式为 `.json`。
+- 浏览器服务启动时会加载该目录下所有技能包；技能包只声明页面语义和 workflow，不允许执行代码。
 
 ## 5. 示例
 

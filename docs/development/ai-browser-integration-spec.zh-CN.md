@@ -61,6 +61,12 @@
 - 哪些情况必须问用户。
 - 常见意图如何拆步。
 
+运行时接入方式：
+
+- 将一个或多个 `.json` 技能包放入 `BROWSER_SKILL_PACKS_DIR` 指向的目录。
+- 技能包通过 `site` + `match.paths` / `match.keywords` / `match.pageType` 匹配当前页面。
+- 技能包只声明页面实体、风险边界和 workflow；不包含可执行脚本。
+
 ### 3.2 页面状态 inspect
 
 每个页面至少要能返回：

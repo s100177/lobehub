@@ -1,3 +1,6 @@
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+
 import express from 'express';
 import { chromium } from 'playwright';
 
@@ -12,6 +15,7 @@ const STREAM_IDLE_INTERVAL_MS = Number.parseInt(process.env.STREAM_IDLE_INTERVAL
 const STREAM_ACTIVE_WINDOW_MS = Number.parseInt(process.env.STREAM_ACTIVE_WINDOW_MS || '5000', 10);
 const VIEWPORT = { width: 1280, height: 800 };
 const EMBED_CHECK_TIMEOUT_MS = Number.parseInt(process.env.EMBED_CHECK_TIMEOUT_MS || '5000', 10);
+const SKILL_PACKS_DIR = process.env.BROWSER_SKILL_PACKS_DIR;
 const USER_AGENT =
   process.env.BROWSER_USER_AGENT ||
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36';
@@ -262,6 +266,178 @@ const RISK_PATTERNS = [
   { pattern: /确认|提交|保存更改|修改密码|实名认证/, risk: 'submit' },
 ];
 
+const ALLOWED_SKILL_STEP_TYPES = new Set([
+  'ask',
+  'click',
+  'fill',
+  'inspect',
+  'risk_gate',
+  'select',
+  'verify',
+]);
+
+function asStringArray(value, limit = 40) {
+  return Array.isArray(value)
+    ? value
+        .filter((item) => typeof item === 'string')
+        .map((item) => item.slice(0, 160))
+        .slice(0, limit)
+    : undefined;
+}
+
+function sanitizeSkillPack(pack, source = 'external') {
+  if (!pack || typeof pack !== 'object') return undefined;
+  if (typeof pack.site !== 'string' || typeof pack.page !== 'string') return undefined;
+  if (!Array.isArray(pack.workflows) || pack.workflows.length === 0) return undefined;
+
+  const workflows = pack.workflows
+    .filter((workflow) => workflow && typeof workflow === 'object')
+    .map((workflow, workflowIndex) => {
+      const steps = Array.isArray(workflow.steps)
+        ? workflow.steps
+            .filter((step) => step && typeof step === 'object')
+            .map((step, stepIndex) => {
+              const type = ALLOWED_SKILL_STEP_TYPES.has(step.type) ? step.type : undefined;
+              if (!type) return undefined;
+
+              return {
+                ...(asStringArray(step.gaps, 12) ? { gaps: asStringArray(step.gaps, 12) } : {}),
+                id:
+                  typeof step.id === 'string' && step.id
+                    ? step.id.slice(0, 80)
+                    : `step_${stepIndex + 1}`,
+                ...(typeof step.risk === 'string' ? { risk: step.risk.slice(0, 40) } : {}),
+                title:
+                  typeof step.title === 'string' && step.title
+                    ? step.title.slice(0, 160)
+                    : `步骤 ${stepIndex + 1}`,
+                type,
+              };
+            })
+            .filter(Boolean)
+        : [];
+
+      if (steps.length === 0) return undefined;
+
+      return {
+        ...(asStringArray(workflow.constraints, 20)
+          ? { constraints: asStringArray(workflow.constraints, 20) }
+          : {}),
+        goal:
+          typeof workflow.goal === 'string' && workflow.goal
+            ? workflow.goal.slice(0, 200)
+            : pack.description || pack.page,
+        intent:
+          typeof workflow.intent === 'string' && workflow.intent
+            ? workflow.intent.slice(0, 120)
+            : `${pack.page}_workflow_${workflowIndex + 1}`,
+        steps,
+      };
+    })
+    .filter(Boolean);
+
+  if (workflows.length === 0) return undefined;
+
+  const match = pack.match && typeof pack.match === 'object' ? pack.match : undefined;
+
+  return {
+    ...(asStringArray(pack.ambiguityRules, 30)
+      ? { ambiguityRules: asStringArray(pack.ambiguityRules, 30) }
+      : {}),
+    ...(Array.isArray(pack.confirmationPoints)
+      ? {
+          confirmationPoints: pack.confirmationPoints
+            .filter((point) => point && typeof point === 'object')
+            .map((point, index) => ({
+              id:
+                typeof point.id === 'string' && point.id
+                  ? point.id.slice(0, 80)
+                  : `confirmation_${index + 1}`,
+              ...(typeof point.reason === 'string' ? { reason: point.reason.slice(0, 200) } : {}),
+              title:
+                typeof point.title === 'string' && point.title
+                  ? point.title.slice(0, 120)
+                  : '确认点',
+            }))
+            .slice(0, 20),
+        }
+      : {}),
+    description:
+      typeof pack.description === 'string' && pack.description
+        ? pack.description.slice(0, 240)
+        : pack.page,
+    ...(asStringArray(pack.entities, 40) ? { entities: asStringArray(pack.entities, 40) } : {}),
+    ...(Array.isArray(pack.fillGaps)
+      ? {
+          fillGaps: pack.fillGaps
+            .filter((gap) => gap && typeof gap === 'object' && typeof gap.field === 'string')
+            .map((gap) => ({
+              field: gap.field.slice(0, 80),
+              mode: ['ask_user', 'auto_suggest', 'manual_only', 'auto_fill_if_known'].includes(
+                gap.mode,
+              )
+                ? gap.mode
+                : 'ask_user',
+              reason:
+                typeof gap.reason === 'string' && gap.reason
+                  ? gap.reason.slice(0, 200)
+                  : '外部技能包要求补齐该字段',
+            }))
+            .slice(0, 30),
+        }
+      : {}),
+    ...(match
+      ? {
+          match: {
+            ...(asStringArray(match.keywords, 30)
+              ? { keywords: asStringArray(match.keywords, 30) }
+              : {}),
+            ...(asStringArray(match.paths, 30) ? { paths: asStringArray(match.paths, 30) } : {}),
+            ...(typeof match.pageType === 'string'
+              ? { pageType: match.pageType.slice(0, 80) }
+              : {}),
+          },
+        }
+      : {}),
+    page: pack.page.slice(0, 120),
+    pageType:
+      typeof pack.pageType === 'string' && pack.pageType ? pack.pageType.slice(0, 80) : 'page',
+    ...(asStringArray(pack.riskActions, 40)
+      ? { riskActions: asStringArray(pack.riskActions, 40) }
+      : {}),
+    ...(asStringArray(pack.safeActions, 40)
+      ? { safeActions: asStringArray(pack.safeActions, 40) }
+      : {}),
+    site: pack.site.slice(0, 160),
+    source,
+    workflows,
+  };
+}
+
+function loadExternalSkillPacks(dir) {
+  if (!dir || !existsSync(dir)) return [];
+
+  const loaded = [];
+  for (const file of readdirSync(dir)
+    .filter((entry) => entry.endsWith('.json'))
+    .sort()) {
+    try {
+      const parsed = JSON.parse(readFileSync(path.join(dir, file), 'utf8'));
+      const packs = Array.isArray(parsed) ? parsed : [parsed];
+      for (const pack of packs) {
+        const sanitized = sanitizeSkillPack(pack, `file:${file}`);
+        if (sanitized) loaded.push(sanitized);
+      }
+    } catch (err) {
+      console.warn(`Failed to load browser skill pack ${file}: ${err.message}`);
+    }
+  }
+
+  return loaded;
+}
+
+const externalSkillPacks = loadExternalSkillPacks(SKILL_PACKS_DIR);
+
 function classifyRisk(text = '') {
   const normalized = text.replaceAll(/\s+/g, '');
   if (!normalized) return undefined;
@@ -332,7 +508,7 @@ function createExecutionEvent({ action, id, status, summary, target }) {
 }
 
 async function inspectPageState(page) {
-  return await page.evaluate(() => {
+  return await page.evaluate((externalSkillPacks) => {
     const visible = (element) => {
       const rect = element.getBoundingClientRect();
       const style = getComputedStyle(element);
@@ -576,7 +752,26 @@ async function inspectPageState(page) {
       return 'idle';
     })();
 
+    const matchesExternalSkillPack = (pack) => {
+      const site = location.hostname || 'local-page';
+      const path = `${location.pathname}${location.search}`;
+      const haystack = `${location.href} ${document.title} ${bodyText}`.toLowerCase();
+      const siteMatches = !pack.site || site === pack.site || site.endsWith(`.${pack.site}`);
+      const pageTypeMatches = !pack.match?.pageType || pack.match.pageType === pageType;
+      const pathMatches =
+        !pack.match?.paths?.length || pack.match.paths.some((item) => path.includes(item));
+      const keywordMatches =
+        !pack.match?.keywords?.length ||
+        pack.match.keywords.some((keyword) => haystack.includes(String(keyword).toLowerCase()));
+
+      return siteMatches && pageTypeMatches && pathMatches && keywordMatches;
+    };
+
+    const externalSkillPack = externalSkillPacks.find(matchesExternalSkillPack);
+
     const buildSkillPack = () => {
+      if (externalSkillPack) return externalSkillPack;
+
       const site = location.hostname || 'local-page';
       const isCloudBuyPage = /kiki-cloud-buy|云服务器购买|订单确认/i.test(
         `${location.pathname} ${bodyText}`,
@@ -775,7 +970,7 @@ async function inspectPageState(page) {
       url: location.href,
       warnings,
     };
-  });
+  }, externalSkillPacks);
 }
 
 async function fillElementWithDomFallback(page, selector, text) {
