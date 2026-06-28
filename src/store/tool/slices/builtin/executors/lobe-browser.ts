@@ -61,7 +61,7 @@ class BrowserExecutor extends BaseExecutor<typeof BrowserApiName> {
   }
 
   navigate = async (
-    params: { timeout?: number; url: string },
+    params: { mode?: 'auto' | 'iframe' | 'remote'; timeout?: number; url: string },
     ctx?: BuiltinToolContext,
   ): Promise<BuiltinToolResult> => this.runtime(ctx).navigate(params);
 

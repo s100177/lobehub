@@ -15,6 +15,7 @@ export const BrowserApiName = {
 export type BrowserApiNameType = (typeof BrowserApiName)[keyof typeof BrowserApiName];
 
 export interface NavigateParams {
+  mode?: 'auto' | 'iframe' | 'remote';
   timeout?: number;
   url: string;
 }
@@ -45,6 +46,10 @@ export interface EvaluateParams {
 }
 
 export interface BrowserState {
+  embeddable?: boolean;
+  fallbackReason?: string;
+  iframeUrl?: string;
+  mode?: 'iframe' | 'remote';
   result?: any;
   screenshot?: string; // base64 fallback / live-viewer frame source
   sessionId?: string;

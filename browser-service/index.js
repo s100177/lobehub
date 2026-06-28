@@ -6,6 +6,7 @@ const MAX_SESSIONS = Number.parseInt(process.env.MAX_SESSIONS || '20', 10);
 const SESSION_IDLE_MS = Number.parseInt(process.env.SESSION_IDLE_MS || '300000', 10);
 const STREAM_INTERVAL_MS = Number.parseInt(process.env.STREAM_INTERVAL_MS || '900', 10);
 const VIEWPORT = { width: 1280, height: 800 };
+const EMBED_CHECK_TIMEOUT_MS = Number.parseInt(process.env.EMBED_CHECK_TIMEOUT_MS || '5000', 10);
 const USER_AGENT =
   process.env.BROWSER_USER_AGENT ||
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36';
@@ -103,10 +104,97 @@ async function getPageState(page, options = {}) {
   ]);
 
   return {
+    embeddable: false,
+    mode: 'remote',
     title,
     url: page.url(),
     viewport: VIEWPORT,
     ...(screenshot ? { screenshot: screenshot.toString('base64') } : {}),
+  };
+}
+
+function normalizeHttpUrl(input) {
+  const url = new URL(input);
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error('Only http:// and https:// URLs are supported');
+  }
+
+  return url.toString();
+}
+
+function getFrameBlockReason(headers) {
+  const xFrameOptions = headers.get('x-frame-options')?.toLowerCase();
+  if (xFrameOptions) {
+    if (xFrameOptions.includes('deny')) return 'Blocked by X-Frame-Options: DENY';
+    if (xFrameOptions.includes('sameorigin')) return 'Blocked by X-Frame-Options: SAMEORIGIN';
+    if (xFrameOptions.includes('allow-from'))
+      return 'Blocked by legacy X-Frame-Options: ALLOW-FROM';
+  }
+
+  const csp = headers.get('content-security-policy')?.toLowerCase();
+  const frameAncestors = csp
+    ?.split(';')
+    .map((part) => part.trim())
+    .find((part) => part.startsWith('frame-ancestors'));
+
+  if (!frameAncestors) return undefined;
+  if (frameAncestors.includes('*')) return undefined;
+  if (frameAncestors.includes("'none'")) return "Blocked by CSP frame-ancestors 'none'";
+
+  return `Blocked by CSP ${frameAncestors}`;
+}
+
+async function fetchForEmbedCheck(url, method, timeout) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    return await fetch(url, {
+      headers: {
+        'User-Agent': USER_AGENT,
+      },
+      method,
+      redirect: 'follow',
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function detectEmbeddable(url, timeout = EMBED_CHECK_TIMEOUT_MS) {
+  try {
+    let response = await fetchForEmbedCheck(url, 'HEAD', timeout);
+    if (response.status === 405 || response.status === 403) {
+      response = await fetchForEmbedCheck(url, 'GET', timeout);
+    }
+
+    const fallbackReason = getFrameBlockReason(response.headers);
+    const finalUrl = response.url || url;
+
+    return {
+      embeddable: !fallbackReason,
+      fallbackReason,
+      finalUrl,
+    };
+  } catch (err) {
+    return {
+      embeddable: false,
+      fallbackReason: `Embed check failed: ${err.message}`,
+      finalUrl: url,
+    };
+  }
+}
+
+function getIframePageState({ fallbackReason, finalUrl, requestedMode }) {
+  return {
+    embeddable: true,
+    fallbackReason,
+    iframeUrl: finalUrl,
+    mode: 'iframe',
+    title: new URL(finalUrl).hostname,
+    url: finalUrl,
+    viewport: VIEWPORT,
+    ...(requestedMode === 'iframe' ? { requestedMode } : {}),
   };
 }
 
@@ -516,12 +604,45 @@ app.get('/status', async (req, res) => {
 
 app.post('/navigate', sessionMiddleware, async (req, res) => {
   try {
-    const { timeout = 30000, url } = req.body;
+    const { mode = 'auto', timeout = 30000, url } = req.body;
     if (!url) return res.status(400).json({ error: 'Missing url' });
+    if (!['auto', 'iframe', 'remote'].includes(mode)) {
+      return res.status(400).json({ error: 'Invalid mode' });
+    }
+
+    const normalizedUrl = normalizeHttpUrl(url);
+
+    let fallbackReason;
+
+    if (mode !== 'remote') {
+      const embed =
+        mode === 'iframe'
+          ? { embeddable: true, finalUrl: normalizedUrl }
+          : await detectEmbeddable(normalizedUrl);
+
+      if (embed.embeddable) {
+        return res.json(
+          getIframePageState({
+            fallbackReason: embed.fallbackReason,
+            finalUrl: embed.finalUrl,
+            requestedMode: mode,
+          }),
+        );
+      }
+
+      fallbackReason = embed.fallbackReason;
+    }
 
     const { page } = await getOrCreateSession(req.sessionId);
-    await page.goto(url, { timeout, waitUntil: 'networkidle' });
-    res.json(await getPageState(page, { screenshot: false }));
+    await page.goto(normalizedUrl, { timeout, waitUntil: 'networkidle' });
+    const state = await getPageState(page, { screenshot: false });
+    res.json({
+      ...state,
+      embeddable: false,
+      fallbackReason:
+        mode === 'remote' ? 'Remote mode requested for browser control' : fallbackReason,
+      mode: 'remote',
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -11,6 +11,12 @@ export const BrowserManifest: BuiltinToolManifest = {
       name: BrowserApiName.navigate,
       parameters: {
         properties: {
+          mode: {
+            description:
+              'Browser display/control mode. Use auto by default. Use remote when you need to click, fill, submit, or evaluate the page. Use iframe when the user only needs to view/interact with an embeddable page directly.',
+            enum: ['auto', 'iframe', 'remote'],
+            type: 'string',
+          },
           url: {
             description: 'The URL to navigate to (must include protocol, e.g. https://)',
             type: 'string',
@@ -141,9 +147,10 @@ export const BrowserManifest: BuiltinToolManifest = {
   identifier: BrowserIdentifier,
   meta: {
     avatar: '🌐',
-    description: 'Control a web browser to navigate, click, fill forms, and execute JavaScript',
+    description:
+      'Open pages in a right-side browser panel using direct iframe when possible and remote Playwright control when needed',
     readme:
-      'This tool gives you control of an isolated Chromium browser. The same session is displayed in the right-side live browser panel, where the user can also interact with the page.',
+      'This tool opens pages in the right-side browser panel. Embeddable pages use a direct iframe for native interaction; blocked pages or pages that need AI control use an isolated remote Chromium session.',
     title: 'Browser',
   },
   systemRole: systemPrompt,

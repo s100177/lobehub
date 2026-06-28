@@ -8,7 +8,11 @@ export interface BrowserRuntimeService {
   evaluate: (args: { code: string }) => Promise<BrowserState>;
   fill: (args: { selector: string; text: string; timeout?: number }) => Promise<BrowserState>;
   forward: () => Promise<BrowserState>;
-  navigate: (args: { url: string; timeout?: number }) => Promise<BrowserState>;
+  navigate: (args: {
+    mode?: 'auto' | 'iframe' | 'remote';
+    timeout?: number;
+    url: string;
+  }) => Promise<BrowserState>;
   screenshot: () => Promise<BrowserState>;
   scroll: (args: { x?: number; y?: number }) => Promise<BrowserState>;
   submit: (args: { selector: string; timeout?: number }) => Promise<BrowserState>;
@@ -22,12 +26,18 @@ export class BrowserExecutionRuntime {
     private sessionId: string,
   ) {}
 
-  async navigate(args: { url: string; timeout?: number }): Promise<BuiltinServerRuntimeOutput> {
+  async navigate(args: {
+    mode?: 'auto' | 'iframe' | 'remote';
+    timeout?: number;
+    url: string;
+  }): Promise<BuiltinServerRuntimeOutput> {
     try {
       const state = await this.service.navigate(args);
+      const modeText = state.mode ? `\nMode: ${state.mode}` : '';
+      const fallbackText = state.fallbackReason ? `\nFallback: ${state.fallbackReason}` : '';
 
       return {
-        content: `Navigated to ${state.url}\nTitle: ${state.title}`,
+        content: `Navigated to ${state.url}\nTitle: ${state.title}${modeText}${fallbackText}`,
         state: { ...state, sessionId: this.sessionId },
         success: true,
       };
