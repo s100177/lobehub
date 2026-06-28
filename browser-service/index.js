@@ -4,7 +4,12 @@ import { chromium } from 'playwright';
 const PORT = Number.parseInt(process.env.PORT || '3100', 10);
 const MAX_SESSIONS = Number.parseInt(process.env.MAX_SESSIONS || '20', 10);
 const SESSION_IDLE_MS = Number.parseInt(process.env.SESSION_IDLE_MS || '300000', 10);
-const STREAM_INTERVAL_MS = Number.parseInt(process.env.STREAM_INTERVAL_MS || '900', 10);
+const STREAM_ACTIVE_INTERVAL_MS = Number.parseInt(
+  process.env.STREAM_ACTIVE_INTERVAL_MS || '300',
+  10,
+);
+const STREAM_IDLE_INTERVAL_MS = Number.parseInt(process.env.STREAM_IDLE_INTERVAL_MS || '1200', 10);
+const STREAM_ACTIVE_WINDOW_MS = Number.parseInt(process.env.STREAM_ACTIVE_WINDOW_MS || '5000', 10);
 const VIEWPORT = { width: 1280, height: 800 };
 const EMBED_CHECK_TIMEOUT_MS = Number.parseInt(process.env.EMBED_CHECK_TIMEOUT_MS || '5000', 10);
 const USER_AGENT =
@@ -76,7 +81,7 @@ async function getOrCreateSession(sessionId) {
       Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
     });
     const page = await context.newPage();
-    const session = { browser, context, lastUsed: Date.now(), page };
+    const session = { browser, context, lastInputAt: Date.now(), lastUsed: Date.now(), page };
     sessions.set(sessionId, session);
     return session;
   })();
@@ -96,11 +101,32 @@ setInterval(() => {
   }
 }, 60_000);
 
+async function getPointerState(page, pointer) {
+  if (!pointer) return undefined;
+
+  return await page
+    .evaluate(({ x, y }) => {
+      const element = document.elementFromPoint(x, y);
+      if (!element) return { cursor: 'default' };
+
+      const cursor = window.getComputedStyle(element).cursor || 'default';
+      const clickable = Boolean(
+        element.closest?.(
+          'a,button,input,select,textarea,[role="button"],[role="link"],[onclick],[tabindex]',
+        ),
+      );
+
+      return { cursor: clickable && cursor === 'auto' ? 'pointer' : cursor };
+    }, pointer)
+    .catch(() => undefined);
+}
+
 async function getPageState(page, options = {}) {
   const includeScreenshot = options.screenshot !== false;
-  const [title, screenshot] = await Promise.all([
+  const [title, screenshot, pointer] = await Promise.all([
     page.title().catch(() => ''),
     includeScreenshot ? page.screenshot({ fullPage: false, type: 'png' }).catch(() => null) : null,
+    getPointerState(page, options.pointer),
   ]);
 
   return {
@@ -109,6 +135,7 @@ async function getPageState(page, options = {}) {
     title,
     url: page.url(),
     viewport: VIEWPORT,
+    ...(pointer ? { pointer } : {}),
     ...(screenshot ? { screenshot: screenshot.toString('base64') } : {}),
   };
 }
@@ -395,6 +422,7 @@ function renderViewerHtml({ basePath, sessionId }) {
       background: #fff;
       box-shadow: 0 20px 70px rgba(0, 0, 0, 0.45);
       cursor: default;
+      image-rendering: auto;
     }
     .empty {
       position: absolute;
@@ -453,6 +481,9 @@ function renderViewerHtml({ basePath, sessionId }) {
     const emptyEl = document.getElementById('empty');
     let viewport = { width: 1280, height: 800 };
     let eventSource;
+    let lastFrameKey = '';
+    let lastPointer = null;
+    let lastPointerSentAt = 0;
 
     function endpoint(mode) {
       const url = new URL(basePath, window.location.origin);
@@ -469,29 +500,42 @@ function renderViewerHtml({ basePath, sessionId }) {
       };
     }
 
-    async function sendInput(payload) {
+    async function sendInput(payload, options = {}) {
       try {
-        await fetch(endpoint('input'), {
+        const response = await fetch(endpoint('input'), {
           body: JSON.stringify(payload),
           headers: { 'Content-Type': 'application/json' },
           method: 'POST',
         });
+        if (options.drawResponse !== false && response.ok) {
+          const frame = await response.json().catch(() => null);
+          if (frame) drawFrame(frame, { force: true });
+        }
       } catch {
         statusEl.textContent = 'input failed';
       }
     }
 
-    function drawFrame(frame) {
+    function drawFrame(frame, options = {}) {
       if (frame.viewport) {
         viewport = frame.viewport;
         canvas.width = viewport.width;
         canvas.height = viewport.height;
+      }
+      if (frame.pointer?.cursor) {
+        canvas.style.cursor = frame.pointer.cursor;
       }
       if (frame.url && frame.url !== 'about:blank') {
         urlEl.textContent = frame.title ? frame.title + ' - ' + frame.url : frame.url;
         emptyEl.style.display = 'none';
       }
       if (!frame.screenshot) return;
+      const frameKey = frame.url + ':' + frame.title + ':' + frame.screenshot.slice(0, 80);
+      if (!options.force && frameKey === lastFrameKey) {
+        statusEl.textContent = 'live';
+        return;
+      }
+      lastFrameKey = frameKey;
       const img = new Image();
       img.onload = () => {
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
@@ -520,11 +564,20 @@ function renderViewerHtml({ basePath, sessionId }) {
 
     canvas.addEventListener('click', (event) => {
       canvas.focus();
-      sendInput({ type: 'click', ...canvasPoint(event) });
+      lastPointer = canvasPoint(event);
+      sendInput({ type: 'click', ...lastPointer });
     });
     canvas.addEventListener('dblclick', (event) => {
       canvas.focus();
-      sendInput({ type: 'dblclick', ...canvasPoint(event) });
+      lastPointer = canvasPoint(event);
+      sendInput({ type: 'dblclick', ...lastPointer });
+    });
+    canvas.addEventListener('mousemove', (event) => {
+      lastPointer = canvasPoint(event);
+      const now = Date.now();
+      if (now - lastPointerSentAt < 120) return;
+      lastPointerSentAt = now;
+      sendInput({ type: 'mousemove', ...lastPointer });
     });
     canvas.addEventListener('wheel', (event) => {
       event.preventDefault();
@@ -558,6 +611,10 @@ async function applyInput(page, payload) {
     }
     case 'dblclick': {
       await page.mouse.dblclick(payload.x, payload.y);
+      return;
+    }
+    case 'mousemove': {
+      await page.mouse.move(payload.x, payload.y);
       return;
     }
     case 'wheel': {
@@ -794,31 +851,53 @@ app.get('/events', sessionMiddleware, async (req, res) => {
   res.flushHeaders?.();
 
   let closed = false;
+  let timer;
   req.on('close', () => {
     closed = true;
+    clearTimeout(timer);
   });
 
   const sendFrame = async () => {
     if (closed) return;
     try {
-      const { page } = await getOrCreateSession(req.sessionId);
-      res.write(`data: ${JSON.stringify(await getPageState(page))}\n\n`);
+      const session = await getOrCreateSession(req.sessionId);
+      res.write(
+        `data: ${JSON.stringify(await getPageState(session.page, { pointer: session.lastPointer }))}\n\n`,
+      );
     } catch (err) {
       res.write(`event: error\ndata: ${JSON.stringify({ error: err.message })}\n\n`);
     }
   };
 
-  await sendFrame();
-  const timer = setInterval(sendFrame, STREAM_INTERVAL_MS);
-  req.on('close', () => clearInterval(timer));
+  const schedule = async () => {
+    if (closed) return;
+    await sendFrame();
+    if (closed) return;
+
+    const session = sessions.get(req.sessionId);
+    const active = session && Date.now() - session.lastInputAt < STREAM_ACTIVE_WINDOW_MS;
+    timer = setTimeout(schedule, active ? STREAM_ACTIVE_INTERVAL_MS : STREAM_IDLE_INTERVAL_MS);
+  };
+
+  await schedule();
 });
 
 app.post('/input', sessionMiddleware, async (req, res) => {
   try {
-    const { page } = await getOrCreateSession(req.sessionId);
-    await applyInput(page, req.body || {});
-    await page.waitForTimeout(100);
-    res.json(await getPageState(page, { screenshot: false }));
+    const session = await getOrCreateSession(req.sessionId);
+    const payload = req.body || {};
+    if (typeof payload.x === 'number' && typeof payload.y === 'number') {
+      session.lastPointer = { x: payload.x, y: payload.y };
+    }
+    session.lastInputAt = Date.now();
+    await applyInput(session.page, payload);
+    await session.page.waitForTimeout(100);
+    res.json(
+      await getPageState(session.page, {
+        pointer: session.lastPointer,
+        screenshot: payload.type !== 'mousemove',
+      }),
+    );
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
