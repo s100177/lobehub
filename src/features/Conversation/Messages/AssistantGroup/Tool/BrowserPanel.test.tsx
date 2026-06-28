@@ -268,6 +268,79 @@ describe('BrowserPanel dual mode rendering', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('renders a viewport-relative target box in iframe takeover without intercepting input', () => {
+    render(
+      <BrowserPanel
+        sessionId="session-target-box"
+        state={{
+          embeddable: true,
+          iframeUrl: 'http://localhost:4311/search.html',
+          mode: 'iframe',
+          pageState: {
+            pageType: 'search',
+            targetHighlight: {
+              height: 44,
+              label: '搜索输入框',
+              selector: '#kw',
+              width: 260,
+              x: 120,
+              y: 96,
+            },
+          },
+          taskState: 'ai_controlling',
+          title: 'Search',
+          url: 'http://localhost:4311/search.html',
+          viewport: { height: 800, width: 1280 },
+        }}
+      />,
+    );
+
+    const targetBox = screen.getByLabelText('Current browser target box');
+    expect(targetBox).toHaveTextContent('搜索输入框');
+    expect(targetBox).toHaveStyle({
+      height: '5.5%',
+      left: '9.375%',
+      pointerEvents: 'none',
+      top: '12%',
+      width: '20.3125%',
+    });
+    expect(screen.queryByLabelText('Current browser target')).not.toBeInTheDocument();
+  });
+
+  it('keeps the target label fallback when remote viewer owns bbox drawing', () => {
+    render(
+      <BrowserPanel
+        sessionId="session-remote-target"
+        state={{
+          embeddable: false,
+          mode: 'remote',
+          pageState: {
+            pageType: 'purchase',
+            targetHighlight: {
+              height: 42,
+              label: '立即购买',
+              selector: '#buy',
+              width: 180,
+              x: 340,
+              y: 420,
+            },
+          },
+          taskState: 'ai_controlling',
+          title: 'Remote Buy',
+          url: 'https://example.com/buy',
+          viewport: { height: 800, width: 1280 },
+        }}
+      />,
+    );
+
+    expect(screen.getByLabelText('Current browser target')).toHaveTextContent('立即购买');
+    expect(screen.queryByLabelText('Current browser target box')).not.toBeInTheDocument();
+    expect(screen.getByTitle('Remote Buy')).toHaveAttribute(
+      'src',
+      '/api/browser/proxy?session=session-remote-target&takeover=1',
+    );
+  });
+
   it('pauses takeover when the user intervenes and re-inspects before continuing', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       json: async () => ({

@@ -26,12 +26,16 @@ export async function GET(request: NextRequest) {
   }
 
   const mode = request.nextUrl.searchParams.get('mode');
+  const takeover = request.nextUrl.searchParams.get('takeover');
   const path = mode === 'events' ? '/events' : '/viewer';
 
   try {
     const targetUrl = new URL(`${browserServiceUrl}${path}`);
     targetUrl.searchParams.set('session', session);
-    if (path === '/viewer') targetUrl.searchParams.set('basePath', '/api/browser/proxy');
+    if (path === '/viewer') {
+      targetUrl.searchParams.set('basePath', '/api/browser/proxy');
+      if (takeover === '1') targetUrl.searchParams.set('takeover', '1');
+    }
 
     const res = await fetch(targetUrl, { cache: 'no-store' });
 

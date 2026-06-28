@@ -2,6 +2,7 @@
 
 import { Flexbox } from '@lobehub/ui';
 import { createStaticStyles } from 'antd-style';
+import type { CSSProperties } from 'react';
 import { memo, useEffect, useState } from 'react';
 
 import type {
@@ -437,6 +438,58 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
     background: rgb(255 251 235 / 92%);
     box-shadow: 0 10px 32px rgb(146 64 14 / 18%);
   `,
+  targetBox: css`
+    pointer-events: none;
+
+    position: absolute;
+    z-index: 4;
+
+    min-width: 16px;
+    min-height: 16px;
+    border: 3px solid #f59e0b;
+    border-radius: 10px;
+
+    background: rgb(245 158 11 / 10%);
+    box-shadow:
+      0 0 0 9999px rgb(15 23 42 / 3%),
+      0 0 0 8px rgb(245 158 11 / 12%),
+      0 12px 32px rgb(146 64 14 / 22%);
+
+    animation: browser-target-scan 1.4s ease-in-out infinite;
+
+    @keyframes browser-target-scan {
+      0%,
+      100% {
+        transform: scale(1);
+        border-color: #f59e0b;
+      }
+
+      50% {
+        transform: scale(1.01);
+        border-color: #22d3ee;
+      }
+    }
+  `,
+  targetBoxLabel: css`
+    position: absolute;
+    inset-block-start: -32px;
+    inset-inline-start: 0;
+
+    overflow: hidden;
+
+    max-width: min(360px, 80vw);
+    padding-block: 5px;
+    padding-inline: 9px;
+    border-radius: 999px;
+
+    font-size: 12px;
+    font-weight: 800;
+    color: #fff7ed;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    background: rgb(15 23 42 / 88%);
+  `,
   empty: css`
     display: flex;
     flex: 1;
@@ -500,6 +553,19 @@ const controllingStates = new Set<BrowserTaskState>(['ai_controlling', 'acting',
 const authorizationStates = new Set<BrowserTaskState>(['plan_ready', 'waiting_user_authorization']);
 
 const clarificationStates = new Set<BrowserTaskState>(['asking_clarification', 'needs_more_info']);
+
+const hasTargetBox = (
+  target: BrowserPageState['targetHighlight'],
+): target is NonNullable<BrowserPageState['targetHighlight']> &
+  Required<
+    Pick<NonNullable<BrowserPageState['targetHighlight']>, 'height' | 'width' | 'x' | 'y'>
+  > =>
+  Number.isFinite(target?.x) &&
+  Number.isFinite(target?.y) &&
+  Number.isFinite(target?.width) &&
+  Number.isFinite(target?.height) &&
+  (target?.width ?? 0) > 0 &&
+  (target?.height ?? 0) > 0;
 
 const deriveClarification = (
   pageState?: BrowserPageState,
@@ -629,9 +695,25 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   const planSteps = plan?.steps?.slice(0, 6) ?? [];
   const isControlling = taskState ? controllingStates.has(taskState) : false;
   const activeClarification = pageState?.clarifications?.[0] ?? deriveClarification(pageState);
+  const targetHighlight = pageState?.targetHighlight;
+  const targetBoxVisible =
+    isIframeMode &&
+    isControlling &&
+    Boolean(currentState.viewport) &&
+    hasTargetBox(targetHighlight);
+  const targetBoxStyle: CSSProperties | undefined =
+    targetBoxVisible && currentState.viewport
+      ? {
+          height: `${Math.max(0.5, (targetHighlight.height / currentState.viewport.height) * 100)}%`,
+          left: `${Math.max(0, (targetHighlight.x / currentState.viewport.width) * 100)}%`,
+          pointerEvents: 'none',
+          top: `${Math.max(0, (targetHighlight.y / currentState.viewport.height) * 100)}%`,
+          width: `${Math.max(0.5, (targetHighlight.width / currentState.viewport.width) * 100)}%`,
+        }
+      : undefined;
   const targetLabel =
-    pageState?.targetHighlight?.label ||
-    pageState?.targetHighlight?.selector ||
+    targetHighlight?.label ||
+    targetHighlight?.selector ||
     pageState?.primaryActions?.[0]?.text ||
     recentEvents.find((event) => event.target)?.target;
 
@@ -1030,7 +1112,18 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
           onKeyDownCapture={pauseByIntervention}
           onWheelCapture={pauseByIntervention}
         >
-          {isControlling && targetLabel && (
+          {targetBoxVisible && (
+            <div
+              aria-label="Current browser target box"
+              className={styles.targetBox}
+              style={targetBoxStyle}
+            >
+              {targetLabel && (
+                <span className={styles.targetBoxLabel}>AI 正在操作：{targetLabel}</span>
+              )}
+            </div>
+          )}
+          {isControlling && targetLabel && !targetBoxVisible && (
             <div aria-label="Current browser target" className={styles.targetHighlight}>
               AI 正在操作：{targetLabel}
             </div>
@@ -1044,7 +1137,9 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
             src={
               isIframeMode
                 ? displayUrl
-                : `/api/browser/proxy?session=${encodeURIComponent(sessionId)}`
+                : `/api/browser/proxy?session=${encodeURIComponent(sessionId)}${
+                    isControlling ? '&takeover=1' : ''
+                  }`
             }
             onLoad={() => setIframeStatus('loaded')}
           />

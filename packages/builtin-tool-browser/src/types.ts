@@ -69,6 +69,7 @@ export interface BrowserPageField {
   checked?: boolean;
   label: string;
   options?: string[];
+  selector?: string;
   value?: string;
 }
 

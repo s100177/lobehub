@@ -335,6 +335,80 @@ async function inspectPageState(page) {
 
     const clean = (value) => value?.replaceAll(/\s+/g, ' ').trim() || '';
 
+    const cssEscape = (value) =>
+      globalThis.CSS?.escape
+        ? globalThis.CSS.escape(value)
+        : String(value).replaceAll(/[^\w-]/g, '\\$&');
+
+    const cssAttrEscape = (value) => String(value).replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+
+    const isUniqueSelector = (selector) => {
+      try {
+        return document.querySelectorAll(selector).length === 1;
+      } catch {
+        return false;
+      }
+    };
+
+    const selectorFor = (element) => {
+      if (element.id) {
+        const idSelector = `#${cssEscape(element.id)}`;
+        if (isUniqueSelector(idSelector)) return idSelector;
+      }
+
+      for (const attr of ['data-testid', 'data-test-id', 'data-cy', 'name', 'aria-label']) {
+        const value = element.getAttribute(attr);
+        if (!value) continue;
+
+        const selector = `${element.tagName.toLowerCase()}[${attr}="${cssAttrEscape(value)}"]`;
+        if (isUniqueSelector(selector)) return selector;
+      }
+
+      const parts = [];
+      let current = element;
+      while (current && current.nodeType === Node.ELEMENT_NODE && current !== document.body) {
+        const tag = current.tagName.toLowerCase();
+        const parent = current.parentElement;
+        if (!parent) break;
+
+        const siblings = [...parent.children].filter((child) => child.tagName === current.tagName);
+        const index = siblings.indexOf(current) + 1;
+        parts.unshift(siblings.length > 1 ? `${tag}:nth-of-type(${index})` : tag);
+
+        const selector = parts.join(' > ');
+        if (isUniqueSelector(selector)) return selector;
+
+        current = parent;
+      }
+
+      return parts.length > 0 ? `body > ${parts.join(' > ')}` : element.tagName.toLowerCase();
+    };
+
+    const rectFor = (element) => {
+      const rect = element.getBoundingClientRect();
+      const x = Math.max(0, Math.min(window.innerWidth, rect.left));
+      const y = Math.max(0, Math.min(window.innerHeight, rect.top));
+      const right = Math.max(0, Math.min(window.innerWidth, rect.right));
+      const bottom = Math.max(0, Math.min(window.innerHeight, rect.bottom));
+
+      return {
+        height: Math.max(1, Math.round((bottom - y) * 10) / 10),
+        width: Math.max(1, Math.round((right - x) * 10) / 10),
+        x: Math.round(x * 10) / 10,
+        y: Math.round(y * 10) / 10,
+      };
+    };
+
+    const highlightFor = (element, label) => {
+      if (!element || !visible(element)) return undefined;
+
+      return {
+        ...rectFor(element),
+        label: clean(label).slice(0, 120),
+        selector: selectorFor(element),
+      };
+    };
+
     const classifyRisk = (text = '') => {
       const normalized = text.replaceAll(/\s+/g, '');
       if (!normalized) return undefined;
@@ -356,7 +430,7 @@ async function inspectPageState(page) {
       return clean(explicit?.innerText || implicit?.innerText || aria || placeholder || parentText);
     };
 
-    const fields = [...document.querySelectorAll('input, textarea, select')]
+    const fieldCandidates = [...document.querySelectorAll('input, textarea, select')]
       .filter(visible)
       .slice(0, 80)
       .map((element) => {
@@ -370,19 +444,25 @@ async function inspectPageState(page) {
               : '';
 
         return {
-          ...(isCheckbox || isRadio ? { checked: element.checked } : {}),
-          label: fieldLabel(element).slice(0, 120),
-          ...(element instanceof HTMLSelectElement
-            ? {
-                options: [...element.options]
-                  .map((option) => clean(option.textContent))
-                  .slice(0, 30),
-              }
-            : {}),
-          value: clean(value).slice(0, 120),
+          element,
+          field: {
+            ...(isCheckbox || isRadio ? { checked: element.checked } : {}),
+            label: fieldLabel(element).slice(0, 120),
+            ...(element instanceof HTMLSelectElement
+              ? {
+                  options: [...element.options]
+                    .map((option) => clean(option.textContent))
+                    .slice(0, 30),
+                }
+              : {}),
+            selector: selectorFor(element),
+            value: clean(value).slice(0, 120),
+          },
         };
       })
-      .filter((field) => field.label || field.value);
+      .filter(({ field }) => field.label || field.value);
+
+    const fields = fieldCandidates.map(({ field }) => field);
 
     const selectedOptions = [
       ...document.querySelectorAll(
@@ -396,7 +476,7 @@ async function inspectPageState(page) {
       .filter(Boolean)
       .slice(0, 30);
 
-    const actions = [
+    const actionCandidates = [
       ...document.querySelectorAll(
         'button, a, [role="button"], input[type="button"], input[type="submit"]',
       ),
@@ -411,12 +491,18 @@ async function inspectPageState(page) {
         );
         if (!text) return null;
         return {
-          ...(classifyRisk(text) ? { risk: classifyRisk(text) } : {}),
-          text: text.slice(0, 120),
+          action: {
+            ...(classifyRisk(text) ? { risk: classifyRisk(text) } : {}),
+            selector: selectorFor(element),
+            text: text.slice(0, 120),
+          },
+          element,
         };
       })
       .filter(Boolean)
       .slice(0, 60);
+
+    const actions = actionCandidates.map(({ action }) => action);
 
     const bodyText = clean(document.body?.innerText || '');
     const prices = [...bodyText.matchAll(/([^。\n]{0,12})[¥￥]\s?[\d,.]+(?:\/[^\s，。]+)?/g)]
@@ -595,6 +681,67 @@ async function inspectPageState(page) {
         }
       : undefined;
 
+    const targetHighlight = (() => {
+      const currentStep =
+        plan?.steps?.find((step) => step.status === 'current') ||
+        plan?.steps?.find((step) => step.status === 'blocked');
+      const riskAction = actionCandidates.find(({ action }) => action.risk);
+      const emptyField = fieldCandidates.find(({ field }) => !field.value && field.label);
+      const searchField = fieldCandidates.find(({ element, field }) => {
+        const inputType = element instanceof HTMLInputElement ? element.type : '';
+        const descriptor = `${field.label} ${field.selector}`.toLowerCase();
+        return (
+          element instanceof HTMLTextAreaElement ||
+          element instanceof HTMLSelectElement ||
+          ['search', 'text', ''].includes(inputType) ||
+          /search|query|wd|kw|搜索|查询/.test(descriptor)
+        );
+      });
+      const submitAction = actionCandidates.find(({ action }) =>
+        /搜索|查询|提交|生成推荐|下一步|继续/.test(action.text),
+      );
+
+      if (!loggedIn) {
+        const loginField = fieldCandidates.find(({ field }) =>
+          /账号|登录|密码|验证码/.test(field.label),
+        );
+        const loginAction = actionCandidates.find(({ action }) =>
+          /登录|sign in|log in/i.test(action.text),
+        );
+        return highlightFor(
+          loginField?.element || loginAction?.element,
+          loginField?.field.label || loginAction?.action.text || '登录信息',
+        );
+      }
+
+      if (currentStep?.type === 'risk_gate' || confirmBeforeProceed) {
+        return highlightFor(riskAction?.element, riskAction?.action.text || '风险动作');
+      }
+
+      if (currentStep?.type === 'ask' || gaps.includes('missing_field_values')) {
+        return highlightFor(emptyField?.element, emptyField?.field.label || '待补充字段');
+      }
+
+      if (currentStep?.type === 'fill' || pageType === 'search') {
+        return highlightFor(
+          searchField?.element || submitAction?.element,
+          searchField?.field.label || submitAction?.action.text || '搜索输入',
+        );
+      }
+
+      if (currentStep?.type === 'click') {
+        return highlightFor(submitAction?.element, submitAction?.action.text || '下一步操作');
+      }
+
+      return highlightFor(
+        riskAction?.element || actionCandidates[0]?.element || fieldCandidates[0]?.element,
+        riskAction?.action.text ||
+          actionCandidates[0]?.action.text ||
+          fieldCandidates[0]?.field.label ||
+          '当前目标',
+      );
+    })();
+
     return {
       actions,
       confirmationPoints,
@@ -609,6 +756,7 @@ async function inspectPageState(page) {
       primaryActions: actions.filter((action) => action.risk).slice(0, 10),
       plan,
       skillPack,
+      targetHighlight,
       taskState,
       workflowHints,
       textSample: bodyText.slice(0, 1000),
@@ -734,9 +882,10 @@ function sessionMiddleware(req, res, next) {
   next();
 }
 
-function renderViewerHtml({ basePath, sessionId }) {
+function renderViewerHtml({ basePath, sessionId, takeover }) {
   const encodedSession = JSON.stringify(sessionId);
   const encodedBasePath = JSON.stringify(basePath || '/api/browser/proxy');
+  const encodedTakeover = JSON.stringify(Boolean(takeover));
 
   return `<!doctype html>
 <html lang="en">
@@ -868,6 +1017,7 @@ function renderViewerHtml({ basePath, sessionId }) {
   <script>
     const sessionId = ${encodedSession};
     const basePath = ${encodedBasePath};
+    const takeover = ${encodedTakeover};
     const canvas = document.getElementById('screen');
     const ctx = canvas.getContext('2d');
     const urlEl = document.getElementById('url');
@@ -951,12 +1101,55 @@ function renderViewerHtml({ basePath, sessionId }) {
       const img = new Image();
       img.onload = () => {
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        if (takeover) drawTargetHighlight(frame.pageState?.targetHighlight);
         statusEl.textContent = 'live';
       };
       img.onerror = () => {
         statusEl.textContent = 'frame error';
       };
       img.src = 'data:image/png;base64,' + frame.screenshot;
+    }
+
+    function drawTargetHighlight(target) {
+      if (!target || !Number.isFinite(target.x) || !Number.isFinite(target.y)) return;
+      if (!Number.isFinite(target.width) || !Number.isFinite(target.height)) return;
+
+      const padding = 5;
+      const x = Math.max(0, target.x - padding);
+      const y = Math.max(0, target.y - padding);
+      const width = Math.min(canvas.width - x, target.width + padding * 2);
+      const height = Math.min(canvas.height - y, target.height + padding * 2);
+
+      ctx.save();
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = '#f59e0b';
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.12)';
+      ctx.shadowColor = 'rgba(245, 158, 11, 0.55)';
+      ctx.shadowBlur = 16;
+      ctx.beginPath();
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(x, y, width, height, 10);
+      } else {
+        ctx.rect(x, y, width, height);
+      }
+      ctx.fill();
+      ctx.stroke();
+
+      if (target.label) {
+        const label = 'AI 正在操作：' + target.label;
+        ctx.font = 'bold 13px sans-serif';
+        const metrics = ctx.measureText(label);
+        const labelWidth = Math.min(canvas.width - 16, metrics.width + 20);
+        const labelX = Math.min(Math.max(8, x), canvas.width - labelWidth - 8);
+        const labelY = y > 34 ? y - 34 : Math.min(canvas.height - 34, y + height + 8);
+        ctx.shadowBlur = 10;
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+        ctx.fillRect(labelX, labelY, labelWidth, 26);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#fff7ed';
+        ctx.fillText(label, labelX + 10, labelY + 18, labelWidth - 20);
+      }
+      ctx.restore();
     }
 
     function connect() {
@@ -1342,6 +1535,7 @@ app.get('/viewer', sessionMiddleware, async (req, res) => {
     renderViewerHtml({
       basePath: typeof req.query.basePath === 'string' ? req.query.basePath : undefined,
       sessionId: req.sessionId,
+      takeover: req.query.takeover === '1',
     }),
   );
 });

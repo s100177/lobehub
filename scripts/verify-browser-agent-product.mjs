@@ -239,6 +239,23 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function assertTargetHighlight(target, labelPattern, context) {
+  assert(target, `Expected ${context} target highlight`);
+  assert(
+    Number.isFinite(target.x) &&
+      Number.isFinite(target.y) &&
+      Number.isFinite(target.width) &&
+      Number.isFinite(target.height),
+    `Expected ${context} target bbox, got ${JSON.stringify(target)}`,
+  );
+  assert(target.width > 0 && target.height > 0, `Expected ${context} positive bbox dimensions`);
+  assert(target.selector, `Expected ${context} selector, got ${JSON.stringify(target)}`);
+  assert(
+    labelPattern.test(target.label || target.selector || ''),
+    `Expected ${context} label to match ${labelPattern}, got ${JSON.stringify(target)}`,
+  );
+}
+
 async function assertRemoteViewerPostsUserInput() {
   const browser = await chromium.launch({ headless: true });
   try {
@@ -324,6 +341,7 @@ try {
     buy.plan?.steps?.some((step) => step.type === 'risk_gate' && step.status === 'blocked'),
     `Expected blocked risk gate in plan, got ${JSON.stringify(buy.plan?.steps)}`,
   );
+  assertTargetHighlight(buy.pageState?.targetHighlight, /购买|提交|支付|风险/, 'cloud buy');
 
   const ambiguous = await request(
     '/navigate',
@@ -392,6 +410,7 @@ try {
       skillPack: search.skillPack,
     })}`,
   );
+  assertTargetHighlight(search.pageState?.targetHighlight, /搜索|查询/, 'search page');
   await request('/fill', { selector: '#kw', text: '复星医药' }, 'verify-agent-search');
   await request('/submit', { selector: '#kw' }, 'verify-agent-search');
   const query = await request(
