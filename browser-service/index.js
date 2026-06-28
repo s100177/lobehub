@@ -441,7 +441,7 @@ async function inspectPageState(page) {
 
     const loggedIn = !/登录|sign in|log in|请先登录|未登录/i.test(bodyText);
     const confirmBeforeProceed = Boolean(
-      /立即购买|提交订单|去支付|确认支付|删除|释放|授权|开通|提交|保存更改/.test(bodyText),
+      /立即购买|下单|提交订单|去支付|确认支付|删除|释放|授权|开通|保存更改/.test(bodyText),
     );
     const needsUserAttention = Boolean(
       confirmBeforeProceed || /多个|请选择|二选一|请确认|需要补充|缺少|未填写/.test(bodyText),
