@@ -416,13 +416,13 @@ function renderViewerHtml({ basePath, sessionId }) {
       overflow: hidden;
     }
     canvas {
-      max-width: 100%;
-      max-height: 100%;
+      width: 100%;
+      height: 100%;
       outline: none;
       background: #fff;
-      box-shadow: 0 20px 70px rgba(0, 0, 0, 0.45);
       cursor: default;
       image-rendering: auto;
+      display: block;
     }
     .empty {
       position: absolute;
@@ -486,6 +486,13 @@ function renderViewerHtml({ basePath, sessionId }) {
     let lastPointerSentAt = 0;
 
     function endpoint(mode) {
+      if (basePath === '/' || basePath === '') {
+        const directPath = mode === 'events' ? '/events' : mode === 'input' ? '/input' : '/viewer';
+        const directUrl = new URL(directPath, window.location.origin);
+        directUrl.searchParams.set('session', sessionId);
+        return directUrl.toString();
+      }
+
       const url = new URL(basePath, window.location.origin);
       url.searchParams.set('session', sessionId);
       if (mode) url.searchParams.set('mode', mode);
@@ -517,11 +524,6 @@ function renderViewerHtml({ basePath, sessionId }) {
     }
 
     function drawFrame(frame, options = {}) {
-      if (frame.viewport) {
-        viewport = frame.viewport;
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-      }
       if (frame.pointer?.cursor) {
         canvas.style.cursor = frame.pointer.cursor;
       }
@@ -530,6 +532,13 @@ function renderViewerHtml({ basePath, sessionId }) {
         emptyEl.style.display = 'none';
       }
       if (!frame.screenshot) return;
+      if (frame.viewport) {
+        viewport = frame.viewport;
+        if (canvas.width !== viewport.width || canvas.height !== viewport.height) {
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+        }
+      }
       const frameKey = frame.url + ':' + frame.title + ':' + frame.screenshot.slice(0, 80);
       if (!options.force && frameKey === lastFrameKey) {
         statusEl.textContent = 'live';

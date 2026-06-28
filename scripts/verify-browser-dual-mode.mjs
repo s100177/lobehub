@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import http from 'node:http';
+import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +16,8 @@ const deployedServiceDir = resolve(repoRoot, '..', 'browser-service');
 const browserServiceDir =
   process.env.BROWSER_SERVICE_DIR ||
   (existsSync(resolve(inRepoServiceDir, 'node_modules')) ? inRepoServiceDir : deployedServiceDir);
+const require = createRequire(import.meta.url);
+const { chromium } = require(require.resolve('playwright', { paths: [browserServiceDir] }));
 
 const testPageServer = http.createServer((req, res) => {
   if (req.url === '/blocked') {
@@ -26,7 +29,21 @@ const testPageServer = http.createServer((req, res) => {
   res.end(`<!doctype html>
     <title>Iframe OK</title>
     <style>
+      html,
+      body {
+        min-height: 100%;
+        margin: 0;
+        background: linear-gradient(135deg, #f97316, #0891b2);
+        color: #111827;
+        font: 24px sans-serif;
+      }
+      h1 {
+        margin: 32px 40px;
+      }
       button {
+        background: #111827;
+        border: 0;
+        color: white;
         cursor: pointer;
         height: 48px;
         left: 40px;
@@ -101,6 +118,91 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+async function assertRemoteViewerDoesNotBlankOnPointerFrame() {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { height: 700, width: 900 } });
+    await page.goto(`${browserOrigin}/viewer?session=verify-remote&basePath=/`, {
+      waitUntil: 'domcontentloaded',
+    });
+
+    await page.waitForFunction(() => document.getElementById('status')?.textContent === 'live', {
+      timeout: 10_000,
+    });
+
+    const initial = await page.evaluate(sampleViewerCanvas);
+    assert(
+      initial.hasContent,
+      `Expected remote viewer canvas to contain page pixels: ${initial.reason}`,
+    );
+    assert(
+      initial.fillsStage,
+      `Expected canvas to fill stage, got ${JSON.stringify(initial.rects)}`,
+    );
+
+    const canvas = page.locator('#screen');
+    const box = await canvas.boundingBox();
+    assert(box, 'Expected viewer canvas to be visible');
+    await page.mouse.move(box.x + 70, box.y + 104);
+
+    await page.waitForFunction(
+      () => getComputedStyle(document.getElementById('screen')).cursor === 'pointer',
+      {
+        timeout: 5000,
+      },
+    );
+
+    const afterHover = await page.evaluate(sampleViewerCanvas);
+    assert(
+      afterHover.hasContent,
+      `Expected pointer-only frame not to clear canvas: ${afterHover.reason}`,
+    );
+    assert(
+      afterHover.fillsStage,
+      `Expected canvas to keep filling stage after hover, got ${JSON.stringify(afterHover.rects)}`,
+    );
+  } finally {
+    await browser.close();
+  }
+}
+
+function sampleViewerCanvas() {
+  const canvas = document.getElementById('screen');
+  const stage = document.querySelector('.stage');
+  if (!(canvas instanceof HTMLCanvasElement) || !stage) {
+    return { hasContent: false, reason: 'missing canvas or stage' };
+  }
+
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return { hasContent: false, reason: 'missing canvas context' };
+
+  const width = canvas.width;
+  const height = canvas.height;
+  const points = [
+    [Math.floor(width * 0.25), Math.floor(height * 0.25)],
+    [Math.floor(width * 0.5), Math.floor(height * 0.5)],
+    [Math.floor(width * 0.75), Math.floor(height * 0.75)],
+    [80, 110],
+  ];
+  const samples = points.map(([x, y]) => Array.from(ctx.getImageData(x, y, 1, 1).data));
+  const hasContent = samples.some(([r, g, b, a]) => a > 0 && !(r > 248 && g > 248 && b > 248));
+  const canvasRect = canvas.getBoundingClientRect();
+  const stageRect = stage.getBoundingClientRect();
+  const fillsStage =
+    Math.abs(canvasRect.width - stageRect.width) <= 1 &&
+    Math.abs(canvasRect.height - stageRect.height) <= 1;
+
+  return {
+    fillsStage,
+    hasContent,
+    reason: hasContent ? 'non-white pixels found' : `samples were ${JSON.stringify(samples)}`,
+    rects: {
+      canvas: { height: canvasRect.height, width: canvasRect.width },
+      stage: { height: stageRect.height, width: stageRect.width },
+    },
+  };
+}
+
 const browserService = spawn(process.execPath, ['index.js'], {
   env: { ...process.env, PORT: String(browserPort) },
   cwd: browserServiceDir,
@@ -157,6 +259,8 @@ try {
     'verify-remote',
   );
   assert(clicked.result === '1', `Expected click to set dataset.clicked=1, got ${clicked.result}`);
+
+  await assertRemoteViewerDoesNotBlankOnPointerFrame();
 
   console.log('Browser dual-mode verification passed');
 } finally {
