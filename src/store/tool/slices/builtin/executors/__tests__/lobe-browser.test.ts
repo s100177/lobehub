@@ -89,4 +89,87 @@ describe('browser executor', () => {
       success: true,
     });
   });
+
+  it('proxies inspect actions for structured page state', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({
+        pageState: {
+          prices: [{ label: '配置费用', value: '¥114.36' }],
+          selectedOptions: ['南京', '2核4GB'],
+        },
+        title: 'CVM',
+        url: 'https://buy.cloud.tencent.com/cvm',
+      }),
+      ok: true,
+      status: 200,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await invokeExecutor(
+      BrowserIdentifier,
+      BrowserApiName.inspect,
+      {},
+      { messageId: 'tool-message-id', topicId: 'topic-1', toolCallId: 'call-1' },
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/browser/action', {
+      body: JSON.stringify({
+        action: BrowserApiName.inspect,
+        params: {},
+        sessionId: 'topic-1',
+      }),
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      signal: undefined,
+    });
+    expect(result).toMatchObject({
+      content: 'Inspected page state for https://buy.cloud.tencent.com/cvm',
+      state: {
+        pageState: {
+          selectedOptions: ['南京', '2核4GB'],
+        },
+        sessionId: 'topic-1',
+      },
+      success: true,
+    });
+  });
+
+  it('returns blocked state when the browser service rejects a risky click', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({
+        blocked: true,
+        riskBlock: {
+          action: 'click',
+          reason: 'Blocked risky click on "立即购买"',
+          requiresUserConfirmation: true,
+          risk: 'purchase',
+          targetText: '立即购买',
+        },
+        title: 'Checkout',
+        url: 'https://example.com/checkout',
+      }),
+      ok: true,
+      status: 200,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await invokeExecutor(
+      BrowserIdentifier,
+      BrowserApiName.click,
+      { selector: '#buy' },
+      { messageId: 'tool-message-id', topicId: 'topic-1', toolCallId: 'call-1' },
+    );
+
+    expect(result).toMatchObject({
+      content: 'Blocked risky click "#buy": Blocked risky click on "立即购买"',
+      state: {
+        blocked: true,
+        riskBlock: {
+          risk: 'purchase',
+        },
+      },
+      success: false,
+    });
+  });
 });

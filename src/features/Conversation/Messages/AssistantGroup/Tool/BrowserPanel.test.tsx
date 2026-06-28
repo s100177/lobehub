@@ -127,4 +127,53 @@ describe('BrowserPanel dual mode rendering', () => {
       );
     });
   });
+
+  it('renders page state, action timeline, and risk blocks inside the existing panel', () => {
+    const state: BrowserState = {
+      actionEvents: [
+        {
+          action: 'navigate',
+          id: 'event-1',
+          status: 'success',
+          summary: 'Opened https://example.com/checkout',
+          timestamp: 1,
+        },
+        {
+          action: 'click',
+          id: 'event-2',
+          status: 'blocked',
+          summary: 'Blocked risky click on "立即购买"',
+          target: '#buy',
+          timestamp: 2,
+        },
+      ],
+      blocked: true,
+      embeddable: false,
+      mode: 'remote',
+      pageState: {
+        actions: [{ risk: 'purchase', text: '立即购买' }],
+        prices: [{ label: '配置费用', value: '¥114.36' }],
+        selectedOptions: ['南京', '2核4GB'],
+      },
+      riskBlock: {
+        action: 'click',
+        reason: 'Blocked risky click on "立即购买"',
+        requiresUserConfirmation: true,
+        risk: 'purchase',
+        targetText: '立即购买',
+      },
+      title: 'Checkout',
+      url: 'https://example.com/checkout',
+    };
+
+    render(<BrowserPanel sessionId="session-risk" state={state} />);
+
+    expect(screen.getByText('Risky action blocked.')).toBeInTheDocument();
+    expect(screen.getAllByText(/Blocked risky click on "立即购买"/)).toHaveLength(2);
+    expect(screen.getByText('南京 / 2核4GB')).toBeInTheDocument();
+    expect(screen.getByText('配置费用 ¥114.36')).toBeInTheDocument();
+    expect(screen.getByText('立即购买')).toBeInTheDocument();
+    expect(screen.getByText('Opened https://example.com/checkout')).toBeInTheDocument();
+    expect(screen.getByText('Blocked risky click on "立即购买"')).toBeInTheDocument();
+  });
 });

@@ -81,7 +81,14 @@ async function getOrCreateSession(sessionId) {
       Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
     });
     const page = await context.newPage();
-    const session = { browser, context, lastInputAt: Date.now(), lastUsed: Date.now(), page };
+    const session = {
+      actionEvents: [],
+      browser,
+      context,
+      lastInputAt: Date.now(),
+      lastUsed: Date.now(),
+      page,
+    };
     sessions.set(sessionId, session);
     return session;
   })();
@@ -100,6 +107,20 @@ setInterval(() => {
     if (now - session.lastUsed > SESSION_IDLE_MS) destroySession(id).catch(() => {});
   }
 }, 60_000);
+
+function recordAction(session, { action, status = 'success', summary, target }) {
+  session.actionEvents = [
+    ...(session.actionEvents || []),
+    {
+      action,
+      id: `${Date.now()}:${action}:${Math.random().toString(36).slice(2, 8)}`,
+      status,
+      summary,
+      target,
+      timestamp: Date.now(),
+    },
+  ].slice(-20);
+}
 
 async function getPointerState(page, pointer) {
   if (!pointer) return undefined;
@@ -122,11 +143,14 @@ async function getPointerState(page, pointer) {
 }
 
 async function getPageState(page, options = {}) {
+  const session = options.sessionId ? sessions.get(options.sessionId) : undefined;
   const includeScreenshot = options.screenshot !== false;
-  const [title, screenshot, pointer] = await Promise.all([
+  const includePageState = options.pageState !== false;
+  const [title, screenshot, pointer, pageState] = await Promise.all([
     page.title().catch(() => ''),
     includeScreenshot ? page.screenshot({ fullPage: false, type: 'png' }).catch(() => null) : null,
     getPointerState(page, options.pointer),
+    includePageState ? inspectPageState(page).catch(() => undefined) : undefined,
   ]);
 
   return {
@@ -135,6 +159,8 @@ async function getPageState(page, options = {}) {
     title,
     url: page.url(),
     viewport: VIEWPORT,
+    ...(session?.actionEvents?.length ? { actionEvents: session.actionEvents } : {}),
+    ...(pageState ? { pageState } : {}),
     ...(pointer ? { pointer } : {}),
     ...(screenshot ? { screenshot: screenshot.toString('base64') } : {}),
   };
@@ -223,6 +249,197 @@ function getIframePageState({ fallbackReason, finalUrl, requestedMode }) {
     viewport: VIEWPORT,
     ...(requestedMode === 'iframe' ? { requestedMode } : {}),
   };
+}
+
+const RISK_PATTERNS = [
+  { pattern: /购买|下单|订单|支付|付款|续费|充值/, risk: 'purchase' },
+  { pattern: /删除|释放|销毁|退订|注销|移除/, risk: 'delete' },
+  { pattern: /授权|同意授权|允许访问|绑定/, risk: 'authorization' },
+  { pattern: /创建|开通|新建|部署|申请|提交/, risk: 'create' },
+  { pattern: /确认|提交|保存更改|修改密码|实名认证/, risk: 'submit' },
+];
+
+function classifyRisk(text = '') {
+  const normalized = text.replaceAll(/\s+/g, '');
+  if (!normalized) return undefined;
+
+  const match = RISK_PATTERNS.find(({ pattern }) => pattern.test(normalized));
+  return match?.risk;
+}
+
+async function inspectElementRisk(page, selector, action) {
+  return await page.evaluate(
+    ({ action, selector }) => {
+      const element = document.querySelector(selector);
+      if (!element) return { ok: false, reason: 'not_found' };
+
+      const nearbyText = [
+        element.textContent,
+        element.getAttribute('aria-label'),
+        element.getAttribute('title'),
+        element.getAttribute('value'),
+        element.closest('button, a, [role="button"]')?.textContent,
+        element.closest('label')?.innerText,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .replaceAll(/\s+/g, ' ')
+        .trim();
+
+      return {
+        action,
+        ok: true,
+        tagName: element.tagName.toLowerCase(),
+        text: nearbyText.slice(0, 500),
+      };
+    },
+    { action, selector },
+  );
+}
+
+function createRiskBlock({ action, risk, selector, text }) {
+  const targetText = text?.slice(0, 120);
+
+  return {
+    action,
+    reason: `Blocked risky ${action} on "${targetText || selector}"`,
+    requiresUserConfirmation: true,
+    risk,
+    targetText,
+  };
+}
+
+function withRiskBlock(state, riskBlock) {
+  return {
+    ...state,
+    blocked: true,
+    riskBlock,
+  };
+}
+
+async function inspectPageState(page) {
+  return await page.evaluate(() => {
+    const visible = (element) => {
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        style.display !== 'none' &&
+        style.visibility !== 'hidden'
+      );
+    };
+
+    const clean = (value) => value?.replaceAll(/\s+/g, ' ').trim() || '';
+
+    const classifyRisk = (text = '') => {
+      const normalized = text.replaceAll(/\s+/g, '');
+      if (!normalized) return undefined;
+      if (/购买|下单|订单|支付|付款|续费|充值/.test(normalized)) return 'purchase';
+      if (/删除|释放|销毁|退订|注销|移除/.test(normalized)) return 'delete';
+      if (/授权|同意授权|允许访问|绑定/.test(normalized)) return 'authorization';
+      if (/创建|开通|新建|部署|申请|提交/.test(normalized)) return 'create';
+      if (/确认|提交|保存更改|修改密码|实名认证/.test(normalized)) return 'submit';
+      return undefined;
+    };
+
+    const fieldLabel = (element) => {
+      const id = element.id;
+      const explicit = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
+      const implicit = element.closest('label');
+      const aria = element.getAttribute('aria-label');
+      const placeholder = element.getAttribute('placeholder');
+      const parentText = clean(element.closest('.tea-form__item, .form-item, .field')?.innerText);
+      return clean(explicit?.innerText || implicit?.innerText || aria || placeholder || parentText);
+    };
+
+    const fields = [...document.querySelectorAll('input, textarea, select')]
+      .filter(visible)
+      .slice(0, 80)
+      .map((element) => {
+        const isCheckbox = element instanceof HTMLInputElement && element.type === 'checkbox';
+        const isRadio = element instanceof HTMLInputElement && element.type === 'radio';
+        const value =
+          element instanceof HTMLSelectElement
+            ? element.selectedOptions[0]?.textContent || element.value
+            : element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+              ? element.value
+              : '';
+
+        return {
+          ...(isCheckbox || isRadio ? { checked: element.checked } : {}),
+          label: fieldLabel(element).slice(0, 120),
+          ...(element instanceof HTMLSelectElement
+            ? {
+                options: [...element.options]
+                  .map((option) => clean(option.textContent))
+                  .slice(0, 30),
+              }
+            : {}),
+          value: clean(value).slice(0, 120),
+        };
+      })
+      .filter((field) => field.label || field.value);
+
+    const selectedOptions = [
+      ...document.querySelectorAll(
+        '.is-selected, .is-active, .is-checked, .selected, [aria-selected="true"], [aria-checked="true"], input:checked',
+      ),
+    ]
+      .filter(visible)
+      .map((element) =>
+        clean(element.innerText || element.closest('label')?.innerText || element.value),
+      )
+      .filter(Boolean)
+      .slice(0, 30);
+
+    const actions = [
+      ...document.querySelectorAll(
+        'button, a, [role="button"], input[type="button"], input[type="submit"]',
+      ),
+    ]
+      .filter(visible)
+      .map((element) => {
+        const text = clean(
+          element.innerText ||
+            element.getAttribute('aria-label') ||
+            element.getAttribute('title') ||
+            element.value,
+        );
+        if (!text) return null;
+        return {
+          ...(classifyRisk(text) ? { risk: classifyRisk(text) } : {}),
+          text: text.slice(0, 120),
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 60);
+
+    const bodyText = clean(document.body?.innerText || '');
+    const prices = [...bodyText.matchAll(/([^。\n]{0,12})[¥￥]\s?[\d,.]+(?:\/[^\s，。]+)?/g)]
+      .map((match) => ({
+        label: clean(match[1] || 'price').slice(0, 40),
+        value: clean(match[0]).slice(0, 80),
+      }))
+      .slice(0, 20);
+
+    const warnings = bodyText
+      .split(/[。！？\n]/)
+      .map(clean)
+      .filter((line) => /不支持|风险|警告|注意|需要|禁止|失败|停服/.test(line))
+      .slice(0, 20);
+
+    return {
+      actions,
+      fields,
+      prices,
+      selectedOptions,
+      textSample: bodyText.slice(0, 1000),
+      title: document.title,
+      url: location.href,
+      warnings,
+    };
+  });
 }
 
 async function fillElementWithDomFallback(page, selector, text) {
@@ -699,9 +916,15 @@ app.post('/navigate', sessionMiddleware, async (req, res) => {
       fallbackReason = embed.fallbackReason;
     }
 
-    const { page } = await getOrCreateSession(req.sessionId);
+    const session = await getOrCreateSession(req.sessionId);
+    const { page } = session;
     await page.goto(normalizedUrl, { timeout, waitUntil: 'networkidle' });
-    const state = await getPageState(page, { screenshot: false });
+    recordAction(session, {
+      action: 'navigate',
+      summary: `Opened ${normalizedUrl}`,
+      target: normalizedUrl,
+    });
+    const state = await getPageState(page, { screenshot: false, sessionId: req.sessionId });
     res.json({
       ...state,
       embeddable: false,
@@ -719,7 +942,33 @@ app.post('/click', sessionMiddleware, async (req, res) => {
     const { selector, timeout = 5000 } = req.body;
     if (!selector) return res.status(400).json({ error: 'Missing selector' });
 
-    const { page } = await getOrCreateSession(req.sessionId);
+    const session = await getOrCreateSession(req.sessionId);
+    const { page } = session;
+    const riskProbe = await inspectElementRisk(page, selector, 'click');
+    if (riskProbe.ok) {
+      const risk = classifyRisk(riskProbe.text);
+      if (risk) {
+        const riskBlock = createRiskBlock({
+          action: 'click',
+          risk,
+          selector,
+          text: riskProbe.text,
+        });
+        recordAction(session, {
+          action: 'click',
+          status: 'blocked',
+          summary: riskBlock.reason,
+          target: selector,
+        });
+        return res.json(
+          withRiskBlock(
+            await getPageState(page, { screenshot: false, sessionId: req.sessionId }),
+            riskBlock,
+          ),
+        );
+      }
+    }
+
     try {
       await page.waitForSelector(selector, { state: 'visible', timeout });
       await page.click(selector);
@@ -728,7 +977,8 @@ app.post('/click', sessionMiddleware, async (req, res) => {
       if (!fallback.ok) throw err;
     }
     await page.waitForTimeout(500);
-    res.json(await getPageState(page, { screenshot: false }));
+    recordAction(session, { action: 'click', summary: `Clicked ${selector}`, target: selector });
+    res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -739,7 +989,8 @@ app.post('/fill', sessionMiddleware, async (req, res) => {
     const { selector, text, timeout = 5000 } = req.body;
     if (!selector) return res.status(400).json({ error: 'Missing selector' });
 
-    const { page } = await getOrCreateSession(req.sessionId);
+    const session = await getOrCreateSession(req.sessionId);
+    const { page } = session;
     try {
       await page.waitForSelector(selector, { state: 'visible', timeout });
       await page.fill(selector, text ?? '');
@@ -748,7 +999,8 @@ app.post('/fill', sessionMiddleware, async (req, res) => {
       if (!fallback.ok) throw err;
     }
     await page.waitForTimeout(300);
-    res.json(await getPageState(page, { screenshot: false }));
+    recordAction(session, { action: 'fill', summary: `Filled ${selector}`, target: selector });
+    res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -759,8 +1011,34 @@ app.post('/submit', sessionMiddleware, async (req, res) => {
     const { selector, timeout = 10000 } = req.body;
     if (!selector) return res.status(400).json({ error: 'Missing selector' });
 
-    const { page } = await getOrCreateSession(req.sessionId);
+    const session = await getOrCreateSession(req.sessionId);
+    const { page } = session;
     await page.waitForSelector(selector, { state: 'attached', timeout });
+    const riskProbe = await inspectElementRisk(page, selector, 'submit');
+    if (riskProbe.ok) {
+      const risk = classifyRisk(riskProbe.text);
+      if (risk) {
+        const riskBlock = createRiskBlock({
+          action: 'submit',
+          risk,
+          selector,
+          text: riskProbe.text,
+        });
+        recordAction(session, {
+          action: 'submit',
+          status: 'blocked',
+          summary: riskBlock.reason,
+          target: selector,
+        });
+        return res.json(
+          withRiskBlock(
+            await getPageState(page, { screenshot: false, sessionId: req.sessionId }),
+            riskBlock,
+          ),
+        );
+      }
+    }
+
     const beforeTitle = await page.title().catch(() => '');
     const beforeUrl = page.url();
     const expectedText = await page
@@ -780,7 +1058,8 @@ app.post('/submit', sessionMiddleware, async (req, res) => {
 
     await navigation;
     await waitForPageAfterSubmit(page, { beforeTitle, beforeUrl, expectedText, timeout });
-    res.json(await getPageState(page, { screenshot: false }));
+    recordAction(session, { action: 'submit', summary: `Submitted ${selector}`, target: selector });
+    res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -789,10 +1068,12 @@ app.post('/submit', sessionMiddleware, async (req, res) => {
 app.post('/scroll', sessionMiddleware, async (req, res) => {
   try {
     const { x = 0, y = 0 } = req.body;
-    const { page } = await getOrCreateSession(req.sessionId);
+    const session = await getOrCreateSession(req.sessionId);
+    const { page } = session;
     await page.evaluate(({ x, y }) => window.scrollTo(x, y), { x, y });
     await page.waitForTimeout(300);
-    res.json(await getPageState(page, { screenshot: false }));
+    recordAction(session, { action: 'scroll', summary: `Scrolled to x=${x}, y=${y}` });
+    res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -800,8 +1081,13 @@ app.post('/scroll', sessionMiddleware, async (req, res) => {
 
 app.post('/screenshot', sessionMiddleware, async (req, res) => {
   try {
-    const { page } = await getOrCreateSession(req.sessionId);
-    res.json(await getPageState(page));
+    const session = await getOrCreateSession(req.sessionId);
+    const { page } = session;
+    recordAction(session, {
+      action: 'screenshot',
+      summary: `Captured screenshot for ${page.url()}`,
+    });
+    res.json(await getPageState(page, { sessionId: req.sessionId }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -812,9 +1098,25 @@ app.post('/evaluate', sessionMiddleware, async (req, res) => {
     const { code } = req.body;
     if (!code) return res.status(400).json({ error: 'Missing code' });
 
-    const { page } = await getOrCreateSession(req.sessionId);
+    const session = await getOrCreateSession(req.sessionId);
+    const { page } = session;
     const result = await page.evaluate(code);
-    res.json({ result, ...(await getPageState(page, { screenshot: false })) });
+    recordAction(session, { action: 'evaluate', summary: 'Evaluated JavaScript in the page' });
+    res.json({
+      result,
+      ...(await getPageState(page, { screenshot: false, sessionId: req.sessionId })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/inspect', sessionMiddleware, async (req, res) => {
+  try {
+    const session = await getOrCreateSession(req.sessionId);
+    const { page } = session;
+    recordAction(session, { action: 'inspect', summary: `Inspected ${page.url()}` });
+    res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -822,9 +1124,11 @@ app.post('/evaluate', sessionMiddleware, async (req, res) => {
 
 app.post('/back', sessionMiddleware, async (req, res) => {
   try {
-    const { page } = await getOrCreateSession(req.sessionId);
+    const session = await getOrCreateSession(req.sessionId);
+    const { page } = session;
     await page.goBack({ waitUntil: 'networkidle' });
-    res.json(await getPageState(page, { screenshot: false }));
+    recordAction(session, { action: 'back', summary: `Went back to ${page.url()}` });
+    res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -832,9 +1136,11 @@ app.post('/back', sessionMiddleware, async (req, res) => {
 
 app.post('/forward', sessionMiddleware, async (req, res) => {
   try {
-    const { page } = await getOrCreateSession(req.sessionId);
+    const session = await getOrCreateSession(req.sessionId);
+    const { page } = session;
     await page.goForward({ waitUntil: 'networkidle' });
-    res.json(await getPageState(page, { screenshot: false }));
+    recordAction(session, { action: 'forward', summary: `Went forward to ${page.url()}` });
+    res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -871,7 +1177,12 @@ app.get('/events', sessionMiddleware, async (req, res) => {
     try {
       const session = await getOrCreateSession(req.sessionId);
       res.write(
-        `data: ${JSON.stringify(await getPageState(session.page, { pointer: session.lastPointer }))}\n\n`,
+        `data: ${JSON.stringify(
+          await getPageState(session.page, {
+            pointer: session.lastPointer,
+            sessionId: req.sessionId,
+          }),
+        )}\n\n`,
       );
     } catch (err) {
       res.write(`event: error\ndata: ${JSON.stringify({ error: err.message })}\n\n`);
@@ -901,10 +1212,14 @@ app.post('/input', sessionMiddleware, async (req, res) => {
     session.lastInputAt = Date.now();
     await applyInput(session.page, payload);
     await session.page.waitForTimeout(100);
+    if (payload.type && payload.type !== 'mousemove') {
+      recordAction(session, { action: payload.type, summary: `User ${payload.type} in viewer` });
+    }
     res.json(
       await getPageState(session.page, {
         pointer: session.lastPointer,
         screenshot: payload.type !== 'mousemove',
+        sessionId: req.sessionId,
       }),
     );
   } catch (err) {

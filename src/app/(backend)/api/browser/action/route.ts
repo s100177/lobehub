@@ -11,6 +11,7 @@ const ALLOWED_ACTIONS = new Set([
   'scroll',
   'screenshot',
   'evaluate',
+  'inspect',
   'back',
   'forward',
 ]);

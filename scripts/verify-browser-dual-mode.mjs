@@ -27,6 +27,7 @@ const testPageServer = http.createServer((req, res) => {
   }
 
   res.end(`<!doctype html>
+    <meta charset="utf-8" />
     <title>Iframe OK</title>
     <style>
       html,
@@ -40,7 +41,7 @@ const testPageServer = http.createServer((req, res) => {
       h1 {
         margin: 32px 40px;
       }
-      button {
+      #btn {
         background: #111827;
         border: 0;
         color: white;
@@ -51,9 +52,17 @@ const testPageServer = http.createServer((req, res) => {
         top: 80px;
         width: 120px;
       }
+      #buy {
+        margin: 170px 0 0 40px;
+      }
     </style>
     <h1 id="ok">Iframe OK</h1>
-    <button id="btn" onclick="document.body.dataset.clicked='1'">Click</button>`);
+    <button id="btn" onclick="document.body.dataset.clicked='1'">Click</button>
+    <section>
+      <label><input id="agree" type="checkbox" checked /> 已阅读协议</label>
+      <strong id="price">配置费用 ¥114.36</strong>
+      <button id="buy" onclick="document.body.dataset.purchased='1'">立即购买</button>
+    </section>`);
 });
 
 function listen(server, port) {
@@ -252,13 +261,59 @@ try {
   );
   assert(!hover.screenshot, 'Mousemove should not return a screenshot frame');
 
-  await request('/input', { type: 'click', x: 100, y: 104 }, 'verify-remote');
+  const buttonPoint = await request(
+    '/evaluate',
+    {
+      code: `(() => {
+        const rect = document.querySelector('#btn').getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      })()`,
+    },
+    'verify-remote',
+  );
+  await request(
+    '/input',
+    { type: 'click', x: buttonPoint.result.x, y: buttonPoint.result.y },
+    'verify-remote',
+  );
   const clicked = await request(
     '/evaluate',
     { code: 'document.body.dataset.clicked' },
     'verify-remote',
   );
   assert(clicked.result === '1', `Expected click to set dataset.clicked=1, got ${clicked.result}`);
+
+  const inspected = await request('/inspect', {}, 'verify-remote');
+  assert(
+    inspected.pageState?.prices?.some((price) => price.value.includes('¥114.36')),
+    `Expected inspect to extract page price, got ${JSON.stringify(inspected.pageState?.prices)}`,
+  );
+  assert(
+    inspected.pageState?.actions?.some((action) => action.text.includes('立即购买') && action.risk),
+    `Expected inspect to mark risky purchase action, got ${JSON.stringify(inspected.pageState?.actions)}`,
+  );
+
+  const blockedPurchase = await request('/click', { selector: '#buy' }, 'verify-remote');
+  assert(blockedPurchase.blocked === true, 'Expected risky purchase click to be blocked');
+  assert(
+    blockedPurchase.riskBlock?.risk === 'purchase',
+    `Expected purchase risk block, got ${JSON.stringify(blockedPurchase.riskBlock)}`,
+  );
+  assert(
+    blockedPurchase.actionEvents?.some(
+      (event) => event.action === 'click' && event.status === 'blocked',
+    ),
+    `Expected blocked click action event, got ${JSON.stringify(blockedPurchase.actionEvents)}`,
+  );
+  const purchased = await request(
+    '/evaluate',
+    { code: 'document.body.dataset.purchased' },
+    'verify-remote',
+  );
+  assert(
+    purchased.result === undefined,
+    `Expected blocked click not to set purchased flag, got ${purchased.result}`,
+  );
 
   await assertRemoteViewerDoesNotBlankOnPointerFrame();
 

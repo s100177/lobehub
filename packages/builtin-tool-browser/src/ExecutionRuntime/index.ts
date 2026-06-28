@@ -1,6 +1,6 @@
 import { type BuiltinServerRuntimeOutput } from '@lobechat/types';
 
-import { type BrowserState } from '../types';
+import { type BrowserActionEvent, type BrowserState } from '../types';
 
 export interface BrowserRuntimeService {
   back: () => Promise<BrowserState>;
@@ -8,6 +8,7 @@ export interface BrowserRuntimeService {
   evaluate: (args: { code: string }) => Promise<BrowserState>;
   fill: (args: { selector: string; text: string; timeout?: number }) => Promise<BrowserState>;
   forward: () => Promise<BrowserState>;
+  inspect: () => Promise<BrowserState>;
   navigate: (args: {
     mode?: 'auto' | 'iframe' | 'remote';
     timeout?: number;
@@ -26,6 +27,34 @@ export class BrowserExecutionRuntime {
     private sessionId: string,
   ) {}
 
+  private createEvent(
+    action: BrowserActionEvent['action'],
+    status: BrowserActionEvent['status'],
+    summary: string,
+    target?: string,
+  ): BrowserActionEvent {
+    return {
+      action,
+      id: `${this.sessionId}:${Date.now()}:${action}:${Math.random().toString(36).slice(2, 8)}`,
+      status,
+      summary,
+      target,
+      timestamp: Date.now(),
+    };
+  }
+
+  private withEvent(state: BrowserState, event: BrowserActionEvent): BrowserState {
+    if (state.actionEvents?.length) {
+      return { ...state, sessionId: this.sessionId };
+    }
+
+    return {
+      ...state,
+      actionEvents: [...(state.actionEvents ?? []), event],
+      sessionId: this.sessionId,
+    };
+  }
+
   async navigate(args: {
     mode?: 'auto' | 'iframe' | 'remote';
     timeout?: number;
@@ -38,7 +67,10 @@ export class BrowserExecutionRuntime {
 
       return {
         content: `Navigated to ${state.url}\nTitle: ${state.title}${modeText}${fallbackText}`,
-        state: { ...state, sessionId: this.sessionId },
+        state: this.withEvent(
+          state,
+          this.createEvent('navigate', 'success', `Opened ${state.url ?? args.url}`, args.url),
+        ),
         success: true,
       };
     } catch (error) {
@@ -53,10 +85,23 @@ export class BrowserExecutionRuntime {
   async click(args: { selector: string; timeout?: number }): Promise<BuiltinServerRuntimeOutput> {
     try {
       const state = await this.service.click(args);
+      if (state.blocked && state.riskBlock) {
+        return {
+          content: `Blocked risky click "${args.selector}": ${state.riskBlock.reason}`,
+          state: this.withEvent(
+            state,
+            this.createEvent('click', 'blocked', state.riskBlock.reason, args.selector),
+          ),
+          success: false,
+        };
+      }
 
       return {
         content: `Clicked element "${args.selector}"`,
-        state: { ...state, sessionId: this.sessionId } as BrowserState,
+        state: this.withEvent(
+          state,
+          this.createEvent('click', 'success', `Clicked ${args.selector}`, args.selector),
+        ),
         success: true,
       };
     } catch (error) {
@@ -78,7 +123,10 @@ export class BrowserExecutionRuntime {
 
       return {
         content: `Filled field "${args.selector}" with "${args.text}"`,
-        state: { ...state, sessionId: this.sessionId } as BrowserState,
+        state: this.withEvent(
+          state,
+          this.createEvent('fill', 'success', `Filled ${args.selector}`, args.selector),
+        ),
         success: true,
       };
     } catch (error) {
@@ -96,7 +144,10 @@ export class BrowserExecutionRuntime {
 
       return {
         content: `Scrolled to x=${args.x ?? 0}, y=${args.y ?? 0}`,
-        state: { ...state, sessionId: this.sessionId } as BrowserState,
+        state: this.withEvent(
+          state,
+          this.createEvent('scroll', 'success', `Scrolled to x=${args.x ?? 0}, y=${args.y ?? 0}`),
+        ),
         success: true,
       };
     } catch (error) {
@@ -111,10 +162,23 @@ export class BrowserExecutionRuntime {
   async submit(args: { selector: string; timeout?: number }): Promise<BuiltinServerRuntimeOutput> {
     try {
       const state = await this.service.submit(args);
+      if (state.blocked && state.riskBlock) {
+        return {
+          content: `Blocked risky submit "${args.selector}": ${state.riskBlock.reason}`,
+          state: this.withEvent(
+            state,
+            this.createEvent('submit', 'blocked', state.riskBlock.reason, args.selector),
+          ),
+          success: false,
+        };
+      }
 
       return {
         content: `Submitted form for "${args.selector}"\nURL: ${state.url ?? 'blank'}\nTitle: ${state.title ?? ''}`,
-        state: { ...state, sessionId: this.sessionId } as BrowserState,
+        state: this.withEvent(
+          state,
+          this.createEvent('submit', 'success', `Submitted ${args.selector}`, args.selector),
+        ),
         success: true,
       };
     } catch (error) {
@@ -132,7 +196,14 @@ export class BrowserExecutionRuntime {
 
       return {
         content: `Screenshot captured: ${state.url ?? 'blank page'}`,
-        state: { ...state, sessionId: this.sessionId } as BrowserState,
+        state: this.withEvent(
+          state,
+          this.createEvent(
+            'screenshot',
+            'success',
+            `Captured screenshot for ${state.url ?? 'blank page'}`,
+          ),
+        ),
         success: true,
       };
     } catch (error) {
@@ -152,7 +223,10 @@ export class BrowserExecutionRuntime {
 
       return {
         content: `JavaScript evaluation result:\n${resultStr}`,
-        state: { ...state, sessionId: this.sessionId } as BrowserState,
+        state: this.withEvent(
+          state,
+          this.createEvent('evaluate', 'success', 'Evaluated JavaScript in the page'),
+        ),
         success: true,
       };
     } catch (error) {
@@ -170,7 +244,10 @@ export class BrowserExecutionRuntime {
 
       return {
         content: `Navigated back to ${state.url ?? 'blank'}`,
-        state: { ...state, sessionId: this.sessionId } as BrowserState,
+        state: this.withEvent(
+          state,
+          this.createEvent('back', 'success', `Went back to ${state.url ?? 'blank'}`),
+        ),
         success: true,
       };
     } catch (error) {
@@ -188,12 +265,36 @@ export class BrowserExecutionRuntime {
 
       return {
         content: `Navigated forward to ${state.url ?? 'blank'}`,
-        state: { ...state, sessionId: this.sessionId } as BrowserState,
+        state: this.withEvent(
+          state,
+          this.createEvent('forward', 'success', `Went forward to ${state.url ?? 'blank'}`),
+        ),
         success: true,
       };
     } catch (error) {
       return {
         content: `Failed to go forward: ${error instanceof Error ? error.message : String(error)}`,
+        error,
+        success: false,
+      };
+    }
+  }
+
+  async inspect(): Promise<BuiltinServerRuntimeOutput> {
+    try {
+      const state = await this.service.inspect();
+
+      return {
+        content: `Inspected page state for ${state.url ?? 'blank page'}`,
+        state: this.withEvent(
+          state,
+          this.createEvent('inspect', 'success', `Inspected ${state.url ?? 'blank page'}`),
+        ),
+        success: true,
+      };
+    } catch (error) {
+      return {
+        content: `Failed to inspect page: ${error instanceof Error ? error.message : String(error)}`,
         error,
         success: false,
       };

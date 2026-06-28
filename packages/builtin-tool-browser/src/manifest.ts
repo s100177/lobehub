@@ -126,6 +126,15 @@ export const BrowserManifest: BuiltinToolManifest = {
       },
     },
     {
+      description:
+        'Inspect the current shared browser page and return structured page state such as selected options, visible fields, prices, warnings, and risky primary actions. Use this before making claims about the page or before risky workflows.',
+      name: BrowserApiName.inspect,
+      parameters: {
+        properties: {},
+        type: 'object',
+      },
+    },
+    {
       description: 'Go back in the shared browser history and returns the updated page state.',
       name: BrowserApiName.back,
       parameters: {

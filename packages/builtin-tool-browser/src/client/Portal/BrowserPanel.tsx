@@ -79,6 +79,88 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
       color: ${cssVar.colorTextDisabled};
     }
   `,
+  summaryGrid: css`
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+
+    padding-block: 10px;
+    padding-inline: 12px;
+    border-block-end: 1px solid ${cssVar.colorBorderSecondary};
+
+    background: ${cssVar.colorBgContainer};
+  `,
+  summaryCard: css`
+    overflow: hidden;
+
+    padding: 8px;
+    border: 1px solid ${cssVar.colorBorderSecondary};
+    border-radius: 8px;
+
+    background: ${cssVar.colorFillQuaternary};
+  `,
+  summaryLabel: css`
+    margin-block-end: 4px;
+
+    font-size: 11px;
+    font-weight: 600;
+    color: ${cssVar.colorTextSecondary};
+    text-transform: uppercase;
+  `,
+  summaryValue: css`
+    overflow: hidden;
+
+    font-size: 12px;
+    color: ${cssVar.colorText};
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  `,
+  timeline: css`
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+
+    max-height: 132px;
+    padding-block: 10px;
+    padding-inline: 12px;
+    border-block-end: 1px solid ${cssVar.colorBorderSecondary};
+
+    background: ${cssVar.colorBgContainer};
+  `,
+  eventItem: css`
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px;
+    align-items: start;
+
+    font-size: 12px;
+    color: ${cssVar.colorText};
+  `,
+  eventStatus: css`
+    padding-block: 2px;
+    padding-inline: 6px;
+    border-radius: 999px;
+
+    font-size: 10px;
+    font-weight: 700;
+    color: ${cssVar.colorTextSecondary};
+
+    background: ${cssVar.colorFillQuaternary};
+  `,
+  riskNotice: css`
+    margin-block: 10px 0;
+    margin-inline: 12px;
+    padding-block: 10px;
+    padding-inline: 12px;
+    border: 1px solid #f59e0b;
+    border-radius: 10px;
+
+    font-size: 12px;
+    color: #92400e;
+
+    background: #fffbeb;
+  `,
   empty: css`
     display: flex;
     flex: 1;
@@ -155,6 +237,11 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   const displayUrl = iframeUrl || url;
   const isIframeMode = mode === 'iframe';
   const modeLabel = isIframeMode ? 'Iframe' : 'Remote';
+  const recentEvents = currentState.actionEvents?.slice(-20).reverse() ?? [];
+  const pageState = currentState.pageState;
+  const riskyActions = pageState?.actions?.filter((action) => action.risk).slice(0, 3) ?? [];
+  const selectedOptions = pageState?.selectedOptions?.filter(Boolean).slice(0, 3) ?? [];
+  const prices = pageState?.prices?.slice(0, 2) ?? [];
 
   const switchToRemote = async () => {
     if (!url || isSwitching) return;
@@ -207,6 +294,48 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
       </div>
       {fallbackReason && <div className={styles.notice}>{fallbackReason}</div>}
       {switchError && <div className={styles.notice}>{switchError}</div>}
+      {currentState.riskBlock && (
+        <div className={styles.riskNotice}>
+          <strong>Risky action blocked.</strong> {currentState.riskBlock.reason}. Please take over
+          manually if you want to continue.
+        </div>
+      )}
+      {(selectedOptions.length > 0 || prices.length > 0 || riskyActions.length > 0) && (
+        <div className={styles.summaryGrid}>
+          <div className={styles.summaryCard}>
+            <div className={styles.summaryLabel}>Selected</div>
+            <div className={styles.summaryValue}>
+              {selectedOptions.length > 0 ? selectedOptions.join(' / ') : 'None detected'}
+            </div>
+          </div>
+          <div className={styles.summaryCard}>
+            <div className={styles.summaryLabel}>Price</div>
+            <div className={styles.summaryValue}>
+              {prices.length > 0
+                ? prices.map((price) => `${price.label} ${price.value}`).join(' / ')
+                : 'None detected'}
+            </div>
+          </div>
+          <div className={styles.summaryCard}>
+            <div className={styles.summaryLabel}>Risk Gates</div>
+            <div className={styles.summaryValue}>
+              {riskyActions.length > 0
+                ? riskyActions.map((action) => action.text).join(' / ')
+                : 'No risky action visible'}
+            </div>
+          </div>
+        </div>
+      )}
+      {recentEvents.length > 0 && (
+        <div aria-label="Browser action timeline" className={styles.timeline}>
+          {recentEvents.map((event) => (
+            <div className={styles.eventItem} key={event.id}>
+              <span className={styles.eventStatus}>{event.status}</span>
+              <span>{event.summary}</span>
+            </div>
+          ))}
+        </div>
+      )}
       {isIframeMode && iframeStatus === 'blocked' && (
         <div className={styles.notice}>
           This page did not finish loading in iframe mode. Switch to Remote if the page appears
