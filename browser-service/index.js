@@ -163,6 +163,7 @@ async function getPageState(page, options = {}) {
     ...(pageState ? { pageState } : {}),
     ...(pointer ? { pointer } : {}),
     ...(screenshot ? { screenshot: screenshot.toString('base64') } : {}),
+    ...(pageState?.taskState ? { taskState: pageState.taskState } : {}),
   };
 }
 
@@ -429,11 +430,67 @@ async function inspectPageState(page) {
       .filter((line) => /不支持|风险|警告|注意|需要|禁止|失败|停服/.test(line))
       .slice(0, 20);
 
+    const pageType = (() => {
+      if (/登录|sign in|log in|账号密码|验证码|手机号验证/i.test(bodyText)) return 'login';
+      if (/购物车|立即购买|下单|支付|订单|结算|购买/.test(bodyText)) return 'purchase';
+      if (/搜索|查询|结果|百度一下|google|bing/i.test(bodyText)) return 'search';
+      if (fields.length > 0 && /提交|保存|申请|表单|审批/.test(bodyText)) return 'form';
+      if (/控制台|仪表盘|dashboard|overview|资源|管理/i.test(bodyText)) return 'dashboard';
+      return 'page';
+    })();
+
+    const loggedIn = !/登录|sign in|log in|请先登录|未登录/i.test(bodyText);
+    const confirmBeforeProceed = Boolean(
+      /立即购买|提交订单|去支付|确认支付|删除|释放|授权|开通|提交|保存更改/.test(bodyText),
+    );
+    const needsUserAttention = Boolean(
+      confirmBeforeProceed || /多个|请选择|二选一|请确认|需要补充|缺少|未填写/.test(bodyText),
+    );
+
+    const confirmationPoints = [
+      {
+        id: 'before_risk_action',
+        reason: '页面存在购买、支付、提交或删除类动作',
+        title: '风险动作前确认',
+      },
+    ].filter(() => confirmBeforeProceed);
+
+    const gaps = [];
+    if (!loggedIn) gaps.push('login_required');
+    if (needsUserAttention) gaps.push('user_attention_required');
+    if (fields.some((field) => !field.value && field.label)) gaps.push('missing_field_values');
+
+    const workflowHints = [];
+    if (pageType === 'login') workflowHints.push('先完成登录，再继续当前任务');
+    if (pageType === 'search') workflowHints.push('先输入搜索词，再提交搜索');
+    if (pageType === 'purchase') workflowHints.push('读取配置并停在确认前');
+    if (pageType === 'form') workflowHints.push('先补全必填字段，再提交前确认');
+    if (pageType === 'dashboard') workflowHints.push('先读取当前资源状态，再判断下一步');
+
+    const taskState = (() => {
+      if (!loggedIn) return 'needs_more_info';
+      if (confirmBeforeProceed) return 'waiting_user_authorization';
+      if (needsUserAttention) return 'asking_clarification';
+      if (pageType === 'purchase') return 'plan_ready';
+      if (pageType === 'search' || pageType === 'form' || pageType === 'dashboard')
+        return 'understanding';
+      return 'idle';
+    })();
+
     return {
       actions,
+      confirmationPoints,
+      confirmBeforeProceed,
       fields,
+      gaps,
+      loggedIn,
+      needsUserAttention,
+      pageType,
       prices,
       selectedOptions,
+      primaryActions: actions.filter((action) => action.risk).slice(0, 10),
+      taskState,
+      workflowHints,
       textSample: bodyText.slice(0, 1000),
       title: document.title,
       url: location.href,
@@ -724,6 +781,15 @@ function renderViewerHtml({ basePath, sessionId }) {
       };
     }
 
+    function notifyUserInput(type) {
+      window.parent?.postMessage({
+        source: 'lobe-browser-viewer',
+        type: 'user-input',
+        inputType: type,
+        sessionId,
+      }, '*');
+    }
+
     async function sendInput(payload, options = {}) {
       try {
         const response = await fetch(endpoint('input'), {
@@ -791,11 +857,13 @@ function renderViewerHtml({ basePath, sessionId }) {
     canvas.addEventListener('click', (event) => {
       canvas.focus();
       lastPointer = canvasPoint(event);
+      notifyUserInput('click');
       sendInput({ type: 'click', ...lastPointer });
     });
     canvas.addEventListener('dblclick', (event) => {
       canvas.focus();
       lastPointer = canvasPoint(event);
+      notifyUserInput('dblclick');
       sendInput({ type: 'dblclick', ...lastPointer });
     });
     canvas.addEventListener('mousemove', (event) => {
@@ -807,10 +875,12 @@ function renderViewerHtml({ basePath, sessionId }) {
     });
     canvas.addEventListener('wheel', (event) => {
       event.preventDefault();
+      notifyUserInput('wheel');
       sendInput({ deltaX: event.deltaX, deltaY: event.deltaY, type: 'wheel' });
     }, { passive: false });
     canvas.addEventListener('keydown', (event) => {
       event.preventDefault();
+      notifyUserInput('key');
       sendInput({
         altKey: event.altKey,
         code: event.code,

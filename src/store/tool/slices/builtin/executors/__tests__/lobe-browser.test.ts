@@ -94,9 +94,15 @@ describe('browser executor', () => {
     const fetchMock = vi.fn().mockResolvedValue({
       json: async () => ({
         pageState: {
+          confirmBeforeProceed: true,
+          gaps: ['login_required'],
+          loggedIn: false,
           prices: [{ label: '配置费用', value: '¥114.36' }],
           selectedOptions: ['南京', '2核4GB'],
+          pageType: 'purchase',
+          workflowHints: ['读取配置并停在确认前'],
         },
+        taskState: 'waiting_user_authorization',
         title: 'CVM',
         url: 'https://buy.cloud.tencent.com/cvm',
       }),
@@ -127,8 +133,13 @@ describe('browser executor', () => {
       content: 'Inspected page state for https://buy.cloud.tencent.com/cvm',
       state: {
         pageState: {
+          confirmBeforeProceed: true,
+          gaps: ['login_required'],
+          loggedIn: false,
           selectedOptions: ['南京', '2核4GB'],
+          pageType: 'purchase',
         },
+        taskState: 'waiting_user_authorization',
         sessionId: 'topic-1',
       },
       success: true,

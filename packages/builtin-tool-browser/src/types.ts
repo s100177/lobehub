@@ -83,16 +83,70 @@ export interface BrowserPagePrice {
   value: string;
 }
 
+export interface BrowserClarificationOption {
+  id: string;
+  label: string;
+  value: string;
+}
+
+export interface BrowserClarificationPrompt {
+  defaultValue?: string;
+  field?: string;
+  id: string;
+  options?: BrowserClarificationOption[];
+  question: string;
+  required?: boolean;
+}
+
+export interface BrowserTargetHighlight {
+  height?: number;
+  label?: string;
+  selector?: string;
+  width?: number;
+  x?: number;
+  y?: number;
+}
+
 export interface BrowserPageState {
   actions?: BrowserPageAction[];
+  clarifications?: BrowserClarificationPrompt[];
+  confirmationPoints?: {
+    id: string;
+    reason?: string;
+    title: string;
+  }[];
+  confirmBeforeProceed?: boolean;
   fields?: BrowserPageField[];
+  gaps?: string[];
+  loggedIn?: boolean;
+  needsUserAttention?: boolean;
+  pageType?: string;
   prices?: BrowserPagePrice[];
+  primaryActions?: BrowserPageAction[];
   selectedOptions?: string[];
+  targetHighlight?: BrowserTargetHighlight;
+  taskState?: BrowserTaskState;
   textSample?: string;
   title?: string;
   url?: string;
   warnings?: string[];
+  workflowHints?: string[];
 }
+
+export type BrowserTaskState =
+  | 'idle'
+  | 'understanding'
+  | 'needs_more_info'
+  | 'plan_ready'
+  | 'waiting_user_authorization'
+  | 'ai_controlling'
+  | 'acting'
+  | 'paused_by_user_intervention'
+  | 'asking_clarification'
+  | 'risk_blocked'
+  | 'verifying'
+  | 'completed'
+  | 'failed';
 
 export type BrowserRiskType =
   | 'authorization'
@@ -100,6 +154,7 @@ export type BrowserRiskType =
   | 'delete'
   | 'payment'
   | 'purchase'
+  | 'release'
   | 'submit';
 
 export interface BrowserRiskBlock {
@@ -108,6 +163,39 @@ export interface BrowserRiskBlock {
   requiresUserConfirmation: true;
   risk: BrowserRiskType;
   targetText?: string;
+}
+
+export interface BrowserSkillPackWorkflowStep {
+  gaps?: string[];
+  id: string;
+  risk?: BrowserRiskType;
+  title: string;
+  type: 'ask' | 'click' | 'fill' | 'inspect' | 'risk_gate' | 'select' | 'verify';
+}
+
+export interface BrowserSkillPackWorkflow {
+  constraints?: string[];
+  goal: string;
+  intent: string;
+  steps: BrowserSkillPackWorkflowStep[];
+}
+
+export interface BrowserPageSkillPack {
+  ambiguityRules?: string[];
+  confirmationPoints?: BrowserPageState['confirmationPoints'];
+  description: string;
+  entities?: string[];
+  fillGaps?: {
+    field: string;
+    mode: 'ask_user' | 'auto_suggest' | 'manual_only';
+    reason: string;
+  }[];
+  page: string;
+  pageType: string;
+  riskActions?: string[];
+  safeActions?: string[];
+  site: string;
+  workflows?: BrowserSkillPackWorkflow[];
 }
 
 export interface BrowserState {
@@ -122,6 +210,8 @@ export interface BrowserState {
   riskBlock?: BrowserRiskBlock;
   screenshot?: string; // base64 fallback / live-viewer frame source
   sessionId?: string;
+  skillPack?: BrowserPageSkillPack;
+  taskState?: BrowserTaskState;
   title?: string;
   url?: string;
   viewport?: { width: number; height: number };
