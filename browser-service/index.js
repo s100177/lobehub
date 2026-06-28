@@ -320,6 +320,17 @@ function withRiskBlock(state, riskBlock) {
   };
 }
 
+function createExecutionEvent({ action, id, status, summary, target }) {
+  return {
+    ...(action ? { action } : {}),
+    id,
+    status,
+    summary,
+    ...(target ? { target } : {}),
+    timestamp: Date.now(),
+  };
+}
+
 async function inspectPageState(page) {
   return await page.evaluate(() => {
     const visible = (element) => {
@@ -868,6 +879,88 @@ async function waitForPageAfterSubmit(page, { beforeTitle, beforeUrl, expectedTe
   await page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => null);
 }
 
+async function performSafeClick(page, selector, timeout = 5000) {
+  const riskProbe = await inspectElementRisk(page, selector, 'click');
+  if (riskProbe.ok) {
+    const risk = classifyRisk(riskProbe.text);
+    if (risk) {
+      return {
+        blocked: true,
+        riskBlock: createRiskBlock({
+          action: 'click',
+          risk,
+          selector,
+          text: riskProbe.text,
+        }),
+      };
+    }
+  }
+
+  try {
+    await page.waitForSelector(selector, { state: 'visible', timeout });
+    await page.click(selector);
+  } catch (err) {
+    const fallback = await clickElementWithDomFallback(page, selector);
+    if (!fallback.ok) throw err;
+  }
+  await page.waitForTimeout(500);
+
+  return { ok: true };
+}
+
+async function performSafeFill(page, selector, text, timeout = 5000) {
+  try {
+    await page.waitForSelector(selector, { state: 'visible', timeout });
+    await page.fill(selector, text ?? '');
+  } catch (err) {
+    const fallback = await fillElementWithDomFallback(page, selector, text);
+    if (!fallback.ok) throw err;
+  }
+  await page.waitForTimeout(300);
+
+  return { ok: true };
+}
+
+async function performSafeSubmit(page, selector, timeout = 10000) {
+  await page.waitForSelector(selector, { state: 'attached', timeout });
+  const riskProbe = await inspectElementRisk(page, selector, 'submit');
+  if (riskProbe.ok) {
+    const risk = classifyRisk(riskProbe.text);
+    if (risk) {
+      return {
+        blocked: true,
+        riskBlock: createRiskBlock({
+          action: 'submit',
+          risk,
+          selector,
+          text: riskProbe.text,
+        }),
+      };
+    }
+  }
+
+  const beforeTitle = await page.title().catch(() => '');
+  const beforeUrl = page.url();
+  const expectedText = await page
+    .$eval(selector, (element) =>
+      element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+        ? element.value
+        : element.textContent,
+    )
+    .catch(() => undefined);
+
+  const navigation = page
+    .waitForNavigation({ timeout, waitUntil: 'networkidle' })
+    .catch(() => null);
+  const submitted = await submitElementForm(page, selector);
+  if (!submitted.ok) return { ok: false, reason: submitted.reason };
+
+  await navigation;
+  await waitForPageAfterSubmit(page, { beforeTitle, beforeUrl, expectedText, timeout });
+
+  return { ok: true };
+}
+
 function getSessionId(req) {
   return req.headers['x-session-id'] || req.query.session;
 }
@@ -1327,39 +1420,21 @@ app.post('/click', sessionMiddleware, async (req, res) => {
 
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
-    const riskProbe = await inspectElementRisk(page, selector, 'click');
-    if (riskProbe.ok) {
-      const risk = classifyRisk(riskProbe.text);
-      if (risk) {
-        const riskBlock = createRiskBlock({
-          action: 'click',
-          risk,
-          selector,
-          text: riskProbe.text,
-        });
-        recordAction(session, {
-          action: 'click',
-          status: 'blocked',
-          summary: riskBlock.reason,
-          target: selector,
-        });
-        return res.json(
-          withRiskBlock(
-            await getPageState(page, { screenshot: false, sessionId: req.sessionId }),
-            riskBlock,
-          ),
-        );
-      }
+    const clicked = await performSafeClick(page, selector, timeout);
+    if (clicked.blocked) {
+      recordAction(session, {
+        action: 'click',
+        status: 'blocked',
+        summary: clicked.riskBlock.reason,
+        target: selector,
+      });
+      return res.json(
+        withRiskBlock(
+          await getPageState(page, { screenshot: false, sessionId: req.sessionId }),
+          clicked.riskBlock,
+        ),
+      );
     }
-
-    try {
-      await page.waitForSelector(selector, { state: 'visible', timeout });
-      await page.click(selector);
-    } catch (err) {
-      const fallback = await clickElementWithDomFallback(page, selector);
-      if (!fallback.ok) throw err;
-    }
-    await page.waitForTimeout(500);
     recordAction(session, { action: 'click', summary: `Clicked ${selector}`, target: selector });
     res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
@@ -1374,14 +1449,7 @@ app.post('/fill', sessionMiddleware, async (req, res) => {
 
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
-    try {
-      await page.waitForSelector(selector, { state: 'visible', timeout });
-      await page.fill(selector, text ?? '');
-    } catch (err) {
-      const fallback = await fillElementWithDomFallback(page, selector, text);
-      if (!fallback.ok) throw err;
-    }
-    await page.waitForTimeout(300);
+    await performSafeFill(page, selector, text, timeout);
     recordAction(session, { action: 'fill', summary: `Filled ${selector}`, target: selector });
     res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
@@ -1396,51 +1464,23 @@ app.post('/submit', sessionMiddleware, async (req, res) => {
 
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
-    await page.waitForSelector(selector, { state: 'attached', timeout });
-    const riskProbe = await inspectElementRisk(page, selector, 'submit');
-    if (riskProbe.ok) {
-      const risk = classifyRisk(riskProbe.text);
-      if (risk) {
-        const riskBlock = createRiskBlock({
-          action: 'submit',
-          risk,
-          selector,
-          text: riskProbe.text,
-        });
-        recordAction(session, {
-          action: 'submit',
-          status: 'blocked',
-          summary: riskBlock.reason,
-          target: selector,
-        });
-        return res.json(
-          withRiskBlock(
-            await getPageState(page, { screenshot: false, sessionId: req.sessionId }),
-            riskBlock,
-          ),
-        );
-      }
+    const submitted = await performSafeSubmit(page, selector, timeout);
+    if (submitted.blocked) {
+      recordAction(session, {
+        action: 'submit',
+        status: 'blocked',
+        summary: submitted.riskBlock.reason,
+        target: selector,
+      });
+      return res.json(
+        withRiskBlock(
+          await getPageState(page, { screenshot: false, sessionId: req.sessionId }),
+          submitted.riskBlock,
+        ),
+      );
     }
-
-    const beforeTitle = await page.title().catch(() => '');
-    const beforeUrl = page.url();
-    const expectedText = await page
-      .$eval(selector, (element) =>
-        element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
-          ? element.value
-          : element.textContent,
-      )
-      .catch(() => undefined);
-
-    const navigation = page
-      .waitForNavigation({ timeout, waitUntil: 'networkidle' })
-      .catch(() => null);
-    const submitted = await submitElementForm(page, selector);
     if (!submitted.ok)
       return res.status(400).json({ error: `Failed to submit form: ${submitted.reason}` });
-
-    await navigation;
-    await waitForPageAfterSubmit(page, { beforeTitle, beforeUrl, expectedText, timeout });
     recordAction(session, { action: 'submit', summary: `Submitted ${selector}`, target: selector });
     res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
@@ -1488,6 +1528,205 @@ app.post('/evaluate', sessionMiddleware, async (req, res) => {
     res.json({
       result,
       ...(await getPageState(page, { screenshot: false, sessionId: req.sessionId })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/execute-plan', sessionMiddleware, async (req, res) => {
+  try {
+    const { inputs = {}, maxSteps = 4, timeout = 10000 } = req.body || {};
+    const session = await getOrCreateSession(req.sessionId);
+    const { page } = session;
+    const executionEvents = [];
+
+    let pageState = await inspectPageState(page);
+    if (!pageState.loggedIn) {
+      const state = await getPageState(page, { screenshot: false, sessionId: req.sessionId });
+      return res.json({
+        ...state,
+        executionEvents: [
+          createExecutionEvent({
+            id: 'login_required',
+            status: 'blocked',
+            summary: 'Execution stopped because the page requires user login.',
+          }),
+        ],
+        taskState: 'needs_more_info',
+      });
+    }
+
+    const plan = pageState.plan;
+    if (!plan?.steps?.length) {
+      const state = await getPageState(page, { screenshot: false, sessionId: req.sessionId });
+      return res.json({
+        ...state,
+        executionEvents: [
+          createExecutionEvent({
+            id: 'plan_missing',
+            status: 'blocked',
+            summary: 'Execution stopped because no page skill-pack plan is available.',
+          }),
+        ],
+        taskState: pageState.taskState || 'failed',
+      });
+    }
+
+    const searchField = pageState.fields?.find((field) =>
+      /搜索|查询|search|query|kw|wd/i.test(`${field.label} ${field.selector}`),
+    );
+    const searchAction = pageState.actions?.find((action) => /搜索|查询/.test(action.text));
+    const queryText = typeof inputs.query === 'string' ? inputs.query.trim() : '';
+
+    for (const step of plan.steps) {
+      if (executionEvents.length >= maxSteps) break;
+
+      if (step.type === 'risk_gate' || step.risk) {
+        executionEvents.push(
+          createExecutionEvent({
+            id: step.id,
+            status: 'blocked',
+            summary: `Execution stopped before risky step: ${step.title}`,
+          }),
+        );
+        break;
+      }
+
+      if (step.type === 'ask') {
+        executionEvents.push(
+          createExecutionEvent({
+            id: step.id,
+            status: 'blocked',
+            summary: `Execution needs user input before continuing: ${step.title}`,
+          }),
+        );
+        break;
+      }
+
+      if (step.type === 'inspect' || step.type === 'verify') {
+        pageState = await inspectPageState(page);
+        executionEvents.push(
+          createExecutionEvent({
+            action: step.type,
+            id: step.id,
+            status: 'completed',
+            summary: step.title,
+          }),
+        );
+        continue;
+      }
+
+      if (step.type === 'fill') {
+        if (!queryText || !searchField?.selector) {
+          executionEvents.push(
+            createExecutionEvent({
+              action: 'fill',
+              id: step.id,
+              status: 'blocked',
+              summary: 'Execution needs a query input before filling the search field.',
+              target: searchField?.selector,
+            }),
+          );
+          break;
+        }
+
+        await performSafeFill(page, searchField.selector, queryText, timeout);
+        recordAction(session, {
+          action: 'fill',
+          summary: `Plan filled ${searchField.selector}`,
+          target: searchField.selector,
+        });
+        executionEvents.push(
+          createExecutionEvent({
+            action: 'fill',
+            id: step.id,
+            status: 'completed',
+            summary: `Filled ${searchField.label || searchField.selector}`,
+            target: searchField.selector,
+          }),
+        );
+        continue;
+      }
+
+      if (step.type === 'click') {
+        const target = searchAction?.selector || searchField?.selector;
+        if (!target) {
+          executionEvents.push(
+            createExecutionEvent({
+              action: 'click',
+              id: step.id,
+              status: 'blocked',
+              summary: 'Execution stopped because no safe click target was found.',
+            }),
+          );
+          break;
+        }
+
+        const submitted = await performSafeSubmit(page, target, timeout);
+        if (submitted.blocked) {
+          recordAction(session, {
+            action: 'submit',
+            status: 'blocked',
+            summary: submitted.riskBlock.reason,
+            target,
+          });
+          const state = await getPageState(page, { screenshot: false, sessionId: req.sessionId });
+          return res.json({
+            ...withRiskBlock(state, submitted.riskBlock),
+            executionEvents: [
+              ...executionEvents,
+              createExecutionEvent({
+                action: 'submit',
+                id: step.id,
+                status: 'blocked',
+                summary: submitted.riskBlock.reason,
+                target,
+              }),
+            ],
+            taskState: 'risk_blocked',
+          });
+        }
+        if (!submitted.ok) throw new Error(`Failed to submit form: ${submitted.reason}`);
+
+        recordAction(session, {
+          action: 'submit',
+          summary: `Plan submitted ${target}`,
+          target,
+        });
+        executionEvents.push(
+          createExecutionEvent({
+            action: 'submit',
+            id: step.id,
+            status: 'completed',
+            summary: `Submitted ${target}`,
+            target,
+          }),
+        );
+        continue;
+      }
+
+      executionEvents.push(
+        createExecutionEvent({
+          id: step.id,
+          status: 'skipped',
+          summary: `Skipped unsupported safe step type: ${step.type}`,
+        }),
+      );
+    }
+
+    const state = await getPageState(page, { screenshot: false, sessionId: req.sessionId });
+    const stopped = executionEvents.find((event) => event.status === 'blocked');
+    const completedAllSafeSteps = !stopped && executionEvents.length > 0;
+
+    res.json({
+      ...state,
+      executionEvents,
+      taskState: stopped
+        ? state.taskState || 'asking_clarification'
+        : completedAllSafeSteps
+          ? 'completed'
+          : state.taskState || 'ai_controlling',
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

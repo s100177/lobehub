@@ -420,7 +420,16 @@ scripts/verify-browser-agent-product.mjs
 - UI 出现 “是否继续自动执行”。
 - 用户点击继续后重新调用 inspect。
 
-### 4.8 歧义询问
+### 4.8 安全计划执行
+
+断言：
+
+- 用户授权后调用 `executePlan`，而不是只在前端切换状态。
+- 搜索页带 `query` 输入时，执行事件包含 fill 和 submit completed。
+- 购买页或订单页执行到 ask /risk_gate 前停止。
+- 停止时返回 blocked execution event，并且不触发购买、支付、删除、释放、授权等页面副作用。
+
+### 4.9 歧义询问
 
 断言：
 

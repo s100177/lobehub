@@ -680,6 +680,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   const isIframeMode = mode === 'iframe';
   const modeLabel = isIframeMode ? 'Iframe' : 'Remote';
   const recentEvents = currentState.actionEvents?.slice(-20).reverse() ?? [];
+  const executionEvents = currentState.executionEvents?.slice(-20).reverse() ?? [];
   const pageState = currentState.pageState;
   const riskyActions = pageState?.actions?.filter((action) => action.risk).slice(0, 3) ?? [];
   const selectedOptions = pageState?.selectedOptions?.filter(Boolean).slice(0, 3) ?? [];
@@ -739,9 +740,35 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     }
   };
 
-  const authorizeControl = () => {
+  const executeAuthorizedPlan = async () => {
     appendLocalEvent('User authorized AI browser control.', 'success');
     updateTaskState('ai_controlling');
+
+    try {
+      const inputs: Record<string, string> = {};
+      const answer = selectedClarification || clarificationText;
+      if (answer) inputs.query = answer;
+
+      const res = await fetch('/api/browser/action', {
+        body: JSON.stringify({
+          action: 'executePlan',
+          params: { inputs, maxSteps: 4 },
+          sessionId,
+        }),
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+      const data = await res.json().catch(() => undefined);
+      if (!res.ok) throw new Error(data?.error || `Execute plan failed with HTTP ${res.status}`);
+
+      setLocalState({ ...data, sessionId });
+      setClarificationText('');
+      setSelectedClarification(undefined);
+    } catch (err) {
+      appendLocalEvent(err instanceof Error ? err.message : String(err), 'error');
+      updateTaskState('failed');
+    }
   };
 
   const pauseByIntervention = () => {
@@ -869,7 +896,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
             </div>
           )}
           <div className={styles.runtimeActions}>
-            <button className={styles.primaryButton} type="button" onClick={authorizeControl}>
+            <button className={styles.primaryButton} type="button" onClick={executeAuthorizedPlan}>
               帮我操作
             </button>
             <button
@@ -1051,8 +1078,14 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
           </div>
         </div>
       )}
-      {recentEvents.length > 0 && (
+      {(recentEvents.length > 0 || executionEvents.length > 0) && (
         <div aria-label="Browser action timeline" className={styles.timeline}>
+          {executionEvents.map((event) => (
+            <div className={styles.eventItem} key={event.id}>
+              <span className={styles.eventStatus}>{event.status}</span>
+              <span>{event.summary}</span>
+            </div>
+          ))}
           {recentEvents.map((event) => (
             <div className={styles.eventItem} key={event.id}>
               <span className={styles.eventStatus}>{event.status}</span>

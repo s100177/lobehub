@@ -146,6 +146,68 @@ describe('browser executor', () => {
     });
   });
 
+  it('proxies executePlan actions and preserves execution events', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({
+        executionEvents: [
+          {
+            action: 'fill',
+            id: 'fill_query',
+            status: 'completed',
+            summary: 'Filled 搜索',
+            target: '#kw',
+            timestamp: 1,
+          },
+          {
+            action: 'submit',
+            id: 'submit_search',
+            status: 'completed',
+            summary: 'Submitted #kw',
+            target: '#kw',
+            timestamp: 2,
+          },
+        ],
+        taskState: 'completed',
+        title: 'Search',
+        url: 'https://example.com/search',
+      }),
+      ok: true,
+      status: 200,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await invokeExecutor(
+      BrowserIdentifier,
+      BrowserApiName.executePlan,
+      { inputs: { query: '复星医药' }, maxSteps: 4 },
+      { messageId: 'tool-message-id', topicId: 'topic-1', toolCallId: 'call-1' },
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/browser/action', {
+      body: JSON.stringify({
+        action: BrowserApiName.executePlan,
+        params: { inputs: { query: '复星医药' }, maxSteps: 4 },
+        sessionId: 'topic-1',
+      }),
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      signal: undefined,
+    });
+    expect(result).toMatchObject({
+      content: expect.stringContaining('Browser plan execution finished'),
+      state: {
+        executionEvents: [
+          expect.objectContaining({ action: 'fill', status: 'completed' }),
+          expect.objectContaining({ action: 'submit', status: 'completed' }),
+        ],
+        sessionId: 'topic-1',
+        taskState: 'completed',
+      },
+      success: true,
+    });
+  });
+
   it('returns blocked state when the browser service rejects a risky click', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       json: async () => ({

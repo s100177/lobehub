@@ -5,6 +5,7 @@ export const BrowserApiName = {
   click: 'click',
   back: 'back',
   evaluate: 'evaluate',
+  executePlan: 'executePlan',
   fill: 'fill',
   forward: 'forward',
   inspect: 'inspect',
@@ -37,6 +38,12 @@ export interface SubmitParams {
   timeout?: number;
 }
 
+export interface ExecutePlanParams {
+  inputs?: Record<string, string>;
+  maxSteps?: number;
+  timeout?: number;
+}
+
 export interface ScrollParams {
   x?: number;
   y?: number;
@@ -51,6 +58,7 @@ export interface BrowserActionEvent {
     | 'back'
     | 'click'
     | 'evaluate'
+    | 'executePlan'
     | 'fill'
     | 'forward'
     | 'inspect'
@@ -71,6 +79,15 @@ export interface BrowserPageField {
   options?: string[];
   selector?: string;
   value?: string;
+}
+
+export interface BrowserPlanExecutionEvent {
+  action?: 'click' | 'fill' | 'inspect' | 'submit' | 'verify';
+  id: string;
+  status: 'blocked' | 'completed' | 'failed' | 'skipped';
+  summary: string;
+  target?: string;
+  timestamp: number;
 }
 
 export interface BrowserPageAction {
@@ -215,6 +232,7 @@ export interface BrowserState {
   actionEvents?: BrowserActionEvent[];
   blocked?: boolean;
   embeddable?: boolean;
+  executionEvents?: BrowserPlanExecutionEvent[];
   fallbackReason?: string;
   iframeUrl?: string;
   mode?: 'iframe' | 'remote';

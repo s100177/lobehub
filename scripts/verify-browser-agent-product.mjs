@@ -342,6 +342,21 @@ try {
     `Expected blocked risk gate in plan, got ${JSON.stringify(buy.plan?.steps)}`,
   );
   assertTargetHighlight(buy.pageState?.targetHighlight, /购买|提交|支付|风险/, 'cloud buy');
+  const buyExecution = await request('/execute-plan', { maxSteps: 4 }, 'verify-agent-buy');
+  assert(
+    buyExecution.executionEvents?.some(
+      (event) => event.status === 'blocked' && /user input|risky|风险|缺/i.test(event.summary),
+    ),
+    `Expected buy execution to stop before missing input or risk, got ${JSON.stringify(
+      buyExecution.executionEvents,
+    )}`,
+  );
+  const buyFlag = await request(
+    '/evaluate',
+    { code: 'document.body.dataset.purchased' },
+    'verify-agent-buy',
+  );
+  assert(buyFlag.result === undefined, `Expected buy plan not to purchase, got ${buyFlag.result}`);
 
   const ambiguous = await request(
     '/navigate',
@@ -411,8 +426,23 @@ try {
     })}`,
   );
   assertTargetHighlight(search.pageState?.targetHighlight, /搜索|查询/, 'search page');
-  await request('/fill', { selector: '#kw', text: '复星医药' }, 'verify-agent-search');
-  await request('/submit', { selector: '#kw' }, 'verify-agent-search');
+  const searchExecution = await request(
+    '/execute-plan',
+    { inputs: { query: '复星医药' }, maxSteps: 4 },
+    'verify-agent-search',
+  );
+  assert(
+    searchExecution.executionEvents?.some(
+      (event) => event.action === 'fill' && event.status === 'completed',
+    ),
+    `Expected search plan to fill query, got ${JSON.stringify(searchExecution.executionEvents)}`,
+  );
+  assert(
+    searchExecution.executionEvents?.some(
+      (event) => event.action === 'submit' && event.status === 'completed',
+    ),
+    `Expected search plan to submit query, got ${JSON.stringify(searchExecution.executionEvents)}`,
+  );
   const query = await request(
     '/evaluate',
     { code: 'document.body.dataset.query' },

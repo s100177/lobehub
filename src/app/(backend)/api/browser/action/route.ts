@@ -11,6 +11,8 @@ const ALLOWED_ACTIONS = new Set([
   'scroll',
   'screenshot',
   'evaluate',
+  'execute-plan',
+  'executePlan',
   'inspect',
   'back',
   'forward',
@@ -38,7 +40,8 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const res = await fetch(`${browserServiceUrl}/${action}`, {
+    const serviceAction = action === 'executePlan' ? 'execute-plan' : action;
+    const res = await fetch(`${browserServiceUrl}/${serviceAction}`, {
       body: JSON.stringify(params ?? {}),
       cache: 'no-store',
       headers: {

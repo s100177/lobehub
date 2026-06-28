@@ -40,6 +40,7 @@ const createBrowserRuntimeService = (
   back: () => callBrowserAction(sessionId, BrowserApiName.back, undefined, signal),
   click: (args) => callBrowserAction(sessionId, BrowserApiName.click, args, signal),
   evaluate: (args) => callBrowserAction(sessionId, BrowserApiName.evaluate, args, signal),
+  executePlan: (args) => callBrowserAction(sessionId, BrowserApiName.executePlan, args, signal),
   fill: (args) => callBrowserAction(sessionId, BrowserApiName.fill, args, signal),
   forward: () => callBrowserAction(sessionId, BrowserApiName.forward, undefined, signal),
   inspect: () => callBrowserAction(sessionId, BrowserApiName.inspect, undefined, signal),
@@ -93,6 +94,11 @@ class BrowserExecutor extends BaseExecutor<typeof BrowserApiName> {
     params: { code: string },
     ctx?: BuiltinToolContext,
   ): Promise<BuiltinToolResult> => this.runtime(ctx).evaluate(params);
+
+  executePlan = async (
+    params: { inputs?: Record<string, string>; maxSteps?: number; timeout?: number },
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => this.runtime(ctx).executePlan(params);
 
   inspect = async (_params: unknown, ctx?: BuiltinToolContext): Promise<BuiltinToolResult> =>
     this.runtime(ctx).inspect();

@@ -1032,6 +1032,10 @@ AI 理解用户目标并生成计划后，必须先询问用户是否开始执�
 - 用户确认前不进入自动操作。
 - 用户可选择只给建议、开始执行或取消。
 - 确认后进入 AI 接管视觉态。
+- 确认后通过 `executePlan` 推进当前技能包 workflow。
+- `executePlan` 只执行安全步骤，例如 inspect、fill、搜索提交、verify。
+- 遇到 ask、缺少输入、登录缺口或 risk_gate 时必须停止并返回 `executionEvents`。
+- 购买、支付、提交订单、删除、释放、授权等风险动作不得自动执行。
 
 ### P1-7 AI 接管视觉态
 
@@ -1172,6 +1176,7 @@ BrowserPanel
 - `/fill`
 - `/evaluate`
 - `/inspect`
+- `/execute-plan`
 
 建议新增或增强：
 

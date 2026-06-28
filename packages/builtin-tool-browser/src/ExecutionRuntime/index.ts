@@ -1,11 +1,12 @@
 import { type BuiltinServerRuntimeOutput } from '@lobechat/types';
 
-import { type BrowserActionEvent, type BrowserState } from '../types';
+import { type BrowserActionEvent, type BrowserState, type ExecutePlanParams } from '../types';
 
 export interface BrowserRuntimeService {
   back: () => Promise<BrowserState>;
   click: (args: { selector: string; timeout?: number }) => Promise<BrowserState>;
   evaluate: (args: { code: string }) => Promise<BrowserState>;
+  executePlan: (args: ExecutePlanParams) => Promise<BrowserState>;
   fill: (args: { selector: string; text: string; timeout?: number }) => Promise<BrowserState>;
   forward: () => Promise<BrowserState>;
   inspect: () => Promise<BrowserState>;
@@ -184,6 +185,40 @@ export class BrowserExecutionRuntime {
     } catch (error) {
       return {
         content: `Failed to submit form for "${args.selector}": ${error instanceof Error ? error.message : String(error)}`,
+        error,
+        success: false,
+      };
+    }
+  }
+
+  async executePlan(args: ExecutePlanParams = {}): Promise<BuiltinServerRuntimeOutput> {
+    try {
+      const state = await this.service.executePlan(args);
+      const events = state.executionEvents ?? [];
+      const blocked = events.find((event) => event.status === 'blocked');
+      const summary =
+        events.length > 0
+          ? events.map((event) => `${event.status}: ${event.summary}`).join('\n')
+          : 'No executable plan steps were run.';
+
+      return {
+        content: blocked
+          ? `Browser plan stopped before unsafe or incomplete step:\n${summary}`
+          : `Browser plan execution finished:\n${summary}`,
+        state: this.withEvent(
+          state,
+          this.createEvent(
+            'executePlan',
+            blocked ? 'blocked' : 'success',
+            blocked ? blocked.summary : 'Executed browser plan',
+            blocked?.target,
+          ),
+        ),
+        success: !blocked,
+      };
+    } catch (error) {
+      return {
+        content: `Failed to execute browser plan: ${error instanceof Error ? error.message : String(error)}`,
         error,
         success: false,
       };

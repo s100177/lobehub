@@ -135,6 +135,30 @@ export const BrowserManifest: BuiltinToolManifest = {
       },
     },
     {
+      description:
+        'Execute the current page skill-pack plan after user authorization. Runs only safe steps such as inspect, fill, search submit, and verify. Stops before missing information or risky actions such as purchase, payment, submit order, delete, release, or authorization.',
+      name: BrowserApiName.executePlan,
+      parameters: {
+        properties: {
+          inputs: {
+            additionalProperties: { type: 'string' },
+            description:
+              'Structured user-provided inputs for the plan, for example {"query":"复星医药"}. Do not guess missing required inputs.',
+            type: 'object',
+          },
+          maxSteps: {
+            description: 'Maximum safe plan steps to run in one call (default: 4).',
+            type: 'number',
+          },
+          timeout: {
+            description: 'Per-step timeout in milliseconds (default: 10000).',
+            type: 'number',
+          },
+        },
+        type: 'object',
+      },
+    },
+    {
       description: 'Go back in the shared browser history and returns the updated page state.',
       name: BrowserApiName.back,
       parameters: {

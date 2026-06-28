@@ -235,8 +235,39 @@ describe('BrowserPanel dual mode rendering', () => {
     expect(screen.getByText('提交前确认 - 提交后不可撤销')).toBeInTheDocument();
   });
 
-  it('authorizes AI takeover inside the browser panel without executing page actions', async () => {
-    const fetchMock = vi.fn();
+  it('authorizes AI takeover and executes the safe browser plan', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({
+        embeddable: false,
+        executionEvents: [
+          {
+            action: 'inspect',
+            id: 'inspect',
+            status: 'completed',
+            summary: '读取当前页面状态',
+            timestamp: 1,
+          },
+          {
+            action: 'fill',
+            id: 'fill_query',
+            status: 'completed',
+            summary: 'Filled 搜索',
+            target: '#kw',
+            timestamp: 2,
+          },
+        ],
+        mode: 'remote',
+        pageState: {
+          pageType: 'search',
+          targetHighlight: { label: '搜索输入框' },
+        },
+        taskState: 'completed',
+        title: 'Workflow',
+        url: 'https://example.com/workflow',
+      }),
+      ok: true,
+      status: 200,
+    });
     vi.stubGlobal('fetch', fetchMock);
 
     render(
@@ -246,9 +277,9 @@ describe('BrowserPanel dual mode rendering', () => {
           embeddable: false,
           mode: 'remote',
           pageState: {
-            pageType: 'form',
-            targetHighlight: { label: '地域选择' },
-            workflowHints: ['先读取页面状态', '停在提交前'],
+            pageType: 'search',
+            targetHighlight: { label: '搜索输入框' },
+            workflowHints: ['先读取页面状态', '提交搜索'],
           },
           taskState: 'waiting_user_authorization',
           title: 'Workflow',
@@ -262,10 +293,25 @@ describe('BrowserPanel dual mode rendering', () => {
     fireEvent.click(screen.getByText('帮我操作'));
 
     expect(screen.getByText('Task State: ai_controlling')).toBeInTheDocument();
-    expect(screen.getByLabelText('AI takeover status')).toBeInTheDocument();
-    expect(screen.getByLabelText('Current browser target')).toHaveTextContent('地域选择');
     expect(screen.getByText('User authorized AI browser control.')).toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalled();
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/browser/action', {
+        body: JSON.stringify({
+          action: 'executePlan',
+          params: { inputs: {}, maxSteps: 4 },
+          sessionId: 'session-auth',
+        }),
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Task State: completed')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Filled 搜索')).toBeInTheDocument();
   });
 
   it('renders a viewport-relative target box in iframe takeover without intercepting input', () => {
