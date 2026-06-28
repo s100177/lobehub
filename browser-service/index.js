@@ -161,8 +161,10 @@ async function getPageState(page, options = {}) {
     viewport: VIEWPORT,
     ...(session?.actionEvents?.length ? { actionEvents: session.actionEvents } : {}),
     ...(pageState ? { pageState } : {}),
+    ...(pageState?.plan ? { plan: pageState.plan } : {}),
     ...(pointer ? { pointer } : {}),
     ...(screenshot ? { screenshot: screenshot.toString('base64') } : {}),
+    ...(pageState?.skillPack ? { skillPack: pageState.skillPack } : {}),
     ...(pageState?.taskState ? { taskState: pageState.taskState } : {}),
   };
 }
@@ -477,6 +479,122 @@ async function inspectPageState(page) {
       return 'idle';
     })();
 
+    const buildSkillPack = () => {
+      const site = location.hostname || 'local-page';
+      const isCloudBuyPage = /kiki-cloud-buy|云服务器购买|订单确认/i.test(
+        `${location.pathname} ${bodyText}`,
+      );
+
+      if (isCloudBuyPage) {
+        return {
+          ambiguityRules: [
+            '多个地域、规格或预算都可行时必须询问用户',
+            '预算缺失时先询问或给出推荐',
+          ],
+          confirmationPoints: [
+            {
+              id: 'before_order',
+              reason: '提交订单、购买、支付、删除、释放和授权都属于风险动作',
+              title: '风险动作前确认',
+            },
+          ],
+          description: '云服务器购买/订单确认页面',
+          entities: ['region', 'scenario', 'instanceType', 'price', 'budget'],
+          fillGaps: [
+            {
+              field: 'region',
+              mode: 'ask_user',
+              reason: '地域影响延迟、价格和资源可用性',
+            },
+            {
+              field: 'budget',
+              mode: 'ask_user',
+              reason: '预算决定推荐配置上限',
+            },
+          ],
+          page: 'cloud_buy',
+          pageType: 'purchase',
+          riskActions: ['purchase', 'payment', 'submit_order', 'delete', 'release', 'authorize'],
+          safeActions: ['inspect_configuration', 'select_region', 'select_instance', 'read_price'],
+          site,
+          workflows: [
+            {
+              constraints: ['不要付款', '不要提交订单', '风险动作前必须停下'],
+              goal: '选择适合目标的云服务器配置并停在风险确认前',
+              intent: 'cloud_server_purchase',
+              steps: [
+                { id: 'inspect', title: '读取当前配置、价格和登录态', type: 'inspect' },
+                {
+                  gaps: ['region', 'budget'],
+                  id: 'collect_requirements',
+                  title: '补齐地域、预算或用途等关键信息',
+                  type: 'ask',
+                },
+                { id: 'select_config', title: '选择安全范围内的地域和实例规格', type: 'select' },
+                { id: 'read_price', title: '读取并核对费用', type: 'verify' },
+                {
+                  id: 'risk_gate',
+                  risk: 'purchase',
+                  title: '停在购买、支付或提交订单前等待用户确认',
+                  type: 'risk_gate',
+                },
+              ],
+            },
+          ],
+        };
+      }
+
+      if (pageType === 'search') {
+        return {
+          ambiguityRules: ['搜索词缺失时必须询问用户'],
+          description: '搜索页面',
+          entities: ['query', 'result'],
+          fillGaps: [{ field: 'query', mode: 'ask_user', reason: '搜索词决定查询目标' }],
+          page: 'search',
+          pageType: 'search',
+          riskActions: [],
+          safeActions: ['fill_query', 'submit_search', 'open_result'],
+          site,
+          workflows: [
+            {
+              goal: '输入搜索词并提交搜索',
+              intent: 'search_web',
+              steps: [
+                { id: 'inspect', title: '读取搜索框和当前页面状态', type: 'inspect' },
+                { gaps: ['query'], id: 'fill_query', title: '填写搜索词', type: 'fill' },
+                { id: 'submit_search', title: '提交搜索表单', type: 'click' },
+                { id: 'verify_results', title: '确认搜索结果已出现', type: 'verify' },
+              ],
+            },
+          ],
+        };
+      }
+
+      return undefined;
+    };
+
+    const skillPack = buildSkillPack();
+    const workflow = skillPack?.workflows?.[0];
+    const plan = workflow
+      ? {
+          confirmationRequired: workflow.steps.some((step) => step.type === 'risk_gate'),
+          goal: workflow.goal,
+          intent: workflow.intent,
+          source: 'skill_pack',
+          steps: workflow.steps.map((step, index) => ({
+            ...step,
+            status:
+              step.type === 'risk_gate'
+                ? 'blocked'
+                : index === 0
+                  ? 'current'
+                  : step.gaps?.some((gap) => gaps.includes(gap) || gaps.includes(`${gap}_required`))
+                    ? 'current'
+                    : 'pending',
+          })),
+        }
+      : undefined;
+
     return {
       actions,
       confirmationPoints,
@@ -489,6 +607,8 @@ async function inspectPageState(page) {
       prices,
       selectedOptions,
       primaryActions: actions.filter((action) => action.risk).slice(0, 10),
+      plan,
+      skillPack,
       taskState,
       workflowHints,
       textSample: bodyText.slice(0, 1000),

@@ -180,6 +180,18 @@ export interface BrowserSkillPackWorkflow {
   steps: BrowserSkillPackWorkflowStep[];
 }
 
+export interface BrowserAgentPlanStep extends BrowserSkillPackWorkflowStep {
+  status: 'blocked' | 'completed' | 'current' | 'pending';
+}
+
+export interface BrowserAgentPlan {
+  confirmationRequired?: boolean;
+  goal: string;
+  intent: string;
+  source: 'heuristic' | 'skill_pack';
+  steps: BrowserAgentPlanStep[];
+}
+
 export interface BrowserPageSkillPack {
   ambiguityRules?: string[];
   confirmationPoints?: BrowserPageState['confirmationPoints'];
@@ -206,6 +218,7 @@ export interface BrowserState {
   iframeUrl?: string;
   mode?: 'iframe' | 'remote';
   pageState?: BrowserPageState;
+  plan?: BrowserAgentPlan;
   result?: any;
   riskBlock?: BrowserRiskBlock;
   screenshot?: string; // base64 fallback / live-viewer frame source

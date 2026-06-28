@@ -312,6 +312,18 @@ try {
     buy.pageState?.prices?.some((price) => price.value.includes('¥114.36')),
     `Expected price extraction, got ${JSON.stringify(buy.pageState?.prices)}`,
   );
+  assert(
+    buy.skillPack?.page === 'cloud_buy',
+    `Expected cloud_buy skill pack, got ${JSON.stringify(buy.skillPack)}`,
+  );
+  assert(
+    buy.plan?.source === 'skill_pack' && buy.plan.intent === 'cloud_server_purchase',
+    `Expected skill-pack workflow plan, got ${JSON.stringify(buy.plan)}`,
+  );
+  assert(
+    buy.plan?.steps?.some((step) => step.type === 'risk_gate' && step.status === 'blocked'),
+    `Expected blocked risk gate in plan, got ${JSON.stringify(buy.plan?.steps)}`,
+  );
 
   const ambiguous = await request(
     '/navigate',
@@ -372,6 +384,13 @@ try {
   assert(
     search.taskState === 'understanding',
     `Expected search understanding, got ${search.taskState}`,
+  );
+  assert(
+    search.skillPack?.page === 'search' && search.plan?.intent === 'search_web',
+    `Expected search skill-pack workflow plan, got ${JSON.stringify({
+      plan: search.plan,
+      skillPack: search.skillPack,
+    })}`,
   );
   await request('/fill', { selector: '#kw', text: '复星医药' }, 'verify-agent-search');
   await request('/submit', { selector: '#kw' }, 'verify-agent-search');

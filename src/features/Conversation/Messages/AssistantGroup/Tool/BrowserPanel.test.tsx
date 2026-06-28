@@ -193,6 +193,27 @@ describe('BrowserPanel dual mode rendering', () => {
         pageType: 'purchase',
         workflowHints: ['读取配置并停在确认前'],
       },
+      plan: {
+        confirmationRequired: true,
+        goal: '选择适合目标的云服务器配置并停在风险确认前',
+        intent: 'cloud_server_purchase',
+        source: 'skill_pack',
+        steps: [
+          {
+            id: 'inspect',
+            status: 'current',
+            title: '读取当前配置、价格和登录态',
+            type: 'inspect',
+          },
+          {
+            id: 'risk_gate',
+            risk: 'purchase',
+            status: 'blocked',
+            title: '停在购买、支付或提交订单前等待用户确认',
+            type: 'risk_gate',
+          },
+        ],
+      },
       title: 'Purchase',
       url: 'https://example.com/purchase',
     };
@@ -205,6 +226,11 @@ describe('BrowserPanel dual mode rendering', () => {
     expect(screen.getByText('Required')).toBeInTheDocument();
     expect(screen.getByText('Needs user input')).toBeInTheDocument();
     expect(screen.getAllByText('读取配置并停在确认前').length).toBeGreaterThan(0);
+    expect(screen.getByLabelText('Browser agent plan')).toHaveTextContent('页面技能包 workflow');
+    expect(screen.getByText('读取当前配置、价格和登录态')).toBeInTheDocument();
+    expect(
+      screen.getByText('停在购买、支付或提交订单前等待用户确认 (purchase)'),
+    ).toBeInTheDocument();
     expect(screen.getByText('login_required')).toBeInTheDocument();
     expect(screen.getByText('提交前确认 - 提交后不可撤销')).toBeInTheDocument();
   });

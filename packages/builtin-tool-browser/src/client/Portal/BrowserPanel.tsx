@@ -256,6 +256,38 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
     flex-wrap: wrap;
     gap: 6px;
   `,
+  planSteps: css`
+    display: grid;
+    gap: 6px;
+    margin-block-start: 8px;
+  `,
+  planStep: css`
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px;
+    align-items: start;
+
+    padding-block: 6px;
+    padding-inline: 8px;
+    border: 1px solid ${cssVar.colorBorderSecondary};
+    border-radius: 8px;
+
+    font-size: 12px;
+    color: ${cssVar.colorText};
+
+    background: ${cssVar.colorBgContainer};
+  `,
+  planStatus: css`
+    padding-block: 2px;
+    padding-inline: 6px;
+    border-radius: 999px;
+
+    font-size: 10px;
+    font-weight: 800;
+    color: ${cssVar.colorTextSecondary};
+
+    background: ${cssVar.colorFillQuaternary};
+  `,
   pill: css`
     padding-block: 3px;
     padding-inline: 8px;
@@ -593,6 +625,8 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   const workflowHints = pageState?.workflowHints?.slice(0, 3) ?? [];
   const gaps = pageState?.gaps?.slice(0, 3) ?? [];
   const confirmationPoints = pageState?.confirmationPoints?.slice(0, 2) ?? [];
+  const plan = currentState.plan;
+  const planSteps = plan?.steps?.slice(0, 6) ?? [];
   const isControlling = taskState ? controllingStates.has(taskState) : false;
   const activeClarification = pageState?.clarifications?.[0] ?? deriveClarification(pageState);
   const targetLabel =
@@ -733,6 +767,24 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
                 <li key={hint}>{hint}</li>
               ))}
             </ul>
+          )}
+          {plan && (
+            <div aria-label="Browser agent plan" className={styles.planSteps}>
+              <div className={styles.taskText}>
+                计划来源：{plan.source === 'skill_pack' ? '页面技能包 workflow' : '页面启发式'}
+                ；目标：
+                {plan.goal}
+              </div>
+              {planSteps.map((step) => (
+                <div className={styles.planStep} key={step.id}>
+                  <span className={styles.planStatus}>{step.status}</span>
+                  <span>
+                    {step.title}
+                    {step.risk ? ` (${step.risk})` : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
           )}
           <div className={styles.runtimeActions}>
             <button className={styles.primaryButton} type="button" onClick={authorizeControl}>
