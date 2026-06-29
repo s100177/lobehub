@@ -113,6 +113,7 @@
 - `scripts/verify-browser-real-smoke.mjs` 覆盖真实站点 remote navigate、inspect、标题 / URL /viewport 和不触发风险动作；可通过 `BROWSER_REAL_SMOKE_URLS` 扩展真实站点列表。
 - `scripts/verify-browser-docker-ui-e2e.mjs` 覆盖 Docker 部署后的真实登录、`/browser-e2e` 测试路由、真实 `BrowserPortal`、browser-service `navigate`/`inspect`/`execute-plan`、授权卡、计划卡、proxy iframe、风险拦截卡和审计时间线。
 - `scripts/verify-browser-skill-packs.mjs` 覆盖 `examples/browser-skill-packs` 或 `BROWSER_SKILL_PACK_VERIFY_DIR` 指向目录里的业务技能包静态结构和风险步骤约束。
+- `scripts/verify-browser-business-demo.mjs` 覆盖指定真实业务系统 URL + 外部技能包目录的端到端演示入口，要求匹配技能包、生成计划、完成安全步骤，并停在风险门。
 - `src/features/Conversation/Messages/AssistantGroup/Tool/BrowserPanel.test.tsx` 覆盖 BrowserPanel 授权卡、暂停卡、clarification、suggestedTasks、审计时间线、remote/iframe 视图和继续前 inspect。
 
 ## 12. 发布门槛
@@ -123,6 +124,7 @@
 - [x] 页面技能包静态校验通过。
 - [x] 自动化脚本全通过。
 - [x] 真实网站冒烟无阻塞问题。
+- [ ] 指定业务系统真实页面完成一轮人工确认的端到端演示。
 - [x] 风险动作不会被自动执行。
 - [x] 用户能随时接管。
 

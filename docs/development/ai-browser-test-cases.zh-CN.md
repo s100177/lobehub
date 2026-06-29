@@ -54,6 +54,35 @@ examples/browser-skill-packs/expense-approval.json
 - 带风险词或 `risk` 字段的 step 必须使用 `risk_gate`。
 - `risk_gate` 必须绑定 `riskActions` 中的 `riskAction` 和 `confirmationPoints` 中的 `confirmationPoint`。
 
+### 2.0.1 L0.5：指定业务系统演示验证
+
+目的：
+
+- 用接入方自己的真实业务页面验证技能包是否可执行。
+- 证明运行时能匹配外部技能包、生成 workflow plan、执行安全步骤，并停在风险门。
+- 避免把本地 fixture 或真实站点只读 smoke 误当成业务系统端到端演示。
+
+运行方式：
+
+```bash
+BROWSER_BUSINESS_DEMO_URL=https://your-business-system.example/path \
+  BROWSER_BUSINESS_SKILL_PACKS_DIR=/path/to/your/skill-packs \
+  BROWSER_BUSINESS_DEMO_INPUTS='{"department":"研发部","reason":"客户现场支持"}' \
+  BROWSER_BUSINESS_DEMO_INTENT=your_workflow_intent \
+  BROWSER_BUSINESS_EXPECT_SKILL_PAGE=your_page_id \
+  BROWSER_BUSINESS_EXPECT_RISK_ACTION=your_risk_gate_step_id \
+  pnpm test:browser-business-demo
+```
+
+验收点：
+
+- 必须显式提供 `BROWSER_BUSINESS_DEMO_URL`，否则脚本失败。
+- 必须显式提供 `BROWSER_BUSINESS_SKILL_PACKS_DIR`，否则脚本失败。
+- 页面必须匹配外部技能包。
+- 计划必须来自 `skill_pack`。
+- 至少一个安全步骤执行完成。
+- 执行必须停在 `risk_blocked`，不能越过风险动作。
+
 ### 2.1 L1：本地可控测试站点
 
 目的：

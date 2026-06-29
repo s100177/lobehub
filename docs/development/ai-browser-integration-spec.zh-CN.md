@@ -100,6 +100,20 @@ examples/browser-skill-packs/expense-approval.json
 - 执行层：可执行 step 必须有声明式 `action.selector`；`fill` / `select` 的输入必须在 `fillGaps` 中声明。
 - 风险层：`risk_gate` 必须绑定 `riskActions` 中的 `riskAction` 和 `confirmationPoints` 中的 `confirmationPoint`。
 
+真实业务系统演示用例：
+
+```bash
+BROWSER_BUSINESS_DEMO_URL=https://your-business-system.example/path \
+  BROWSER_BUSINESS_SKILL_PACKS_DIR=/path/to/your/skill-packs \
+  BROWSER_BUSINESS_DEMO_INPUTS='{"field":"value"}' \
+  BROWSER_BUSINESS_DEMO_INTENT=your_workflow_intent \
+  BROWSER_BUSINESS_EXPECT_SKILL_PAGE=your_page_id \
+  BROWSER_BUSINESS_EXPECT_RISK_ACTION=your_risk_gate_step_id \
+  pnpm test:browser-business-demo
+```
+
+这个脚本不会默认跑本地 fixture。它要求接入方提供真实 URL 和技能包目录，验证技能包匹配、计划生成、安全步骤执行和风险门阻塞。
+
 ### 3.2 页面状态 inspect
 
 每个页面至少要能返回：

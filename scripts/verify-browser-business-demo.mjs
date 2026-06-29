@@ -1,0 +1,175 @@
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+
+const browserPort = Number.parseInt(process.env.BROWSER_BUSINESS_DEMO_PORT || '3340', 10);
+const browserOrigin = `http://127.0.0.1:${browserPort}`;
+const repoRoot = path.resolve(import.meta.dirname, '..');
+const inRepoServiceDir = path.resolve(repoRoot, 'browser-service');
+const deployedServiceDir = path.resolve(repoRoot, '..', 'browser-service');
+const browserServiceDir =
+  process.env.BROWSER_SERVICE_DIR ||
+  (existsSync(path.resolve(inRepoServiceDir, 'node_modules'))
+    ? inRepoServiceDir
+    : deployedServiceDir);
+const skillPacksDir = process.env.BROWSER_BUSINESS_SKILL_PACKS_DIR;
+const targetUrl = process.env.BROWSER_BUSINESS_DEMO_URL;
+const intent = process.env.BROWSER_BUSINESS_DEMO_INTENT;
+const expectedSkillPage = process.env.BROWSER_BUSINESS_EXPECT_SKILL_PAGE;
+const expectedRiskAction = process.env.BROWSER_BUSINESS_EXPECT_RISK_ACTION;
+const maxSteps = Number.parseInt(process.env.BROWSER_BUSINESS_DEMO_MAX_STEPS || '8', 10);
+const inputs = process.env.BROWSER_BUSINESS_DEMO_INPUTS
+  ? JSON.parse(process.env.BROWSER_BUSINESS_DEMO_INPUTS)
+  : {};
+
+if (!targetUrl) {
+  throw new Error('BROWSER_BUSINESS_DEMO_URL is required for a real business-system demo');
+}
+
+if (!skillPacksDir) {
+  throw new Error('BROWSER_BUSINESS_SKILL_PACKS_DIR is required');
+}
+
+if (!existsSync(skillPacksDir)) {
+  throw new Error(`BROWSER_BUSINESS_SKILL_PACKS_DIR does not exist: ${skillPacksDir}`);
+}
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+function waitForProcessExit(child, timeout = 5000) {
+  if (child.exitCode !== null || child.signalCode) return Promise.resolve();
+
+  return new Promise((resolvePromise) => {
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      resolvePromise();
+    }, timeout);
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolvePromise();
+    });
+  });
+}
+
+async function waitForBrowserService() {
+  for (let index = 0; index < 60; index += 1) {
+    try {
+      const response = await fetch(`${browserOrigin}/status`);
+      if (response.ok) return;
+    } catch {
+      // Service is still starting.
+    }
+    await delay(500);
+  }
+
+  throw new Error('Browser service did not become ready');
+}
+
+async function request(pathname, body, sessionId) {
+  const response = await fetch(`${browserOrigin}${pathname}`, {
+    body: JSON.stringify(body),
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Session-ID': sessionId,
+    },
+    method: 'POST',
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(`${pathname} failed: ${response.status} ${JSON.stringify(data)}`);
+  }
+
+  return data;
+}
+
+const browserService = spawn(process.execPath, ['index.js'], {
+  cwd: browserServiceDir,
+  env: {
+    ...process.env,
+    BROWSER_SKILL_PACKS_DIR: skillPacksDir,
+    PORT: String(browserPort),
+  },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+
+browserService.stdout.on('data', (chunk) => process.stdout.write(`[browser-service] ${chunk}`));
+browserService.stderr.on('data', (chunk) => process.stderr.write(`[browser-service] ${chunk}`));
+
+try {
+  await waitForBrowserService();
+
+  const sessionId = `business-demo-${Date.now()}`;
+  const navigated = await request(
+    '/navigate',
+    { mode: 'remote', timeout: 30_000, url: targetUrl },
+    sessionId,
+  );
+
+  assert(navigated.mode === 'remote', `Expected remote mode, got ${navigated.mode}`);
+  assert(navigated.skillPack, `Expected matching skill pack, got ${JSON.stringify(navigated)}`);
+  if (expectedSkillPage) {
+    assert(
+      navigated.skillPack?.page === expectedSkillPage,
+      `Expected skill page ${expectedSkillPage}, got ${JSON.stringify(navigated.skillPack)}`,
+    );
+  }
+  assert(
+    navigated.plan?.source === 'skill_pack' && Array.isArray(navigated.plan.steps),
+    `Expected skill-pack plan, got ${JSON.stringify(navigated.plan)}`,
+  );
+
+  const execution = await request(
+    '/execute-plan',
+    {
+      inputs,
+      intent,
+      maxSteps,
+    },
+    sessionId,
+  );
+
+  assert(
+    Array.isArray(execution.executionEvents) && execution.executionEvents.length > 0,
+    `Expected execution events, got ${JSON.stringify(execution.executionEvents)}`,
+  );
+  assert(
+    execution.executionEvents.some((event) => event.status === 'completed'),
+    `Expected at least one completed safe step, got ${JSON.stringify(execution.executionEvents)}`,
+  );
+  assert(
+    execution.executionState?.phase === 'risk_blocked',
+    `Expected execution to stop at risk gate, got ${JSON.stringify(execution.executionState)}`,
+  );
+
+  const blockedRiskEvent = execution.executionEvents.find(
+    (event) =>
+      event.status === 'blocked' && /risky|风险|Execution stopped before/i.test(event.summary),
+  );
+  assert(
+    blockedRiskEvent,
+    `Expected blocked risk event, got ${JSON.stringify(execution.executionEvents)}`,
+  );
+  if (expectedRiskAction) {
+    assert(
+      execution.riskBlock?.risk === expectedRiskAction ||
+        execution.executionState?.blockedStepId === expectedRiskAction ||
+        blockedRiskEvent.id === expectedRiskAction,
+      `Expected risk action ${expectedRiskAction}, got ${JSON.stringify({
+        blockedRiskEvent,
+        executionState: execution.executionState,
+        riskBlock: execution.riskBlock,
+      })}`,
+    );
+  }
+
+  console.log(
+    `Browser business demo verification passed for ${targetUrl} with skill pack ${navigated.skillPack.page}`,
+  );
+} finally {
+  browserService.kill('SIGTERM');
+  await waitForProcessExit(browserService);
+}
