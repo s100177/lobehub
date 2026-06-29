@@ -642,6 +642,7 @@ BROWSER_DOCKER_E2E_BASE_URL=http://192.168.1.36:3211 \
 - UI 展示候选选项。
 - 用户选择前不执行后续选择动作。
 - 用户选择后任务继续。
+- 用户补充信息后恢复执行前必须重新 `inspect`；仅伪造 `inspectedAfterPause:true` 不能越过服务端输入暂停边界。
 
 ### 4.9 风险拦截
 

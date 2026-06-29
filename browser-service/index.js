@@ -91,6 +91,8 @@ async function getOrCreateSession(sessionId) {
       context,
       executionEvents: [],
       executionState: undefined,
+      inputPauseVersion: 0,
+      inspectedInputPauseVersion: 0,
       inspectedInterventionVersion: 0,
       interventionVersion: 0,
       lastInputAt: Date.now(),
@@ -220,6 +222,30 @@ function hasFreshInterventionInspect(session) {
   return (
     (session.inspectedInterventionVersion || 0) >= (session.interventionVersion || 0) &&
     (session.interventionVersion || 0) > 0
+  );
+}
+
+function markInputPause(session, patch = {}) {
+  const inputPauseVersion = (session.inputPauseVersion || 0) + 1;
+  session.inputPauseVersion = inputPauseVersion;
+  updateExecutionState(session, {
+    ...patch,
+    inputPauseVersion,
+  });
+}
+
+function markInputPauseInspected(session) {
+  if (session.executionState?.phase !== 'paused_for_input') return;
+  session.inspectedInputPauseVersion = session.inputPauseVersion || 0;
+  updateExecutionState(session, {
+    inspectedInputPauseVersion: session.inspectedInputPauseVersion,
+  });
+}
+
+function hasFreshInputPauseInspect(session) {
+  return (
+    (session.inspectedInputPauseVersion || 0) >= (session.inputPauseVersion || 0) &&
+    (session.inputPauseVersion || 0) > 0
   );
 }
 
@@ -2236,6 +2262,7 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
   try {
     const {
       authorized = false,
+      inspectedAfterPause = false,
       inspectedAfterIntervention = false,
       inputs = {},
       intent,
@@ -2340,6 +2367,28 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
       });
     }
 
+    if (
+      session.executionState?.phase === 'paused_for_input' &&
+      (inspectedAfterPause !== true || !hasFreshInputPauseInspect(session))
+    ) {
+      const events = finalizeExecutionEvents([
+        createExecutionEvent({
+          action: 'inspect',
+          id: 'inspect_required_after_input',
+          status: 'blocked',
+          summary:
+            'Execution stopped because user-provided inputs require a fresh inspect before resume.',
+        }),
+      ]);
+      const state = await getCurrentPageState();
+      return res.json({
+        ...state,
+        executionEvents: events,
+        executionState: session.executionState,
+        taskState: 'asking_clarification',
+      });
+    }
+
     const executionState = ensureExecutionState(session, pageState, plan, restart);
     const startIndex = Math.min(executionState.cursor || 0, plan.steps.length);
     updateExecutionState(session, {
@@ -2408,11 +2457,14 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
       });
     };
     const markBlocked = (step, phase = 'paused_for_input') => {
-      updateExecutionState(session, {
+      const patch = {
         blockedStepId: step.id,
         currentStepId: step.id,
         phase,
-      });
+      };
+
+      if (phase === 'paused_for_input') markInputPause(session, patch);
+      else updateExecutionState(session, patch);
     };
 
     for (const [index, step] of plan.steps.entries()) {
@@ -2724,6 +2776,7 @@ app.post('/inspect', sessionMiddleware, async (req, res) => {
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
     markInterventionInspected(session);
+    markInputPauseInspected(session);
     recordAction(session, { action: 'inspect', summary: `Inspected ${page.url()}` });
     res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {

@@ -726,27 +726,50 @@ describe('BrowserPanel dual mode rendering', () => {
   });
 
   it('collects multiple structured clarification inputs and passes them into plan execution', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      json: async () => ({
-        embeddable: false,
-        executionEvents: [
-          {
-            action: 'select',
-            id: 'select_region',
-            status: 'completed',
-            summary: '选择部署地域',
-            target: '#region',
-            timestamp: 1,
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        json: async () => ({
+          embeddable: false,
+          executionState: {
+            blockedStepId: 'select_region',
+            currentStepId: 'select_region',
+            cursor: 1,
+            inspectedInputPauseVersion: 1,
+            inputPauseVersion: 1,
+            phase: 'paused_for_input',
+            updatedAt: 1,
           },
-        ],
-        mode: 'remote',
-        taskState: 'completed',
-        title: 'Cloud Buy',
-        url: 'https://example.com/buy',
-      }),
-      ok: true,
-      status: 200,
-    });
+          mode: 'remote',
+          pageState: { pageType: 'purchase' },
+          taskState: 'asking_clarification',
+          title: 'Cloud Buy',
+          url: 'https://example.com/buy',
+        }),
+        ok: true,
+        status: 200,
+      })
+      .mockResolvedValueOnce({
+        json: async () => ({
+          embeddable: false,
+          executionEvents: [
+            {
+              action: 'select',
+              id: 'select_region',
+              status: 'completed',
+              summary: '选择部署地域',
+              target: '#region',
+              timestamp: 1,
+            },
+          ],
+          mode: 'remote',
+          taskState: 'completed',
+          title: 'Cloud Buy',
+          url: 'https://example.com/buy',
+        }),
+        ok: true,
+        status: 200,
+      });
     vi.stubGlobal('fetch', fetchMock);
 
     render(
@@ -780,6 +803,14 @@ describe('BrowserPanel dual mode rendering', () => {
             ],
             pageType: 'purchase',
           },
+          executionState: {
+            blockedStepId: 'select_region',
+            currentStepId: 'select_region',
+            cursor: 1,
+            inputPauseVersion: 1,
+            phase: 'paused_for_input',
+            updatedAt: 1,
+          },
           taskState: 'asking_clarification',
           title: 'Cloud Buy',
           url: 'https://example.com/buy',
@@ -801,13 +832,26 @@ describe('BrowserPanel dual mode rendering', () => {
     fireEvent.click(screen.getByText('帮我操作'));
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith('/api/browser/action', {
+      expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/browser/action', {
+        body: JSON.stringify({
+          action: 'inspect',
+          params: {},
+          sessionId: 'session-clarify',
+        }),
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+    });
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/browser/action', {
         body: JSON.stringify({
           action: 'executePlan',
           params: {
             authorized: true,
             inputs: { region: 'shanghai', scenario: 'personal_site' },
             maxSteps: 4,
+            inspectedAfterPause: true,
           },
           sessionId: 'session-clarify',
         }),

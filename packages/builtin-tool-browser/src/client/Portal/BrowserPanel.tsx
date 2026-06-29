@@ -11,6 +11,7 @@ import type {
   BrowserState,
   BrowserSuggestedTask,
   BrowserTaskState,
+  ExecutePlanParams,
 } from '../../types';
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
@@ -905,7 +906,9 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     return { answer, inputs };
   };
 
-  const continueExecutionAfterInspect = async () => {
+  const continueExecutionAfterInspect = async (
+    proof: Pick<ExecutePlanParams, 'inspectedAfterIntervention' | 'inspectedAfterPause'>,
+  ) => {
     try {
       const inspectRes = await fetch('/api/browser/action', {
         body: JSON.stringify({
@@ -926,7 +929,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
       const executeRes = await fetch('/api/browser/action', {
         body: JSON.stringify({
           action: 'executePlan',
-          params: { ...buildExecutePlanParams(), inspectedAfterIntervention: true },
+          params: { ...buildExecutePlanParams(), ...proof },
           sessionId,
         }),
         cache: 'no-store',
@@ -947,6 +950,11 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   const executeAuthorizedPlan = async () => {
     appendLocalEvent('User authorized AI browser control.', 'success');
     updateTaskState('ai_controlling');
+
+    if (executionState?.phase === 'paused_for_input') {
+      await continueExecutionAfterInspect({ inspectedAfterPause: true });
+      return;
+    }
 
     try {
       const res = await fetch('/api/browser/action', {
@@ -977,7 +985,8 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     void interruptAutomation('viewport');
   };
 
-  const continueAfterPause = () => continueExecutionAfterInspect();
+  const continueAfterPause = () =>
+    continueExecutionAfterInspect({ inspectedAfterIntervention: true });
 
   const selectSuggestedTask = (task: BrowserSuggestedTask) => {
     setSelectedSuggestedTask(task);

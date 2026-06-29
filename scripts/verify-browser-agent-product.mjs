@@ -644,6 +644,35 @@ try {
       expenseExecution.executionState,
     )}`,
   );
+  const spoofedInputResume = await request(
+    '/execute-plan',
+    {
+      authorized: true,
+      inputs: { department: '研发部', reason: '客户现场紧急支持' },
+      inspectedAfterPause: true,
+      maxSteps: 5,
+    },
+    'verify-agent-expense',
+  );
+  assert(
+    spoofedInputResume.taskState === 'asking_clarification' &&
+      spoofedInputResume.executionEvents?.some(
+        (event) => event.id === 'inspect_required_after_input' && event.status === 'blocked',
+      ),
+    `Expected spoofed input-pause proof to require service-side inspect, got ${JSON.stringify({
+      executionEvents: spoofedInputResume.executionEvents,
+      taskState: spoofedInputResume.taskState,
+    })}`,
+  );
+  const inspectedInputPause = await request('/inspect', {}, 'verify-agent-expense');
+  assert(
+    inspectedInputPause.executionState?.phase === 'paused_for_input' &&
+      inspectedInputPause.executionState?.inspectedInputPauseVersion ===
+        inspectedInputPause.executionState?.inputPauseVersion,
+    `Expected inspect to cover input pause version, got ${JSON.stringify(
+      inspectedInputPause.executionState,
+    )}`,
+  );
   const expenseSubmitted = await request(
     '/evaluate',
     { code: 'document.body.dataset.submitted' },
@@ -658,6 +687,7 @@ try {
     {
       authorized: true,
       inputs: { department: '研发部', reason: '客户现场紧急支持' },
+      inspectedAfterPause: true,
       maxSteps: 5,
     },
     'verify-agent-expense',
@@ -716,9 +746,9 @@ try {
     'verify-agent-expense',
   );
   assert(
-    repeatedExpenseExecution.executionEvents?.[0]?.id === 'fill_reason' &&
+    repeatedExpenseExecution.executionEvents?.[0]?.id === 'inspect_required_after_input' &&
       repeatedExpenseExecution.executionEvents?.[0]?.status === 'blocked',
-    `Expected repeated expense execution to resume at confirm_before fill, got ${JSON.stringify(
+    `Expected repeated expense execution to require inspect before confirm_before resume, got ${JSON.stringify(
       repeatedExpenseExecution.executionEvents,
     )}`,
   );

@@ -43,6 +43,7 @@ export interface ExecutePlanParams {
   authorized?: boolean;
   inputs?: Record<string, string>;
   inspectedAfterIntervention?: boolean;
+  inspectedAfterPause?: boolean;
   intent?: string;
   maxSteps?: number;
   restart?: boolean;
