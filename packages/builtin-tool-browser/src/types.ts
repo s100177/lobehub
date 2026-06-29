@@ -82,7 +82,7 @@ export interface BrowserPageField {
 }
 
 export interface BrowserPlanExecutionEvent {
-  action?: 'click' | 'fill' | 'inspect' | 'submit' | 'verify';
+  action?: 'click' | 'fill' | 'inspect' | 'select' | 'submit' | 'verify';
   id: string;
   status: 'blocked' | 'completed' | 'failed' | 'skipped';
   summary: string;
@@ -184,6 +184,12 @@ export interface BrowserRiskBlock {
 }
 
 export interface BrowserSkillPackWorkflowStep {
+  action?: {
+    expectedText?: string;
+    inputKey?: string;
+    selector: string;
+    value?: string;
+  };
   gaps?: string[];
   id: string;
   risk?: BrowserRiskType;
@@ -217,7 +223,7 @@ export interface BrowserPageSkillPack {
   entities?: string[];
   fillGaps?: {
     field: string;
-    mode: 'ask_user' | 'auto_suggest' | 'manual_only';
+    mode: 'ask_user' | 'auto_fill_if_known' | 'auto_suggest' | 'manual_only';
     reason: string;
   }[];
   page: string;

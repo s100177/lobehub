@@ -62,7 +62,11 @@
           "id": "select",
           "title": "选择关键配置",
           "type": "select",
-          "gaps": ["region"]
+          "gaps": ["region"],
+          "action": {
+            "selector": "#region",
+            "inputKey": "region"
+          }
         },
         {
           "id": "confirm",
@@ -140,6 +144,20 @@ AI 可以直接执行的动作，例如：
 
 用户目标对应的标准执行流。
 
+每个 step 可以提供声明式 `action`，运行时只会读取这些字段，不执行脚本：
+
+- `selector`：CSS selector，指向要操作或校验的页面元素。
+- `inputKey`：从用户输入里读取的字段名，例如 `department`。
+- `value`：固定安全值；适合默认筛选项，不适合敏感字段。
+- `expectedText`：`verify` 步骤要在页面文本中确认存在的内容。
+
+支持的安全执行：
+
+- `fill` + `action.selector`：填写 input、textarea 或 contenteditable。
+- `select` + `action.selector`：选择原生 select 的 option，按 label 或 value 匹配。
+- `click` + `action.selector`：点击前会做风险文本识别，命中购买、支付、删除、提交、授权等风险词会阻塞。
+- `verify` + `action.expectedText`：重新 inspect 页面文本并确认目标文本存在。
+
 ### 3.10 `match`
 
 运行时匹配规则，用于把当前网页绑定到外部技能包。
@@ -191,7 +209,25 @@ AI 可以直接执行的动作，例如：
       "goal": "提交费用审批",
       "steps": [
         { "id": "inspect", "title": "读取表单状态", "type": "inspect" },
-        { "id": "fill", "title": "填写已知信息", "type": "fill" },
+        {
+          "id": "select_department",
+          "title": "选择报销部门",
+          "type": "select",
+          "gaps": ["department"],
+          "action": { "selector": "#department", "inputKey": "department" }
+        },
+        {
+          "id": "fill_reason",
+          "title": "填写报销原因",
+          "type": "fill",
+          "action": { "selector": "#reason", "inputKey": "reason" }
+        },
+        {
+          "id": "verify_amount",
+          "title": "核对报销金额",
+          "type": "verify",
+          "action": { "selector": "body", "expectedText": "报销金额" }
+        },
         { "id": "confirm", "title": "提交前确认", "type": "risk_gate" }
       ]
     }

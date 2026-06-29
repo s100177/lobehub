@@ -66,6 +66,9 @@
 - 将一个或多个 `.json` 技能包放入 `BROWSER_SKILL_PACKS_DIR` 指向的目录。
 - 技能包通过 `site` + `match.paths` / `match.keywords` / `match.pageType` 匹配当前页面。
 - 技能包只声明页面实体、风险边界和 workflow；不包含可执行脚本。
+- workflow step 可以声明 `action.selector`、`action.inputKey`、`action.value`、`action.expectedText`。
+- 运行时只按声明式 action 执行安全的 `fill`、`select`、`click`、`verify`；风险词命中的点击会被阻塞。
+- 缺少 `inputKey` 对应用户输入时，执行暂停并要求用户补充，不猜测敏感字段。
 
 ### 3.2 页面状态 inspect
 

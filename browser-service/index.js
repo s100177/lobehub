@@ -285,6 +285,28 @@ function asStringArray(value, limit = 40) {
     : undefined;
 }
 
+function asOptionalString(value, limit = 160) {
+  return typeof value === 'string' && value ? value.slice(0, limit) : undefined;
+}
+
+function sanitizeSkillStepAction(action) {
+  if (!action || typeof action !== 'object') return undefined;
+
+  const selector = asOptionalString(action.selector, 240);
+  if (!selector) return undefined;
+
+  return {
+    ...(asOptionalString(action.expectedText, 240)
+      ? { expectedText: asOptionalString(action.expectedText, 240) }
+      : {}),
+    ...(asOptionalString(action.inputKey, 80)
+      ? { inputKey: asOptionalString(action.inputKey, 80) }
+      : {}),
+    selector,
+    ...(asOptionalString(action.value, 500) ? { value: asOptionalString(action.value, 500) } : {}),
+  };
+}
+
 function sanitizeSkillPack(pack, source = 'external') {
   if (!pack || typeof pack !== 'object') return undefined;
   if (typeof pack.site !== 'string' || typeof pack.page !== 'string') return undefined;
@@ -299,8 +321,10 @@ function sanitizeSkillPack(pack, source = 'external') {
             .map((step, stepIndex) => {
               const type = ALLOWED_SKILL_STEP_TYPES.has(step.type) ? step.type : undefined;
               if (!type) return undefined;
+              const action = sanitizeSkillStepAction(step.action);
 
               return {
+                ...(action ? { action } : {}),
                 ...(asStringArray(step.gaps, 12) ? { gaps: asStringArray(step.gaps, 12) } : {}),
                 id:
                   typeof step.id === 'string' && step.id
@@ -907,6 +931,12 @@ async function inspectPageState(page) {
         /搜索|查询|提交|生成推荐|下一步|继续/.test(action.text),
       );
 
+      if (currentStep?.action?.selector) {
+        const declaredTarget = document.querySelector(currentStep.action.selector);
+        const declaredHighlight = highlightFor(declaredTarget, currentStep.title);
+        if (declaredHighlight) return declaredHighlight;
+      }
+
       if (!loggedIn) {
         const loginField = fieldCandidates.find(({ field }) =>
           /账号|登录|密码|验证码/.test(field.label),
@@ -1021,6 +1051,27 @@ async function fillElementWithDomFallback(page, selector, text) {
   );
 }
 
+async function selectElementWithDomFallback(page, selector, value) {
+  return await page.evaluate(
+    ({ selector, value }) => {
+      const element = document.querySelector(selector);
+      if (!(element instanceof HTMLSelectElement)) return { ok: false, reason: 'not_select' };
+
+      const option = [...element.options].find(
+        (item) => item.value === value || item.textContent?.trim() === value,
+      );
+      if (!option) return { ok: false, reason: 'option_not_found' };
+
+      element.value = option.value;
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+      element.dispatchEvent(new Event('change', { bubbles: true }));
+
+      return { ok: true, value: element.value };
+    },
+    { selector, value },
+  );
+}
+
 async function clickElementWithDomFallback(page, selector) {
   return await page.evaluate((selector) => {
     const element = document.querySelector(selector);
@@ -1110,6 +1161,23 @@ async function performSafeFill(page, selector, text, timeout = 5000) {
   } catch (err) {
     const fallback = await fillElementWithDomFallback(page, selector, text);
     if (!fallback.ok) throw err;
+  }
+  await page.waitForTimeout(300);
+
+  return { ok: true };
+}
+
+async function performSafeSelect(page, selector, value, timeout = 5000) {
+  try {
+    await page.waitForSelector(selector, { state: 'visible', timeout });
+    await page.selectOption(selector, { label: value });
+  } catch {
+    try {
+      await page.selectOption(selector, { value });
+    } catch (err) {
+      const fallback = await selectElementWithDomFallback(page, selector, value);
+      if (!fallback.ok) throw err;
+    }
   }
   await page.waitForTimeout(300);
 
@@ -1773,6 +1841,17 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
     );
     const searchAction = pageState.actions?.find((action) => /搜索|查询/.test(action.text));
     const queryText = typeof inputs.query === 'string' ? inputs.query.trim() : '';
+    const resolveStepValue = (step) => {
+      const inputKey = step.action?.inputKey;
+      if (inputKey && typeof inputs[inputKey] === 'string') return inputs[inputKey].trim();
+
+      if (typeof step.action?.value === 'string') return step.action.value;
+
+      const gapKey = step.gaps?.find((gap) => typeof inputs[gap] === 'string');
+      if (gapKey) return inputs[gapKey].trim();
+
+      return undefined;
+    };
 
     for (const step of plan.steps) {
       if (executionEvents.length >= maxSteps) break;
@@ -1799,6 +1878,24 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
         break;
       }
 
+      if (step.type === 'verify' && step.action?.expectedText) {
+        pageState = await inspectPageState(page);
+        const found = pageState.textSample?.includes(step.action.expectedText);
+        executionEvents.push(
+          createExecutionEvent({
+            action: 'verify',
+            id: step.id,
+            status: found ? 'completed' : 'blocked',
+            summary: found
+              ? step.title
+              : `Expected page text not found: ${step.action.expectedText}`,
+            target: step.action.selector,
+          }),
+        );
+        if (!found) break;
+        continue;
+      }
+
       if (step.type === 'inspect' || step.type === 'verify') {
         pageState = await inspectPageState(page);
         executionEvents.push(
@@ -1813,6 +1910,39 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
       }
 
       if (step.type === 'fill') {
+        if (step.action?.selector) {
+          const value = resolveStepValue(step);
+          if (!value) {
+            executionEvents.push(
+              createExecutionEvent({
+                action: 'fill',
+                id: step.id,
+                status: 'blocked',
+                summary: `Execution needs input for ${step.action.inputKey || step.id}.`,
+                target: step.action.selector,
+              }),
+            );
+            break;
+          }
+
+          await performSafeFill(page, step.action.selector, value, timeout);
+          recordAction(session, {
+            action: 'fill',
+            summary: `Plan filled ${step.action.selector}`,
+            target: step.action.selector,
+          });
+          executionEvents.push(
+            createExecutionEvent({
+              action: 'fill',
+              id: step.id,
+              status: 'completed',
+              summary: step.title,
+              target: step.action.selector,
+            }),
+          );
+          continue;
+        }
+
         if (!queryText || !searchField?.selector) {
           executionEvents.push(
             createExecutionEvent({
@@ -1844,7 +1974,83 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
         continue;
       }
 
+      if (step.type === 'select') {
+        const value = resolveStepValue(step);
+        if (!step.action?.selector || !value) {
+          executionEvents.push(
+            createExecutionEvent({
+              action: 'select',
+              id: step.id,
+              status: 'blocked',
+              summary: `Execution needs selector and input for ${step.action?.inputKey || step.id}.`,
+              target: step.action?.selector,
+            }),
+          );
+          break;
+        }
+
+        await performSafeSelect(page, step.action.selector, value, timeout);
+        recordAction(session, {
+          action: 'fill',
+          summary: `Plan selected ${step.action.selector}`,
+          target: step.action.selector,
+        });
+        executionEvents.push(
+          createExecutionEvent({
+            action: 'select',
+            id: step.id,
+            status: 'completed',
+            summary: step.title,
+            target: step.action.selector,
+          }),
+        );
+        continue;
+      }
+
       if (step.type === 'click') {
+        if (step.action?.selector) {
+          const clicked = await performSafeClick(page, step.action.selector, timeout);
+          if (clicked.blocked) {
+            recordAction(session, {
+              action: 'click',
+              status: 'blocked',
+              summary: clicked.riskBlock.reason,
+              target: step.action.selector,
+            });
+            const state = await getPageState(page, { screenshot: false, sessionId: req.sessionId });
+            return res.json({
+              ...withRiskBlock(state, clicked.riskBlock),
+              executionEvents: [
+                ...executionEvents,
+                createExecutionEvent({
+                  action: 'click',
+                  id: step.id,
+                  status: 'blocked',
+                  summary: clicked.riskBlock.reason,
+                  target: step.action.selector,
+                }),
+              ],
+              taskState: 'risk_blocked',
+            });
+          }
+
+          recordAction(session, {
+            action: 'click',
+            summary: `Plan clicked ${step.action.selector}`,
+            target: step.action.selector,
+          });
+          executionEvents.push(
+            createExecutionEvent({
+              action: 'click',
+              id: step.id,
+              status: 'completed',
+              summary: step.title,
+              target: step.action.selector,
+            }),
+          );
+          continue;
+        }
+
         const target = searchAction?.selector || searchField?.selector;
         if (!target) {
           executionEvents.push(

@@ -57,8 +57,25 @@ writeFileSync(
           intent: 'expense_approval',
           steps: [
             { id: 'inspect', title: '读取费用审批表单', type: 'inspect' },
-            { gaps: ['department'], id: 'collect_department', title: '确认报销部门', type: 'ask' },
-            { id: 'verify_amount', title: '核对报销金额', type: 'verify' },
+            {
+              action: { inputKey: 'department', selector: '#department' },
+              gaps: ['department'],
+              id: 'select_department',
+              title: '选择报销部门',
+              type: 'select',
+            },
+            {
+              action: { inputKey: 'reason', selector: '#reason' },
+              id: 'fill_reason',
+              title: '填写报销原因',
+              type: 'fill',
+            },
+            {
+              action: { expectedText: '报销金额 ¥128.00', selector: 'body' },
+              id: 'verify_amount',
+              title: '核对报销金额',
+              type: 'verify',
+            },
             {
               id: 'risk_gate',
               risk: 'submit',
@@ -460,7 +477,7 @@ try {
   const expenseExecution = await request('/execute-plan', { maxSteps: 4 }, 'verify-agent-expense');
   assert(
     expenseExecution.executionEvents?.some(
-      (event) => event.id === 'collect_department' && event.status === 'blocked',
+      (event) => event.id === 'select_department' && event.status === 'blocked',
     ),
     `Expected expense execution to stop for department clarification, got ${JSON.stringify(
       expenseExecution.executionEvents,
@@ -474,6 +491,52 @@ try {
   assert(
     expenseSubmitted.result === undefined,
     `Expected external expense plan not to submit, got ${expenseSubmitted.result}`,
+  );
+  const completedExpenseExecution = await request(
+    '/execute-plan',
+    { inputs: { department: '研发部', reason: '客户现场紧急支持' }, maxSteps: 5 },
+    'verify-agent-expense',
+  );
+  assert(
+    completedExpenseExecution.executionEvents?.some(
+      (event) => event.id === 'select_department' && event.status === 'completed',
+    ),
+    `Expected expense execution to select department, got ${JSON.stringify(
+      completedExpenseExecution.executionEvents,
+    )}`,
+  );
+  assert(
+    completedExpenseExecution.executionEvents?.some(
+      (event) => event.id === 'fill_reason' && event.status === 'completed',
+    ),
+    `Expected expense execution to fill reason, got ${JSON.stringify(
+      completedExpenseExecution.executionEvents,
+    )}`,
+  );
+  assert(
+    completedExpenseExecution.executionEvents?.some(
+      (event) => event.id === 'risk_gate' && event.status === 'blocked',
+    ),
+    `Expected expense execution to stop at risk gate, got ${JSON.stringify(
+      completedExpenseExecution.executionEvents,
+    )}`,
+  );
+  const expenseValues = await request(
+    '/evaluate',
+    {
+      code: `({
+        department: document.querySelector('#department').value,
+        reason: document.querySelector('#reason').value,
+        submitted: document.body.dataset.submitted,
+      })`,
+    },
+    'verify-agent-expense',
+  );
+  assert(
+    expenseValues.result?.department === '研发部' &&
+      expenseValues.result?.reason === '客户现场紧急支持' &&
+      expenseValues.result?.submitted === undefined,
+    `Expected expense form filled but not submitted, got ${JSON.stringify(expenseValues.result)}`,
   );
 
   await request(
