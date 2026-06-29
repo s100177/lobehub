@@ -18,6 +18,8 @@ const allowedStepTypes = new Set([
 ]);
 const riskyStepTypes = new Set(['risk_gate']);
 const riskyWords = /购买|下单|订单|支付|付款|删除|释放|销毁|退订|注销|授权|提交|开通|续费/;
+const executableStepTypes = new Set(['click', 'fill', 'select', 'verify']);
+const inputStepTypes = new Set(['fill', 'select']);
 
 function listJsonFiles(dir) {
   return readdirSync(dir)
@@ -25,15 +27,20 @@ function listJsonFiles(dir) {
     .map((file) => path.join(dir, file));
 }
 
-function assertStringArray(pack, field) {
-  assert(Array.isArray(pack[field]), `${field} must be an array`);
+function assertStringArray(owner, field, context) {
+  assert(Array.isArray(owner[field]), `${context}: ${field} must be an array`);
   assert(
-    pack[field].every((item) => typeof item === 'string' && item),
-    `${field} must contain strings`,
+    owner[field].every((item) => typeof item === 'string' && item),
+    `${context}: ${field} must contain strings`,
   );
 }
 
-function validateStep(step, context) {
+function validateObjectArray(items, context, validateItem) {
+  assert(Array.isArray(items), `${context} must be an array`);
+  for (const [index, item] of items.entries()) validateItem(item, `${context}[${index}]`);
+}
+
+function validateStep(step, context, packContext) {
   assert(step && typeof step === 'object', `${context}: step must be an object`);
   assert(typeof step.id === 'string' && step.id, `${context}: step.id is required`);
   assert(typeof step.title === 'string' && step.title, `${context}: step.title is required`);
@@ -45,6 +52,16 @@ function validateStep(step, context) {
       step.gaps.every((gap) => typeof gap === 'string' && gap),
       `${context}: step.gaps must contain strings`,
     );
+    for (const gap of step.gaps) {
+      assert(
+        packContext.fillGapFields.has(gap),
+        `${context}: gap "${gap}" must be declared in fillGaps`,
+      );
+    }
+  }
+
+  if (executableStepTypes.has(step.type)) {
+    assert(step.action !== undefined, `${context}: ${step.type} step requires action`);
   }
 
   if (step.action !== undefined) {
@@ -62,6 +79,44 @@ function validateStep(step, context) {
         `${context}: step.action.${key} must be a string`,
       );
     }
+
+    if (step.action.inputKey !== undefined) {
+      assert(
+        inputStepTypes.has(step.type),
+        `${context}: step.action.inputKey is only supported on fill/select steps`,
+      );
+      assert(
+        packContext.fillGapFields.has(step.action.inputKey),
+        `${context}: action.inputKey "${step.action.inputKey}" must be declared in fillGaps`,
+      );
+    }
+  }
+
+  if (step.type === 'verify') {
+    assert(
+      typeof step.action?.expectedText === 'string' && step.action.expectedText,
+      `${context}: verify step requires action.expectedText`,
+    );
+  }
+
+  if (step.type === 'risk_gate') {
+    assert(typeof step.risk === 'string' && step.risk, `${context}: risk_gate requires risk`);
+    assert(
+      typeof step.riskAction === 'string' && step.riskAction,
+      `${context}: risk_gate requires riskAction`,
+    );
+    assert(
+      packContext.riskActions.has(step.riskAction),
+      `${context}: riskAction "${step.riskAction}" must be declared in riskActions`,
+    );
+    assert(
+      typeof step.confirmationPoint === 'string' && step.confirmationPoint,
+      `${context}: risk_gate requires confirmationPoint`,
+    );
+    assert(
+      packContext.confirmationPointIds.has(step.confirmationPoint),
+      `${context}: confirmationPoint "${step.confirmationPoint}" must be declared in confirmationPoints`,
+    );
   }
 
   if ((riskyWords.test(step.title) || step.risk) && !riskyStepTypes.has(step.type)) {
@@ -69,10 +124,7 @@ function validateStep(step, context) {
   }
 }
 
-function validateSkillPack(file) {
-  const pack = JSON.parse(readFileSync(file, 'utf8'));
-  const label = path.relative(repoRoot, file);
-
+function validateSkillPackData(pack, label) {
   assert(typeof pack.site === 'string' && pack.site, `${label}: site is required`);
   assert(typeof pack.page === 'string' && pack.page, `${label}: page is required`);
   assert(typeof pack.pageType === 'string' && pack.pageType, `${label}: pageType is required`);
@@ -81,24 +133,66 @@ function validateSkillPack(file) {
     `${label}: description is required`,
   );
 
-  assertStringArray(pack, 'entities');
-  assertStringArray(pack, 'safeActions');
-  assertStringArray(pack, 'riskActions');
-  assertStringArray(pack, 'ambiguityRules');
+  assertStringArray(pack, 'entities', label);
+  assertStringArray(pack, 'safeActions', label);
+  assertStringArray(pack, 'riskActions', label);
+  assertStringArray(pack, 'ambiguityRules', label);
 
   assert(
     Array.isArray(pack.workflows) && pack.workflows.length > 0,
     `${label}: workflows are required`,
   );
 
-  if (pack.fillGaps !== undefined) {
-    assert(Array.isArray(pack.fillGaps), `${label}: fillGaps must be an array`);
-    for (const gap of pack.fillGaps) {
-      assert(typeof gap.field === 'string' && gap.field, `${label}: fillGaps.field is required`);
-      assert(typeof gap.mode === 'string' && gap.mode, `${label}: fillGaps.mode is required`);
-      assert(typeof gap.reason === 'string' && gap.reason, `${label}: fillGaps.reason is required`);
-    }
+  const confirmationPointIds = new Set();
+  if (pack.confirmationPoints !== undefined) {
+    validateObjectArray(
+      pack.confirmationPoints,
+      `${label}: confirmationPoints`,
+      (point, context) => {
+        assert(
+          point && typeof point === 'object',
+          `${context}: confirmation point must be an object`,
+        );
+        assert(typeof point.id === 'string' && point.id, `${context}: id is required`);
+        assert(typeof point.title === 'string' && point.title, `${context}: title is required`);
+        assert(typeof point.reason === 'string' && point.reason, `${context}: reason is required`);
+        confirmationPointIds.add(point.id);
+      },
+    );
   }
+
+  if (pack.riskActions.length > 0) {
+    assert(
+      confirmationPointIds.size > 0,
+      `${label}: riskActions require at least one confirmationPoint`,
+    );
+  }
+
+  const fillGapFields = new Set();
+  if (pack.fillGaps !== undefined) {
+    validateObjectArray(pack.fillGaps, `${label}: fillGaps`, (gap, context) => {
+      assert(typeof gap.field === 'string' && gap.field, `${context}: field is required`);
+      assert(typeof gap.mode === 'string' && gap.mode, `${context}: mode is required`);
+      assert(typeof gap.reason === 'string' && gap.reason, `${context}: reason is required`);
+      fillGapFields.add(gap.field);
+    });
+  }
+
+  if (pack.match !== undefined) {
+    assert(pack.match && typeof pack.match === 'object', `${label}: match must be an object`);
+    if (pack.match.keywords !== undefined)
+      assertStringArray(pack.match, 'keywords', `${label}: match`);
+    if (pack.match.paths !== undefined) assertStringArray(pack.match, 'paths', `${label}: match`);
+    assert(
+      pack.match.keywords !== undefined ||
+        pack.match.paths !== undefined ||
+        typeof pack.match.pageType === 'string',
+      `${label}: match requires keywords, paths, or pageType`,
+    );
+  }
+
+  const riskActions = new Set(pack.riskActions);
+  const packContext = { confirmationPointIds, fillGapFields, riskActions };
 
   for (const [workflowIndex, workflow] of pack.workflows.entries()) {
     const workflowLabel = `${label}: workflow[${workflowIndex}]`;
@@ -110,16 +204,161 @@ function validateSkillPack(file) {
       typeof workflow.goal === 'string' && workflow.goal,
       `${workflowLabel}: goal is required`,
     );
+    assertStringArray(workflow, 'constraints', workflowLabel);
     assert(
       Array.isArray(workflow.steps) && workflow.steps.length > 0,
       `${workflowLabel}: steps are required`,
     );
 
     for (const [stepIndex, step] of workflow.steps.entries()) {
-      validateStep(step, `${workflowLabel}.steps[${stepIndex}]`);
+      validateStep(step, `${workflowLabel}.steps[${stepIndex}]`, packContext);
     }
   }
 }
+
+function validateSkillPack(file) {
+  const pack = JSON.parse(readFileSync(file, 'utf8'));
+  validateSkillPackData(pack, path.relative(repoRoot, file));
+}
+
+function createValidPack(overrides = {}) {
+  return {
+    ambiguityRules: ['字段缺失时询问用户'],
+    confirmationPoints: [{ id: 'before_submit', reason: '提交后进入流程', title: '提交前确认' }],
+    description: '测试业务表单',
+    entities: ['department', 'reason'],
+    fillGaps: [{ field: 'department', mode: 'ask_user', reason: '影响业务流转' }],
+    page: 'test_form',
+    pageType: 'form',
+    riskActions: ['submit_form'],
+    safeActions: ['inspect_form'],
+    site: 'example.test',
+    workflows: [
+      {
+        constraints: ['提交前必须等待用户确认'],
+        goal: '补齐表单并停在提交前',
+        intent: 'submit_test_form',
+        steps: [
+          { id: 'inspect', title: '读取页面状态', type: 'inspect' },
+          {
+            action: { inputKey: 'department', selector: '#department' },
+            gaps: ['department'],
+            id: 'select_department',
+            title: '选择部门',
+            type: 'select',
+          },
+          {
+            confirmationPoint: 'before_submit',
+            id: 'risk_gate',
+            risk: 'submit',
+            riskAction: 'submit_form',
+            title: '提交前等待用户确认',
+            type: 'risk_gate',
+          },
+        ],
+      },
+    ],
+    ...overrides,
+  };
+}
+
+function expectInvalid(pack, pattern, label) {
+  try {
+    validateSkillPackData(pack, label);
+  } catch (error) {
+    assert(
+      pattern.test(error instanceof Error ? error.message : String(error)),
+      `${label}: expected ${pattern}, got ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return;
+  }
+
+  throw new Error(`${label}: expected validation failure`);
+}
+
+function runSelfTests() {
+  validateSkillPackData(createValidPack(), 'self-test: valid pack');
+  expectInvalid(
+    createValidPack({
+      workflows: [
+        {
+          goal: '缺少约束层',
+          intent: 'missing_constraints',
+          steps: [{ id: 'inspect', title: '读取页面状态', type: 'inspect' }],
+        },
+      ],
+    }),
+    /constraints/,
+    'self-test: missing constraints',
+  );
+  expectInvalid(
+    createValidPack({
+      workflows: [
+        {
+          constraints: ['提交前必须确认'],
+          goal: '错误风险点击',
+          intent: 'risky_click',
+          steps: [
+            {
+              action: { selector: '#submit' },
+              id: 'submit',
+              title: '提交审批',
+              type: 'click',
+            },
+          ],
+        },
+      ],
+    }),
+    /must use risk_gate/,
+    'self-test: risky click',
+  );
+  expectInvalid(
+    createValidPack({
+      workflows: [
+        {
+          constraints: ['提交前必须确认'],
+          goal: '风险门缺少确认点',
+          intent: 'missing_confirmation',
+          steps: [
+            {
+              id: 'risk_gate',
+              risk: 'submit',
+              riskAction: 'submit_form',
+              title: '提交前等待用户确认',
+              type: 'risk_gate',
+            },
+          ],
+        },
+      ],
+    }),
+    /confirmationPoint/,
+    'self-test: missing confirmation point',
+  );
+  expectInvalid(
+    createValidPack({
+      workflows: [
+        {
+          constraints: ['缺字段时必须询问'],
+          goal: '引用未声明缺口',
+          intent: 'unknown_gap',
+          steps: [
+            {
+              action: { inputKey: 'budget', selector: '#budget' },
+              gaps: ['budget'],
+              id: 'fill_budget',
+              title: '填写预算',
+              type: 'fill',
+            },
+          ],
+        },
+      ],
+    }),
+    /must be declared in fillGaps/,
+    'self-test: undeclared input gap',
+  );
+}
+
+runSelfTests();
 
 assert(statSync(skillPackDir).isDirectory(), `${skillPackDir} must be a directory`);
 

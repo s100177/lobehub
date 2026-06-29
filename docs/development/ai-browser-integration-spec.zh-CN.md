@@ -93,6 +93,13 @@ examples/browser-skill-packs/expense-approval.json
 
 该示例覆盖费用审批业务表单，已经被自动化验收脚本复用；业务系统接入时应先复制这个结构，再替换 `site`、`match`、字段、风险动作和 workflow。
 
+静态校验会强制技能包包含目标层、约束层和执行层：
+
+- 目标层：每个 workflow 必须有 `intent` 与 `goal`。
+- 约束层：每个 workflow 必须有 `constraints`，说明预算、范围、禁做项和确认边界。
+- 执行层：可执行 step 必须有声明式 `action.selector`；`fill` / `select` 的输入必须在 `fillGaps` 中声明。
+- 风险层：`risk_gate` 必须绑定 `riskActions` 中的 `riskAction` 和 `confirmationPoints` 中的 `confirmationPoint`。
+
 ### 3.2 页面状态 inspect
 
 每个页面至少要能返回：

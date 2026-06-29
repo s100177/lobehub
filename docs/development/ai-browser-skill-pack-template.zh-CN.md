@@ -71,7 +71,10 @@
         {
           "id": "confirm",
           "title": "提交前确认",
-          "type": "risk_gate"
+          "type": "risk_gate",
+          "risk": "submit",
+          "riskAction": "risk_action_a",
+          "confirmationPoint": "before_submit"
         }
       ]
     }
@@ -208,8 +211,12 @@ BROWSER_SKILL_PACK_VERIFY_DIR=/path/to/your/skill-packs pnpm test:browser-skill-
 
 - 必填字段：`site`、`page`、`pageType`、`description`、`entities`、`safeActions`、`riskActions`、`ambiguityRules`、`workflows`。
 - workflow 必须有 `intent`、`goal` 和非空 `steps`。
+- workflow 必须有 `constraints`，用于表达预算、范围、禁做项和执行边界。
 - step 类型只能是 `ask`、`click`、`fill`、`inspect`、`risk_gate`、`select`、`verify`。
+- `fill`、`select`、`click`、`verify` 必须提供声明式 `action.selector`。
+- `fill` / `select` 的 `action.inputKey` 和 step `gaps` 必须先声明在 `fillGaps` 中。
 - 带风险词或 `risk` 字段的步骤必须使用 `risk_gate`，不能伪装成普通 `click`。
+- `risk_gate` 必须声明 `riskAction` 和 `confirmationPoint`，并分别对应 `riskActions` 与 `confirmationPoints` 中的条目。
 
 ### 5.1 业务表单页
 
@@ -238,6 +245,7 @@ BROWSER_SKILL_PACK_VERIFY_DIR=/path/to/your/skill-packs pnpm test:browser-skill-
     {
       "intent": "submit_expense_approval",
       "goal": "提交费用审批",
+      "constraints": ["部门缺失时必须询问用户", "提交审批前必须等待用户确认"],
       "steps": [
         { "id": "inspect", "title": "读取表单状态", "type": "inspect" },
         {
@@ -259,7 +267,14 @@ BROWSER_SKILL_PACK_VERIFY_DIR=/path/to/your/skill-packs pnpm test:browser-skill-
           "type": "verify",
           "action": { "selector": "body", "expectedText": "报销金额" }
         },
-        { "id": "confirm", "title": "提交前确认", "type": "risk_gate" }
+        {
+          "id": "confirm",
+          "title": "提交前确认",
+          "type": "risk_gate",
+          "risk": "submit",
+          "riskAction": "submitForm",
+          "confirmationPoint": "before_submit"
+        }
       ]
     }
   ]

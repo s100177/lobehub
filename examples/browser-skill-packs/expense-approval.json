@@ -14,6 +14,11 @@
       "field": "department",
       "mode": "ask_user",
       "reason": "部门影响审批流"
+    },
+    {
+      "field": "reason",
+      "mode": "auto_fill_if_known",
+      "reason": "可从用户上下文或已有表单值补全"
     }
   ],
   "match": {
@@ -28,6 +33,7 @@
   "site": "127.0.0.1",
   "workflows": [
     {
+      "constraints": ["必须先补齐报销部门", "可以填写报销原因", "提交审批前必须等待用户确认"],
       "goal": "补齐费用审批表单并停在提交前",
       "intent": "expense_approval",
       "steps": [
@@ -65,14 +71,17 @@
           "type": "verify"
         },
         {
+          "confirmationPoint": "before_submit",
           "id": "risk_gate",
           "risk": "submit",
+          "riskAction": "submit_expense",
           "title": "提交审批前等待用户确认",
           "type": "risk_gate"
         }
       ]
     },
     {
+      "constraints": ["只能读取并核对金额", "不得填写字段或提交审批"],
       "goal": "只核对费用审批金额，不填写或提交",
       "intent": "expense_review_only",
       "steps": [
