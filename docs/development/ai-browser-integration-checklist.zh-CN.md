@@ -127,7 +127,18 @@
 pnpm test:browser-release-gate
 ```
 
-该命令顺序覆盖技能包静态校验、KiKi 式浏览器代理产品验证、本地业务系统 demo evidence 校验和真实站点只读 smoke。它不覆盖 Docker 部署 UI E2E，也不能替代指定业务系统真实页面 evidence。
+该命令顺序覆盖技能包静态校验、KiKi 式浏览器代理产品验证、本地业务系统 demo evidence 校验和真实站点只读 smoke。默认不覆盖 Docker 部署 UI E2E，也不能替代指定业务系统真实页面 evidence。
+
+上线前可把 Docker UI E2E 纳入同一条 release gate：
+
+```bash
+BROWSER_RELEASE_GATE_INCLUDE_DOCKER_E2E=1 \
+  BROWSER_DOCKER_E2E_BASE_URL=http://192.168.1.36:3211 \
+  BROWSER_DOCKER_E2E_DATABASE_URL='postgresql://postgres:<password>@127.0.0.1:5435/lobechat' \
+  pnpm test:browser-release-gate
+```
+
+开启后，release gate 会在非部署检查之后继续跑 `scripts/verify-browser-docker-ui-e2e.mjs`。`BROWSER_DOCKER_E2E_BASE_URL` 必须匹配部署容器信任的 `APP_URL` origin。
 
 上线前至少满足：
 
