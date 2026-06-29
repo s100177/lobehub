@@ -110,6 +110,29 @@ function validateDemoConfiguration() {
     ),
     `BROWSER_BUSINESS_EXPECT_RISK_ACTION "${expectedRiskAction}" did not match a risk_gate in workflow ${intent}`,
   );
+
+  assertWorkflowInputsProvided(expectedWorkflow);
+}
+
+function assertWorkflowInputsProvided(workflow) {
+  const missingInputs = [];
+
+  for (const step of workflow.steps) {
+    const inputKey = step.action?.inputKey;
+    if (!inputKey) continue;
+
+    const value = inputs[inputKey];
+    if (typeof value === 'string' && value.trim()) continue;
+
+    missingInputs.push(`${inputKey} (${step.id})`);
+  }
+
+  assert(
+    missingInputs.length === 0,
+    `BROWSER_BUSINESS_DEMO_INPUTS is missing required workflow input(s): ${missingInputs.join(
+      ', ',
+    )}`,
+  );
 }
 
 function valuesEqual(actual, expected) {

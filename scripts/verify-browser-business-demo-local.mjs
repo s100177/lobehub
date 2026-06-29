@@ -93,6 +93,39 @@ function runNodeScript(script, env) {
   });
 }
 
+function expectNodeScriptFailure(script, env, pattern) {
+  return new Promise((resolve, reject) => {
+    let output = '';
+    const child = spawn(process.execPath, [script], {
+      cwd: repoRoot,
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    child.stdout.on('data', (chunk) => {
+      output += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      output += chunk;
+    });
+
+    child.once('error', reject);
+    child.once('exit', (code) => {
+      if (code === 0) {
+        reject(new Error(`${path.basename(script)} was expected to fail`));
+        return;
+      }
+
+      if (!pattern.test(output)) {
+        reject(new Error(`${path.basename(script)} failed with unexpected output:\n${output}`));
+        return;
+      }
+
+      resolve();
+    });
+  });
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url || '/', 'http://127.0.0.1');
 
@@ -109,23 +142,38 @@ const server = http.createServer((req, res) => {
 try {
   prepareSkillPack();
 
+  const verifier = path.resolve(repoRoot, 'scripts/verify-browser-business-demo.mjs');
+  const baseDemoEnv = {
+    BROWSER_BUSINESS_ASSERTIONS:
+      '[{"name":"未提交审批","code":"document.body.dataset.submitted ?? null","equals":null},{"name":"部门已填写","code":"document.querySelector(\\"#department\\").value","equals":"研发部"}]',
+    BROWSER_BUSINESS_DEMO_INTENT: 'expense_approval',
+    BROWSER_BUSINESS_EVIDENCE_FILE: evidenceFile,
+    BROWSER_BUSINESS_EXPECT_RISK_ACTION: 'risk_gate',
+    BROWSER_BUSINESS_EXPECT_SKILL_PAGE: 'expense_approval_form',
+    BROWSER_BUSINESS_SKILL_PACKS_DIR: skillPackDir,
+  };
+
+  await expectNodeScriptFailure(
+    verifier,
+    {
+      ...baseDemoEnv,
+      BROWSER_BUSINESS_DEMO_INPUTS: '{}',
+      BROWSER_BUSINESS_DEMO_URL: 'http://127.0.0.1:1/business-expense.html',
+      BROWSER_BUSINESS_PREFLIGHT: '1',
+    },
+    /BROWSER_BUSINESS_DEMO_INPUTS is missing required workflow input/,
+  );
+
   await listen(server);
   const address = server.address();
   assert(address && typeof address === 'object', 'Local business demo server did not start');
 
   const targetUrl = `http://127.0.0.1:${address.port}/business-expense.html`;
-  const verifier = path.resolve(repoRoot, 'scripts/verify-browser-business-demo.mjs');
 
   const demoEnv = {
-    BROWSER_BUSINESS_ASSERTIONS:
-      '[{"name":"未提交审批","code":"document.body.dataset.submitted ?? null","equals":null},{"name":"部门已填写","code":"document.querySelector(\\"#department\\").value","equals":"研发部"}]',
+    ...baseDemoEnv,
     BROWSER_BUSINESS_DEMO_INPUTS: '{"department":"研发部","reason":"客户现场紧急支持"}',
-    BROWSER_BUSINESS_DEMO_INTENT: 'expense_approval',
     BROWSER_BUSINESS_DEMO_URL: targetUrl,
-    BROWSER_BUSINESS_EVIDENCE_FILE: evidenceFile,
-    BROWSER_BUSINESS_EXPECT_RISK_ACTION: 'risk_gate',
-    BROWSER_BUSINESS_EXPECT_SKILL_PAGE: 'expense_approval_form',
-    BROWSER_BUSINESS_SKILL_PACKS_DIR: skillPackDir,
   };
 
   await runNodeScript(verifier, {
