@@ -862,7 +862,37 @@ describe('BrowserPanel dual mode rendering', () => {
     });
   });
 
-  it('shows a non-executing risk decision card for dangerous browser actions', () => {
+  it('records manual risk handling as a server-side interruption', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({
+        embeddable: false,
+        executionEvents: [
+          {
+            action: 'interrupt',
+            id: 'user_intervention:risk',
+            status: 'blocked',
+            summary:
+              'Automation paused because the user chose to handle a risky action manually. AI did not execute it automatically.',
+            timestamp: 1,
+          },
+        ],
+        executionState: {
+          blockedStepId: 'risk_gate',
+          currentStepId: 'risk_gate',
+          cursor: 2,
+          phase: 'paused_by_user_intervention',
+          updatedAt: 1,
+        },
+        mode: 'remote',
+        taskState: 'paused_by_user_intervention',
+        title: 'Order',
+        url: 'https://example.com/order',
+      }),
+      ok: true,
+      status: 200,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
     render(
       <BrowserPanel
         sessionId="session-risk-card"
@@ -904,5 +934,22 @@ describe('BrowserPanel dual mode rendering', () => {
         'User allowed this risky action for manual handling. AI did not execute it automatically.',
       ),
     ).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/browser/action', {
+        body: JSON.stringify({
+          action: 'interrupt',
+          params: {
+            inputType: 'risk_manual_action',
+            reason:
+              'Automation paused because the user chose to handle a risky action manually. AI did not execute it automatically.',
+          },
+          sessionId: 'session-risk-card',
+        }),
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+    });
   });
 });

@@ -3,7 +3,7 @@
 import { Flexbox } from '@lobehub/ui';
 import { createStaticStyles } from 'antd-style';
 import type { CSSProperties } from 'react';
-import { memo, useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 import type {
   BrowserClarificationPrompt,
@@ -689,6 +689,7 @@ const getClarificationInputKey = (prompt?: BrowserClarificationPrompt) =>
   prompt?.field || prompt?.id || 'query';
 
 const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) => {
+  const localEventCounter = useRef(0);
   const [localState, setLocalState] = useState<BrowserState | undefined>(state);
   const [isSwitching, setIsSwitching] = useState(false);
   const [iframeStatus, setIframeStatus] = useState<'blocked' | 'loaded' | 'loading'>('loading');
@@ -741,7 +742,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
             ...(previous.actionEvents ?? []),
             {
               action: 'inspect',
-              id: `local-${Date.now()}`,
+              id: `local-${Date.now()}-${++localEventCounter.current}`,
               status,
               summary,
               timestamp: Date.now(),
@@ -754,9 +755,11 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   );
 
   const interruptAutomation = useCallback(
-    async (inputType: string) => {
+    async (inputType: string, reason?: string) => {
       appendLocalEvent(`Paused because user ${inputType} in the browser.`, 'blocked');
       updateTaskState('paused_by_user_intervention');
+      const auditReason =
+        reason || `Automation paused because the user performed ${inputType} in the browser.`;
 
       try {
         const res = await fetch('/api/browser/action', {
@@ -764,7 +767,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
             action: 'interrupt',
             params: {
               inputType,
-              reason: `Automation paused because the user performed ${inputType} in the browser.`,
+              reason: auditReason,
             },
             sessionId,
           }),
@@ -1003,6 +1006,10 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
         'blocked',
       );
       updateTaskState('paused_by_user_intervention');
+      void interruptAutomation(
+        'risk_manual_action',
+        'Automation paused because the user chose to handle a risky action manually. AI did not execute it automatically.',
+      );
       return;
     }
 

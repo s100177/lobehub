@@ -73,6 +73,7 @@
 - `executePlan` 会按 session 记录 `executionState.cursor` 和 `completedStepIds`；暂停后再次执行默认从阻塞步骤继续。
 - 如果业务需要从头重跑 workflow，调用 `executePlan` 时显式传入 `restart: true`。
 - 用户在接管态手动点击、滚动、输入或键盘操作时，运行时必须调用 `interrupt`，把 `executionState.phase` 写为 `paused_by_user_intervention`。
+- 用户在风险确认卡选择 “允许本次，我手动完成” 时，BrowserPanel 也必须调用 `interrupt` 记录风险手动接管审计；AI 不能自动越过风险门，后续继续仍受重新 `inspect` 边界约束。
 - `interrupt` 返回单次 `executionEvents`，并把同一事件追加进 session 级 `executionTimeline`，后续 `inspect` 仍应能看到这条审计记录。
 - BrowserPanel 应展示 session 级 `executionTimeline`，作为用户可见的审计时间线；单次 `executionEvents` 仍只表示当前工具调用结果。
 - 从 `paused_by_user_intervention` 恢复执行前，BrowserPanel 必须先调用 `inspect`，再调用 `executePlan`，不能基于旧页面状态继续。
