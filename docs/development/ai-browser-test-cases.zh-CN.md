@@ -98,11 +98,12 @@ BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE=.omx/artifacts/browser-business-demo.jso
 - 页面必须匹配外部技能包。
 - 证据文件必须包含 `authorizationGate`，证明未传 `authorized: true` 时服务端停在 `waiting_user_authorization`，不会执行页面动作。
 - 计划必须来自 `skill_pack`。
+- 证据必须包含 `verifierVersion` 和 `riskGateStep`，且 `riskGateStep.id` 必须等于被阻断风险事件 id。
 - 至少一个安全步骤执行完成。
 - 执行必须停在 `risk_blocked`，不能越过风险动作。
-- 如果提供 `BROWSER_BUSINESS_ASSERTIONS`，脚本会在风险门后执行只读 JS 断言，用于证明提交、购买、支付、删除等副作用没有发生。
+- 必须提供 `BROWSER_BUSINESS_ASSERTIONS`，脚本会在风险门后执行只读 JS 断言，用于证明提交、购买、支付、删除等副作用没有发生。
 - 如果提供 `BROWSER_BUSINESS_EVIDENCE_FILE`，脚本会写入目标 URL、匹配技能包、计划、执行事件、阻塞风险事件和断言结果，作为真实业务演示证据。
-- 如果提供 `BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE`，脚本只校验证据文件，不启动浏览器；证据必须包含 `skill_pack` 计划、`risk_blocked` 状态、完成步骤、阻塞步骤和全部通过的断言。
+- 如果提供 `BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE`，脚本只校验证据文件，不启动浏览器；证据必须包含 `skill_pack` 计划、`authorizationGate`、`riskGateStep`、`risk_blocked` 状态、完成步骤、阻塞步骤和全部通过的断言。
 
 ### 2.1 L1：本地可控测试站点
 

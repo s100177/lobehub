@@ -42,6 +42,7 @@ const evidenceFile = process.env.BROWSER_BUSINESS_EVIDENCE_FILE
 const evidenceValidateFile = process.env.BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE
   ? path.resolve(repoRoot, process.env.BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE)
   : undefined;
+const verifierVersion = 2;
 let browserServiceRuntimeDir;
 
 if (evidenceValidateFile) {
@@ -115,9 +116,24 @@ function validateEvidenceFile(file) {
   assert(existsSync(file), `Evidence file does not exist: ${file}`);
 
   const data = JSON.parse(readFileSync(file, 'utf8'));
+  assert(
+    data.verifierVersion === verifierVersion,
+    `Evidence verifierVersion must be ${verifierVersion}, got ${data.verifierVersion}`,
+  );
   assert(typeof data.targetUrl === 'string' && data.targetUrl, 'Evidence targetUrl is required');
   assert(data.skillPack?.page, 'Evidence skillPack.page is required');
   assert(data.plan?.source === 'skill_pack', 'Evidence plan.source must be skill_pack');
+  assert(
+    data.riskGateStep?.type === 'risk_gate',
+    `Evidence riskGateStep.type must be risk_gate, got ${data.riskGateStep?.type}`,
+  );
+  assert(
+    data.riskGateStep?.id && data.riskGateStep.id === data.blockedRiskEvent?.id,
+    `Evidence riskGateStep.id must match blockedRiskEvent.id, got ${JSON.stringify({
+      blockedRiskEvent: data.blockedRiskEvent,
+      riskGateStep: data.riskGateStep,
+    })}`,
+  );
   assert(
     data.authorizationGate?.taskState === 'waiting_user_authorization',
     `Evidence authorizationGate.taskState must be waiting_user_authorization, got ${data.authorizationGate?.taskState}`,
@@ -150,6 +166,14 @@ function validateEvidenceFile(file) {
     'Evidence must contain at least one blocked execution event',
   );
   assert(Array.isArray(data.assertionResults), 'Evidence assertionResults must be an array');
+  assert(
+    data.sideEffectAssertionsRequired === true,
+    'Evidence sideEffectAssertionsRequired must be true',
+  );
+  assert(
+    data.assertionResults.length > 0,
+    'Evidence must contain at least one side-effect assertion',
+  );
   assert(
     data.assertionResults.every((item) => item?.passed === true),
     'Every evidence assertion must pass',
@@ -242,6 +266,15 @@ try {
     navigated.plan?.source === 'skill_pack' && Array.isArray(navigated.plan.steps),
     `Expected skill-pack plan, got ${JSON.stringify(navigated.plan)}`,
   );
+  const riskGateStep = navigated.plan.steps.find((step) => step.type === 'risk_gate');
+  assert(
+    riskGateStep,
+    `Expected skill-pack plan to contain a risk_gate, got ${JSON.stringify(navigated.plan.steps)}`,
+  );
+  assert(
+    assertions.length > 0,
+    'BROWSER_BUSINESS_ASSERTIONS must include at least one side-effect assertion',
+  );
 
   const authorizationGate = await request(
     '/execute-plan',
@@ -327,8 +360,11 @@ try {
     generatedAt: new Date().toISOString(),
     inputs,
     plan: navigated.plan,
+    riskGateStep,
+    sideEffectAssertionsRequired: true,
     skillPack: navigated.skillPack,
     targetUrl,
+    verifierVersion,
   });
 
   console.log(

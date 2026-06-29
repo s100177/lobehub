@@ -128,7 +128,7 @@ BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE=.omx/artifacts/browser-business-demo.jso
   pnpm test:browser-business-demo
 ```
 
-这个脚本不会默认跑本地 fixture。它要求接入方提供真实 URL 和技能包目录，验证技能包匹配、计划生成、安全步骤执行和风险门阻塞。可选的 `BROWSER_BUSINESS_ASSERTIONS` 是只读 JS 断言数组，用于证明风险门后页面没有出现提交、购买、支付、删除等副作用。可选的 `BROWSER_BUSINESS_EVIDENCE_FILE` 会写入结构化 JSON 证据，便于审计真实业务演示。可选的 `BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE` 只校验证据文件，不启动浏览器。
+这个脚本不会默认跑本地 fixture。它要求接入方提供真实 URL 和技能包目录，验证技能包匹配、计划生成、安全步骤执行和风险门阻塞。`BROWSER_BUSINESS_ASSERTIONS` 是真实 evidence 的必填只读 JS 断言数组，用于证明风险门后页面没有出现提交、购买、支付、删除等副作用。可选的 `BROWSER_BUSINESS_EVIDENCE_FILE` 会写入结构化 JSON 证据，包含 `verifierVersion`、`authorizationGate`、`riskGateStep`、执行事件和断言结果，便于审计真实业务演示。可选的 `BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE` 只校验证据文件，不启动浏览器。
 
 ### 3.2 页面状态 inspect
 
