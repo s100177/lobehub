@@ -608,10 +608,11 @@ pnpm test:browser-real-smoke
 默认访问 `https://example.com/` 做稳定连通性冒烟，只验证 remote navigate、inspect、标题 / URL /viewport 和不触发风险动作。需要覆盖更多真实站点时：
 
 ```bash
-BROWSER_REAL_SMOKE_URLS="https://www.baidu.com/,https://github.com/" pnpm test:browser-real-smoke
+BROWSER_REAL_SMOKE_URLS="https://example.com/,https://www.iana.org/" pnpm test:browser-real-smoke
 ```
 
 真实网站冒烟只做安全读取和页面状态验证，不自动点击购买、支付、提交、删除、授权等风险动作。
+真实站点可能因为网络、风控、长连接或区域策略导致 `domcontentloaded` 超时；不要把这类不稳定站点作为阻塞回归。脚本默认启动当前仓库的 `browser-service`，避免误用父目录旧服务。
 
 ### 5.1 百度搜索
 

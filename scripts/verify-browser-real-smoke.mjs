@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -8,15 +9,15 @@ const browserOrigin = `http://127.0.0.1:${browserPort}`;
 const repoRoot = path.resolve(import.meta.dirname, '..');
 const inRepoServiceDir = path.resolve(repoRoot, 'browser-service');
 const deployedServiceDir = path.resolve(repoRoot, '..', 'browser-service');
-const browserServiceDir =
-  process.env.BROWSER_SERVICE_DIR ||
-  (existsSync(path.resolve(inRepoServiceDir, 'node_modules'))
-    ? inRepoServiceDir
-    : deployedServiceDir);
+const browserServiceDir = process.env.BROWSER_SERVICE_DIR || inRepoServiceDir;
+const dependencyServiceDir = existsSync(path.resolve(browserServiceDir, 'node_modules'))
+  ? browserServiceDir
+  : deployedServiceDir;
 const smokeUrls = (process.env.BROWSER_REAL_SMOKE_URLS || 'https://example.com/')
   .split(',')
   .map((url) => url.trim())
   .filter(Boolean);
+let browserServiceRuntimeDir;
 
 if (smokeUrls.length === 0) {
   throw new Error('BROWSER_REAL_SMOKE_URLS did not include any URLs');
@@ -74,7 +75,7 @@ async function request(path, body, sessionId) {
 }
 
 const browserService = spawn(process.execPath, ['index.js'], {
-  cwd: browserServiceDir,
+  cwd: createBrowserServiceRuntimeDir(),
   env: { ...process.env, PORT: String(browserPort) },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -120,4 +121,31 @@ try {
 } finally {
   browserService.kill('SIGTERM');
   await waitForProcessExit(browserService);
+  cleanupBrowserServiceRuntimeDir();
+}
+
+function createBrowserServiceRuntimeDir() {
+  if (existsSync(path.resolve(browserServiceDir, 'node_modules'))) return browserServiceDir;
+
+  browserServiceRuntimeDir = mkdtempSync(path.resolve(tmpdir(), 'lobe-browser-service-'));
+  cpSync(
+    path.resolve(browserServiceDir, 'index.js'),
+    path.resolve(browserServiceRuntimeDir, 'index.js'),
+  );
+  cpSync(
+    path.resolve(browserServiceDir, 'package.json'),
+    path.resolve(browserServiceRuntimeDir, 'package.json'),
+  );
+  symlinkSync(
+    path.resolve(dependencyServiceDir, 'node_modules'),
+    path.resolve(browserServiceRuntimeDir, 'node_modules'),
+    'dir',
+  );
+
+  return browserServiceRuntimeDir;
+}
+
+function cleanupBrowserServiceRuntimeDir() {
+  if (!browserServiceRuntimeDir) return;
+  rmSync(browserServiceRuntimeDir, { force: true, recursive: true });
 }

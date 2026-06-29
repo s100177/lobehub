@@ -1997,7 +1997,8 @@ app.post('/navigate', sessionMiddleware, async (req, res) => {
 
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
-    await page.goto(normalizedUrl, { timeout, waitUntil: 'networkidle' });
+    await page.goto(normalizedUrl, { timeout, waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => null);
     resetExecutionState(session);
     recordAction(session, {
       action: 'navigate',
