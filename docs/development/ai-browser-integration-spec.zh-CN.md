@@ -76,7 +76,7 @@
 - `interrupt` 返回单次 `executionEvents`，并把同一事件追加进 session 级 `executionTimeline`，后续 `inspect` 仍应能看到这条审计记录。
 - BrowserPanel 应展示 session 级 `executionTimeline`，作为用户可见的审计时间线；单次 `executionEvents` 仍只表示当前工具调用结果。
 - 从 `paused_by_user_intervention` 恢复执行前，BrowserPanel 必须先调用 `inspect`，再调用 `executePlan`，不能基于旧页面状态继续。
-- 服务端 `/execute-plan` 也会强制这个边界：如果 session 仍处于 `paused_by_user_intervention`，请求必须带 `inspectedAfterIntervention:true`，否则只返回 `inspect_required_after_intervention` 阻断事件，不推进 workflow。
+- 服务端 `/execute-plan` 也会强制这个边界：如果 session 仍处于 `paused_by_user_intervention`，请求必须带 `inspectedAfterIntervention:true`，且服务端必须已经记录过覆盖当前人工干预版本的 `/inspect`；否则只返回 `inspect_required_after_intervention` 阻断事件，不推进 workflow。
 - clarification 的 `field` 会作为 `executePlan.inputs[field]` 传回运行时，建议与 workflow step 的 `action.inputKey` 保持一致。
 - 一个页面可以同时返回多个 clarification。BrowserPanel 会按队列逐项收集用户回答，展示已回答字段，并在用户确认继续规划后一次性传入 `executePlan.inputs`。
 - 用户选择 `suggestedTasks` 后只会进入授权卡，不会直接执行。授权执行时可把 `suggestedTasks.intent` 作为 `executePlan.intent`，运行时优先选择匹配的 skill-pack workflow。

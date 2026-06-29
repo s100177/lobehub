@@ -379,9 +379,34 @@ async function assertServerRecordsUserIntervention() {
     })}`,
   );
 
+  const spoofedResume = await request(
+    '/execute-plan',
+    {
+      authorized: true,
+      inputs: { department: '研发部', reason: '客户现场紧急支持' },
+      inspectedAfterIntervention: true,
+      maxSteps: 2,
+    },
+    'verify-agent-interrupt',
+  );
+  assert(
+    spoofedResume.taskState === 'paused_by_user_intervention' &&
+      spoofedResume.executionEvents?.some(
+        (event) => event.id === 'inspect_required_after_intervention' && event.status === 'blocked',
+      ),
+    `Expected spoofed inspect proof to remain blocked before service-side inspect, got ${JSON.stringify(
+      {
+        executionEvents: spoofedResume.executionEvents,
+        taskState: spoofedResume.taskState,
+      },
+    )}`,
+  );
+
   const inspected = await request('/inspect', {}, 'verify-agent-interrupt');
   assert(
     inspected.executionState?.phase === 'paused_by_user_intervention' &&
+      inspected.executionState?.inspectedInterventionVersion ===
+        inspected.executionState?.interventionVersion &&
       inspected.executionTimeline?.some((event) => event.action === 'interrupt'),
     `Expected inspect to preserve interruption audit, got ${JSON.stringify({
       executionState: inspected.executionState,

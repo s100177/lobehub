@@ -91,6 +91,8 @@ async function getOrCreateSession(sessionId) {
       context,
       executionEvents: [],
       executionState: undefined,
+      inspectedInterventionVersion: 0,
+      interventionVersion: 0,
       lastInputAt: Date.now(),
       lastUsed: Date.now(),
       page,
@@ -180,10 +182,13 @@ function recordUserIntervention(session, { inputType = 'input', reason } = {}) {
     currentStepId || session.executionState?.blockedStepId || 'user_intervention';
   const summary =
     reason || `Automation paused because the user performed ${inputType} in the browser.`;
+  const interventionVersion = (session.interventionVersion || 0) + 1;
+  session.interventionVersion = interventionVersion;
 
   updateExecutionState(session, {
     blockedStepId,
     currentStepId,
+    interventionVersion,
     phase: 'paused_by_user_intervention',
   });
 
@@ -201,6 +206,21 @@ function recordUserIntervention(session, { inputType = 'input', reason } = {}) {
   });
 
   return event;
+}
+
+function markInterventionInspected(session) {
+  if (session.executionState?.phase !== 'paused_by_user_intervention') return;
+  session.inspectedInterventionVersion = session.interventionVersion || 0;
+  updateExecutionState(session, {
+    inspectedInterventionVersion: session.inspectedInterventionVersion,
+  });
+}
+
+function hasFreshInterventionInspect(session) {
+  return (
+    (session.inspectedInterventionVersion || 0) >= (session.interventionVersion || 0) &&
+    (session.interventionVersion || 0) > 0
+  );
 }
 
 async function getPointerState(page, pointer) {
@@ -2300,7 +2320,7 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
 
     if (
       session.executionState?.phase === 'paused_by_user_intervention' &&
-      inspectedAfterIntervention !== true
+      (inspectedAfterIntervention !== true || !hasFreshInterventionInspect(session))
     ) {
       const events = finalizeExecutionEvents([
         createExecutionEvent({
@@ -2703,6 +2723,7 @@ app.post('/inspect', sessionMiddleware, async (req, res) => {
   try {
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
+    markInterventionInspected(session);
     recordAction(session, { action: 'inspect', summary: `Inspected ${page.url()}` });
     res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {

@@ -619,6 +619,7 @@ BROWSER_DOCKER_E2E_BASE_URL=http://192.168.1.36:3211 \
 - `interrupt` 返回 blocked `executionEvents`，并把事件持久化到 `executionTimeline`。
 - 通过 remote viewer 的 `/input` 发生 click/wheel/key 时，也会写入同样的中断审计记录；mousemove 不应打断自动化。
 - 后续 `inspect` 仍能读取到中断后的 `executionTimeline`。
+- 服务端必须记录当前人工干预版本已被 `inspect` 覆盖；仅伪造 `inspectedAfterIntervention:true` 不能恢复执行。
 - BrowserPanel 必须展示 `Browser audit timeline`，让用户能看到跨调用的暂停、恢复、风险和完成记录。
 - 后续自动动作队列停止。
 - UI 出现 “是否继续自动执行”。
