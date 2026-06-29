@@ -42,6 +42,7 @@ export interface SubmitParams {
 export interface ExecutePlanParams {
   authorized?: boolean;
   inputs?: Record<string, string>;
+  inspectedAfterIntervention?: boolean;
   intent?: string;
   maxSteps?: number;
   restart?: boolean;

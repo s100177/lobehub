@@ -388,6 +388,45 @@ async function assertServerRecordsUserIntervention() {
       executionTimeline: inspected.executionTimeline,
     })}`,
   );
+
+  const blockedResume = await request(
+    '/execute-plan',
+    {
+      authorized: true,
+      inputs: { department: '研发部', reason: '客户现场紧急支持' },
+      maxSteps: 2,
+    },
+    'verify-agent-interrupt',
+  );
+  assert(
+    blockedResume.taskState === 'paused_by_user_intervention' &&
+      blockedResume.executionEvents?.some(
+        (event) => event.id === 'inspect_required_after_intervention' && event.status === 'blocked',
+      ),
+    `Expected direct resume after intervention to require inspect proof, got ${JSON.stringify({
+      executionEvents: blockedResume.executionEvents,
+      taskState: blockedResume.taskState,
+    })}`,
+  );
+
+  const resumed = await request(
+    '/execute-plan',
+    {
+      authorized: true,
+      inputs: { department: '研发部', reason: '客户现场紧急支持' },
+      inspectedAfterIntervention: true,
+      maxSteps: 2,
+    },
+    'verify-agent-interrupt',
+  );
+  assert(
+    resumed.executionState?.phase !== 'paused_by_user_intervention' &&
+      !resumed.executionEvents?.some((event) => event.id === 'inspect_required_after_intervention'),
+    `Expected resume with inspect proof to continue past intervention guard, got ${JSON.stringify({
+      executionEvents: resumed.executionEvents,
+      executionState: resumed.executionState,
+    })}`,
+  );
 }
 
 const browserService = spawn(process.execPath, ['index.js'], {

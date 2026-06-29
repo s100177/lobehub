@@ -616,7 +616,12 @@ describe('BrowserPanel dual mode rendering', () => {
       expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/browser/action', {
         body: JSON.stringify({
           action: 'executePlan',
-          params: { authorized: true, inputs: {}, maxSteps: 4 },
+          params: {
+            authorized: true,
+            inputs: {},
+            maxSteps: 4,
+            inspectedAfterIntervention: true,
+          },
           sessionId: 'session-pause',
         }),
         cache: 'no-store',

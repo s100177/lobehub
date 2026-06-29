@@ -2216,6 +2216,7 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
   try {
     const {
       authorized = false,
+      inspectedAfterIntervention = false,
       inputs = {},
       intent,
       maxSteps = 4,
@@ -2294,6 +2295,28 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
         executionEvents: events,
         executionState: session.executionState,
         taskState: 'waiting_user_authorization',
+      });
+    }
+
+    if (
+      session.executionState?.phase === 'paused_by_user_intervention' &&
+      inspectedAfterIntervention !== true
+    ) {
+      const events = finalizeExecutionEvents([
+        createExecutionEvent({
+          action: 'inspect',
+          id: 'inspect_required_after_intervention',
+          status: 'blocked',
+          summary:
+            'Execution stopped because user intervention requires a fresh inspect before resume.',
+        }),
+      ]);
+      const state = await getCurrentPageState();
+      return res.json({
+        ...state,
+        executionEvents: events,
+        executionState: session.executionState,
+        taskState: 'paused_by_user_intervention',
       });
     }
 

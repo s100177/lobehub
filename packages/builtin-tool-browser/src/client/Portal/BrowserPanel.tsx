@@ -926,7 +926,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
       const executeRes = await fetch('/api/browser/action', {
         body: JSON.stringify({
           action: 'executePlan',
-          params: buildExecutePlanParams(),
+          params: { ...buildExecutePlanParams(), inspectedAfterIntervention: true },
           sessionId,
         }),
         cache: 'no-store',
