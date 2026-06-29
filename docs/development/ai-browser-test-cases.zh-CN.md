@@ -191,9 +191,8 @@ ENABLE_BROWSER_E2E_TEST_PANEL=1 docker compose up -d --no-build lobe browser-ser
 
 ```bash
 BROWSER_DOCKER_E2E_BASE_URL=http://192.168.1.36:3211 \
-  BROWSER_DOCKER_E2E_DATABASE_URL=postgresql://postgres: \
-  pnpm < password > @127.0.0.1:5435/lobechat \
-  test:browser-docker-ui-e2e
+  BROWSER_DOCKER_E2E_DATABASE_URL='postgresql://postgres:<password>@127.0.0.1:5435/lobechat' \
+  pnpm test:browser-docker-ui-e2e
 ```
 
 验收点：
@@ -211,6 +210,7 @@ BROWSER_DOCKER_E2E_BASE_URL=http://192.168.1.36:3211 \
 
 - 父目录 `docker-compose.yml` 不在当前 git 仓库内，但本机部署必须让 `browser-service.build.context` 指向 `./lobehub/browser-service`。
 - 如果指向旧的 `./browser-service`，服务缺少 `/execute-plan`，E2E 会停在授权卡或执行失败。
+- `BROWSER_DOCKER_E2E_BASE_URL` 必须使用部署容器信任的 `APP_URL` origin；如果部署配置是 `http://192.168.1.36:3211`，不要用 `http://127.0.0.1:3211`，否则 Better Auth 会拒绝登录 origin。
 
 ## 3. 本地测试页设计
 

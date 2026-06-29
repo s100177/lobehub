@@ -30,14 +30,15 @@ async function seedTestUser() {
     const onboarding = JSON.stringify({ finishedAt: now, version: 1 });
 
     await client.query(
-      `INSERT INTO users (id, email, normalized_email, username, full_name, email_verified, onboarding, created_at, updated_at, last_active_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $8)
+      `INSERT INTO users (id, email, normalized_email, username, full_name, email_verified, email_verified_at, onboarding, created_at, updated_at, last_active_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $8, $7, $8, $8, $8)
        ON CONFLICT (id) DO UPDATE SET
          email = EXCLUDED.email,
          normalized_email = EXCLUDED.normalized_email,
          username = EXCLUDED.username,
          full_name = EXCLUDED.full_name,
          email_verified = EXCLUDED.email_verified,
+         email_verified_at = EXCLUDED.email_verified_at,
          onboarding = EXCLUDED.onboarding,
          updated_at = EXCLUDED.updated_at`,
       [
