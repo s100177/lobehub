@@ -605,6 +605,42 @@ const authorizationStates = new Set<BrowserTaskState>(['plan_ready', 'waiting_us
 
 const clarificationStates = new Set<BrowserTaskState>(['asking_clarification', 'needs_more_info']);
 
+const interactionModeLabels: Record<
+  'answer' | 'review' | 'surface' | 'takeover',
+  { description: string; title: string }
+> = {
+  answer: {
+    description: 'AI is only reading or answering from the current page.',
+    title: '问答模式',
+  },
+  review: {
+    description: 'AI has a plan or question, but waits for your decision before acting.',
+    title: '审阅模式',
+  },
+  surface: {
+    description: 'AI is authorized to operate the current page within safe boundaries.',
+    title: '界面模式',
+  },
+  takeover: {
+    description: 'You interacted with the browser, so automation is paused until you resume.',
+    title: '接管模式',
+  },
+};
+
+const getInteractionMode = (taskState?: BrowserTaskState) => {
+  if (taskState === 'paused_by_user_intervention') return interactionModeLabels.takeover;
+  if (taskState && controllingStates.has(taskState)) return interactionModeLabels.surface;
+  if (
+    taskState &&
+    (authorizationStates.has(taskState) ||
+      clarificationStates.has(taskState) ||
+      taskState === 'risk_blocked')
+  )
+    return interactionModeLabels.review;
+
+  return interactionModeLabels.answer;
+};
+
 const hasTargetBox = (
   target: BrowserPageState['targetHighlight'],
 ): target is NonNullable<BrowserPageState['targetHighlight']> &
@@ -685,6 +721,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   }, [currentState?.mode, currentState?.url]);
 
   const taskState = currentState?.taskState;
+  const interactionMode = getInteractionMode(taskState);
 
   const updateTaskState = (nextTaskState: BrowserTaskState) => {
     setLocalState((previous) => (previous ? { ...previous, taskState: nextTaskState } : previous));
@@ -1029,6 +1066,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
           <div className={styles.taskTitle}>Task State: {taskState}</div>
           <div className={styles.taskText}>{taskStateDescriptions[taskState]}</div>
           <div className={styles.taskPills}>
+            <span className={styles.pill}>Mode: {interactionMode.title}</span>
             {pageType && <span className={styles.pill}>{pageType}</span>}
             {loggedIn !== undefined && (
               <span className={styles.pill}>{loggedIn ? 'logged in' : 'needs login'}</span>
@@ -1046,6 +1084,9 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
             {executionState?.currentStepId && (
               <span className={styles.pill}>step: {executionState.currentStepId}</span>
             )}
+          </div>
+          <div aria-label="Browser interaction mode" className={styles.taskText}>
+            {interactionMode.title}：{interactionMode.description}
           </div>
         </div>
       )}

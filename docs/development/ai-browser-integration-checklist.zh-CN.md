@@ -88,10 +88,11 @@
 - [x] AI 能在歧义时暂停询问。
 - [x] AI 能在人工干预后暂停。
 - [x] AI 能在继续前重新 inspect。
+- [x] AI 能在面板中明确展示问答 / 审阅 / 界面 / 接管模式。
 
 ## 10. 视觉状态
 
-- [ ] 初始助手态有推荐任务。
+- [x] 初始助手态有推荐任务。
 - [x] 授权前有明确的计划和开始按钮。
 - [x] 接管时有动态边框。
 - [x] 操作目标有高亮。
@@ -114,7 +115,7 @@
 - `scripts/verify-browser-docker-ui-e2e.mjs` 覆盖 Docker 部署后的真实登录、`/browser-e2e` 测试路由、真实 `BrowserPortal`、browser-service `navigate`/`inspect`/`execute-plan`、授权卡、计划卡、proxy iframe、风险拦截卡和审计时间线。
 - `scripts/verify-browser-skill-packs.mjs` 覆盖 `examples/browser-skill-packs` 或 `BROWSER_SKILL_PACK_VERIFY_DIR` 指向目录里的业务技能包静态结构和风险步骤约束。
 - `scripts/verify-browser-business-demo.mjs` 覆盖指定真实业务系统 URL + 外部技能包目录的端到端演示入口，要求匹配技能包、生成计划、完成安全步骤，并停在风险门。
-- `src/features/Conversation/Messages/AssistantGroup/Tool/BrowserPanel.test.tsx` 覆盖 BrowserPanel 授权卡、暂停卡、clarification、suggestedTasks、审计时间线、remote/iframe 视图和继续前 inspect。
+- `src/features/Conversation/Messages/AssistantGroup/Tool/BrowserPanel.test.tsx` 覆盖 BrowserPanel 授权卡、暂停卡、clarification、suggestedTasks、问答 / 审阅 / 界面 / 接管模式、审计时间线、remote/iframe 视图和继续前 inspect。
 
 ## 12. 发布门槛
 

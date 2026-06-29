@@ -279,6 +279,7 @@ describe('BrowserPanel dual mode rendering', () => {
     render(<BrowserPanel sessionId="session-signal" state={state} />);
 
     expect(screen.getByText('Task State: waiting_user_authorization')).toBeInTheDocument();
+    expect(screen.getByLabelText('Browser interaction mode')).toHaveTextContent('审阅模式');
     expect(screen.getAllByText('purchase').length).toBeGreaterThan(0);
     expect(screen.getByText('Needs login')).toBeInTheDocument();
     expect(screen.getByText('Required')).toBeInTheDocument();
@@ -384,10 +385,12 @@ describe('BrowserPanel dual mode rendering', () => {
     );
 
     expect(screen.getByLabelText('Browser authorization card')).toBeInTheDocument();
+    expect(screen.getByLabelText('Browser interaction mode')).toHaveTextContent('审阅模式');
 
     fireEvent.click(screen.getByText('帮我操作'));
 
     expect(screen.getByText('Task State: ai_controlling')).toBeInTheDocument();
+    expect(screen.getByLabelText('Browser interaction mode')).toHaveTextContent('界面模式');
     expect(screen.getByText('User authorized AI browser control.')).toBeInTheDocument();
 
     await waitFor(() => {
@@ -575,6 +578,7 @@ describe('BrowserPanel dual mode rendering', () => {
     fireEvent.click(screen.getByTitle('Dashboard'));
 
     expect(screen.getByText('Task State: paused_by_user_intervention')).toBeInTheDocument();
+    expect(screen.getByLabelText('Browser interaction mode')).toHaveTextContent('接管模式');
     expect(screen.getByLabelText('Browser pause card')).toBeInTheDocument();
 
     await waitFor(() => {
@@ -695,6 +699,7 @@ describe('BrowserPanel dual mode rendering', () => {
     await waitFor(() => {
       expect(screen.getByText('Task State: paused_by_user_intervention')).toBeInTheDocument();
     });
+    expect(screen.getByLabelText('Browser interaction mode')).toHaveTextContent('接管模式');
     expect(
       screen.getAllByText('Automation paused because the user performed click in the browser.'),
     ).toHaveLength(2);
@@ -829,5 +834,6 @@ describe('BrowserPanel dual mode rendering', () => {
       'AI will not execute it automatically',
     );
     expect(screen.getByText('Task State: risk_blocked')).toBeInTheDocument();
+    expect(screen.getByLabelText('Browser interaction mode')).toHaveTextContent('审阅模式');
   });
 });
