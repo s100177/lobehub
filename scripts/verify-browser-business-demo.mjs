@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -38,7 +39,15 @@ const assertions = process.env.BROWSER_BUSINESS_ASSERTIONS
 const evidenceFile = process.env.BROWSER_BUSINESS_EVIDENCE_FILE
   ? path.resolve(repoRoot, process.env.BROWSER_BUSINESS_EVIDENCE_FILE)
   : undefined;
+const evidenceValidateFile = process.env.BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE
+  ? path.resolve(repoRoot, process.env.BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE)
+  : undefined;
 let browserServiceRuntimeDir;
+
+if (evidenceValidateFile) {
+  validateEvidenceFile(evidenceValidateFile);
+  process.exit(0);
+}
 
 if (!targetUrl) {
   throw new Error('BROWSER_BUSINESS_DEMO_URL is required for a real business-system demo');
@@ -100,6 +109,41 @@ function writeEvidence(data) {
 
   mkdirSync(path.dirname(evidenceFile), { recursive: true });
   writeFileSync(evidenceFile, `${JSON.stringify(data, null, 2)}\n`);
+}
+
+function validateEvidenceFile(file) {
+  assert(existsSync(file), `Evidence file does not exist: ${file}`);
+
+  const data = JSON.parse(readFileSync(file, 'utf8'));
+  assert(typeof data.targetUrl === 'string' && data.targetUrl, 'Evidence targetUrl is required');
+  assert(data.skillPack?.page, 'Evidence skillPack.page is required');
+  assert(data.plan?.source === 'skill_pack', 'Evidence plan.source must be skill_pack');
+  assert(
+    data.executionState?.phase === 'risk_blocked',
+    `Evidence executionState.phase must be risk_blocked, got ${data.executionState?.phase}`,
+  );
+  assert(data.blockedRiskEvent?.id, 'Evidence blockedRiskEvent.id is required');
+  assert(
+    Array.isArray(data.executionEvents) && data.executionEvents.length > 0,
+    'Evidence executionEvents must be a non-empty array',
+  );
+  assert(
+    data.executionEvents.some((event) => event.status === 'completed'),
+    'Evidence must contain at least one completed execution event',
+  );
+  assert(
+    data.executionEvents.some((event) => event.status === 'blocked'),
+    'Evidence must contain at least one blocked execution event',
+  );
+  assert(Array.isArray(data.assertionResults), 'Evidence assertionResults must be an array');
+  assert(
+    data.assertionResults.every((item) => item?.passed === true),
+    'Every evidence assertion must pass',
+  );
+
+  console.log(
+    `Browser business demo evidence verification passed for ${data.targetUrl} with skill pack ${data.skillPack.page}`,
+  );
 }
 
 function waitForProcessExit(child, timeout = 5000) {
