@@ -69,6 +69,7 @@
 - workflow step 可以声明 `action.selector`、`action.inputKey`、`action.value`、`action.expectedText`。
 - 运行时只按声明式 action 执行安全的 `fill`、`select`、`click`、`verify`；风险词命中的点击会被阻塞。
 - 缺少 `inputKey` 对应用户输入时，执行暂停并要求用户补充，不猜测敏感字段。
+- `executePlan` 必须显式传入 `authorized: true` 才会推进页面操作；未传或为 `false` 时，服务端返回 `waiting_user_authorization`，并记录 `authorization_required` 阻断事件。
 - `executePlan` 会按 session 记录 `executionState.cursor` 和 `completedStepIds`；暂停后再次执行默认从阻塞步骤继续。
 - 如果业务需要从头重跑 workflow，调用 `executePlan` 时显式传入 `restart: true`。
 - 用户在接管态手动点击、滚动、输入或键盘操作时，运行时必须调用 `interrupt`，把 `executionState.phase` 写为 `paused_by_user_intervention`。
@@ -263,6 +264,7 @@ BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE=.omx/artifacts/browser-business-demo.jso
 -> 不够则询问 / 补全
 -> 生成计划
 -> 请求用户授权
+-> 调用 executePlan({ authorized: true, ... })
 -> 进入接管态
 -> 自动推进到确认前
 -> 风险动作暂停

@@ -119,6 +119,20 @@ function validateEvidenceFile(file) {
   assert(data.skillPack?.page, 'Evidence skillPack.page is required');
   assert(data.plan?.source === 'skill_pack', 'Evidence plan.source must be skill_pack');
   assert(
+    data.authorizationGate?.taskState === 'waiting_user_authorization',
+    `Evidence authorizationGate.taskState must be waiting_user_authorization, got ${data.authorizationGate?.taskState}`,
+  );
+  assert(
+    data.authorizationGate?.executionState?.phase === 'waiting_authorization',
+    `Evidence authorizationGate.executionState.phase must be waiting_authorization, got ${data.authorizationGate?.executionState?.phase}`,
+  );
+  assert(
+    data.authorizationGate?.executionEvents?.some(
+      (event) => event.id === 'authorization_required' && event.status === 'blocked',
+    ),
+    'Evidence authorizationGate must contain blocked authorization_required event',
+  );
+  assert(
     data.executionState?.phase === 'risk_blocked',
     `Evidence executionState.phase must be risk_blocked, got ${data.executionState?.phase}`,
   );
@@ -229,9 +243,34 @@ try {
     `Expected skill-pack plan, got ${JSON.stringify(navigated.plan)}`,
   );
 
+  const authorizationGate = await request(
+    '/execute-plan',
+    {
+      inputs,
+      intent,
+      maxSteps,
+    },
+    sessionId,
+  );
+  assert(
+    authorizationGate.taskState === 'waiting_user_authorization',
+    `Expected execution without authorization to wait for user authorization, got ${JSON.stringify({
+      executionEvents: authorizationGate.executionEvents,
+      executionState: authorizationGate.executionState,
+      taskState: authorizationGate.taskState,
+    })}`,
+  );
+  assert(
+    authorizationGate.executionState?.phase === 'waiting_authorization',
+    `Expected waiting_authorization phase before approval, got ${JSON.stringify(
+      authorizationGate.executionState,
+    )}`,
+  );
+
   const execution = await request(
     '/execute-plan',
     {
+      authorized: true,
       inputs,
       intent,
       maxSteps,
@@ -277,6 +316,11 @@ try {
 
   writeEvidence({
     assertionResults,
+    authorizationGate: {
+      executionEvents: authorizationGate.executionEvents,
+      executionState: authorizationGate.executionState,
+      taskState: authorizationGate.taskState,
+    },
     blockedRiskEvent,
     executionEvents: execution.executionEvents,
     executionState: execution.executionState,

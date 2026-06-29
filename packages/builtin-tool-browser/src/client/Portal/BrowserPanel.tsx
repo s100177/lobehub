@@ -885,6 +885,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   };
 
   const buildExecutePlanParams = () => ({
+    authorized: true,
     inputs: buildPlanInputs(),
     ...(selectedSuggestedTask?.intent ? { intent: selectedSuggestedTask.intent } : {}),
     maxSteps: 4,

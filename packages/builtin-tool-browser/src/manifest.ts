@@ -154,10 +154,15 @@ export const BrowserManifest: BuiltinToolManifest = {
     },
     {
       description:
-        'Execute the current page skill-pack plan after user authorization. Runs only safe steps such as inspect, fill, search submit, and verify. Stops before missing information or risky actions such as purchase, payment, submit order, delete, release, or authorization.',
+        'Execute the current page skill-pack plan only after explicit user authorization. Set authorized=true only when the user has confirmed the visible browser authorization card or explicitly approved execution. Runs only safe steps such as inspect, fill, search submit, and verify. Stops before missing information or risky actions such as purchase, payment, submit order, delete, release, or authorization.',
       name: BrowserApiName.executePlan,
       parameters: {
         properties: {
+          authorized: {
+            description:
+              'Must be true after explicit user approval. If omitted or false, the runtime will not operate the page and will return waiting_user_authorization.',
+            type: 'boolean',
+          },
           inputs: {
             additionalProperties: { type: 'string' },
             description:

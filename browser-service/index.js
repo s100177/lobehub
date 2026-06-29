@@ -2144,7 +2144,14 @@ app.post('/evaluate', sessionMiddleware, async (req, res) => {
 
 app.post('/execute-plan', sessionMiddleware, async (req, res) => {
   try {
-    const { inputs = {}, intent, maxSteps = 4, restart = false, timeout = 10000 } = req.body || {};
+    const {
+      authorized = false,
+      inputs = {},
+      intent,
+      maxSteps = 4,
+      restart = false,
+      timeout = 10000,
+    } = req.body || {};
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
     const executionEvents = [];
@@ -2194,6 +2201,29 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
         ...state,
         executionEvents: events,
         taskState: pageState.taskState || 'failed',
+      });
+    }
+
+    if (authorized !== true) {
+      updateExecutionState(session, {
+        blockedStepId: plan.steps[0]?.id || 'authorization_required',
+        currentStepId: plan.steps[0]?.id,
+        phase: 'waiting_authorization',
+      });
+      const events = finalizeExecutionEvents([
+        createExecutionEvent({
+          action: 'authorize',
+          id: 'authorization_required',
+          status: 'blocked',
+          summary: 'Execution stopped because user authorization is required before automation.',
+        }),
+      ]);
+      const state = await getCurrentPageState();
+      return res.json({
+        ...state,
+        executionEvents: events,
+        executionState: session.executionState,
+        taskState: 'waiting_user_authorization',
       });
     }
 

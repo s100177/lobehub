@@ -185,7 +185,13 @@ describe('browser executor', () => {
     const result = await invokeExecutor(
       BrowserIdentifier,
       BrowserApiName.executePlan,
-      { inputs: { query: '复星医药' }, intent: 'find_official_source', maxSteps: 4, restart: true },
+      {
+        authorized: true,
+        inputs: { query: '复星医药' },
+        intent: 'find_official_source',
+        maxSteps: 4,
+        restart: true,
+      },
       { messageId: 'tool-message-id', topicId: 'topic-1', toolCallId: 'call-1' },
     );
 
@@ -193,6 +199,7 @@ describe('browser executor', () => {
       body: JSON.stringify({
         action: BrowserApiName.executePlan,
         params: {
+          authorized: true,
           inputs: { query: '复星医药' },
           intent: 'find_official_source',
           maxSteps: 4,

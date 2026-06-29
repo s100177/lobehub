@@ -318,6 +318,7 @@ describe('BrowserPanel dual mode rendering', () => {
         body: JSON.stringify({
           action: 'executePlan',
           params: {
+            authorized: true,
             inputs: {},
             intent: 'configure_before_purchase',
             maxSteps: 4,
@@ -397,7 +398,7 @@ describe('BrowserPanel dual mode rendering', () => {
       expect(fetchMock).toHaveBeenCalledWith('/api/browser/action', {
         body: JSON.stringify({
           action: 'executePlan',
-          params: { inputs: {}, maxSteps: 4 },
+          params: { authorized: true, inputs: {}, maxSteps: 4 },
           sessionId: 'session-auth',
         }),
         cache: 'no-store',
@@ -615,7 +616,7 @@ describe('BrowserPanel dual mode rendering', () => {
       expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/browser/action', {
         body: JSON.stringify({
           action: 'executePlan',
-          params: { inputs: {}, maxSteps: 4 },
+          params: { authorized: true, inputs: {}, maxSteps: 4 },
           sessionId: 'session-pause',
         }),
         cache: 'no-store',
@@ -798,7 +799,11 @@ describe('BrowserPanel dual mode rendering', () => {
       expect(fetchMock).toHaveBeenCalledWith('/api/browser/action', {
         body: JSON.stringify({
           action: 'executePlan',
-          params: { inputs: { region: 'shanghai', scenario: 'personal_site' }, maxSteps: 4 },
+          params: {
+            authorized: true,
+            inputs: { region: 'shanghai', scenario: 'personal_site' },
+            maxSteps: 4,
+          },
           sessionId: 'session-clarify',
         }),
         cache: 'no-store',

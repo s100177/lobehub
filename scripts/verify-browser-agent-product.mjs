@@ -326,7 +326,11 @@ async function assertServerRecordsUserIntervention() {
   );
   await request(
     '/execute-plan',
-    { inputs: { department: '研发部', reason: '客户现场紧急支持' }, maxSteps: 2 },
+    {
+      authorized: true,
+      inputs: { department: '研发部', reason: '客户现场紧急支持' },
+      maxSteps: 2,
+    },
     'verify-agent-interrupt',
   );
 
@@ -441,7 +445,28 @@ try {
     `Expected blocked risk gate in plan, got ${JSON.stringify(buy.plan?.steps)}`,
   );
   assertTargetHighlight(buy.pageState?.targetHighlight, /购买|提交|支付|风险/, 'cloud buy');
-  const buyExecution = await request('/execute-plan', { maxSteps: 4 }, 'verify-agent-buy');
+  const unauthorizedBuyExecution = await request(
+    '/execute-plan',
+    { maxSteps: 4 },
+    'verify-agent-buy',
+  );
+  assert(
+    unauthorizedBuyExecution.taskState === 'waiting_user_authorization' &&
+      unauthorizedBuyExecution.executionState?.phase === 'waiting_authorization' &&
+      unauthorizedBuyExecution.executionEvents?.some(
+        (event) => event.id === 'authorization_required' && event.status === 'blocked',
+      ),
+    `Expected execute-plan without authorization to stop before automation, got ${JSON.stringify({
+      events: unauthorizedBuyExecution.executionEvents,
+      state: unauthorizedBuyExecution.executionState,
+      taskState: unauthorizedBuyExecution.taskState,
+    })}`,
+  );
+  const buyExecution = await request(
+    '/execute-plan',
+    { authorized: true, maxSteps: 4 },
+    'verify-agent-buy',
+  );
   assert(
     buyExecution.executionEvents?.some(
       (event) => event.status === 'blocked' && /user input|risky|风险|缺/i.test(event.summary),
@@ -513,7 +538,7 @@ try {
   );
   const reviewOnlyExecution = await request(
     '/execute-plan',
-    { intent: 'expense_review_only', maxSteps: 3 },
+    { authorized: true, intent: 'expense_review_only', maxSteps: 3 },
     'verify-agent-expense-review',
   );
   assert(
@@ -526,7 +551,11 @@ try {
       plan: reviewOnlyExecution.plan,
     })}`,
   );
-  const expenseExecution = await request('/execute-plan', { maxSteps: 4 }, 'verify-agent-expense');
+  const expenseExecution = await request(
+    '/execute-plan',
+    { authorized: true, maxSteps: 4 },
+    'verify-agent-expense',
+  );
   assert(
     expenseExecution.executionEvents?.some(
       (event) => event.id === 'select_department' && event.status === 'blocked',
@@ -553,7 +582,11 @@ try {
   );
   const completedExpenseExecution = await request(
     '/execute-plan',
-    { inputs: { department: '研发部', reason: '客户现场紧急支持' }, maxSteps: 5 },
+    {
+      authorized: true,
+      inputs: { department: '研发部', reason: '客户现场紧急支持' },
+      maxSteps: 5,
+    },
     'verify-agent-expense',
   );
   assert(
@@ -609,7 +642,7 @@ try {
   );
   const repeatedExpenseExecution = await request(
     '/execute-plan',
-    { maxSteps: 5 },
+    { authorized: true, maxSteps: 5 },
     'verify-agent-expense',
   );
   assert(
@@ -669,7 +702,7 @@ try {
   assertTargetHighlight(search.pageState?.targetHighlight, /搜索|查询/, 'search page');
   const searchExecution = await request(
     '/execute-plan',
-    { inputs: { query: '复星医药' }, maxSteps: 4 },
+    { authorized: true, inputs: { query: '复星医药' }, maxSteps: 4 },
     'verify-agent-search',
   );
   assert(

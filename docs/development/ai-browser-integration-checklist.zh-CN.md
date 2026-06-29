@@ -84,6 +84,7 @@
 
 - [x] AI 能先生成计划。
 - [x] AI 能请求用户授权后再执行。
+- [x] `/execute-plan` 服务端入口会拒绝缺少 `authorized: true` 的直接执行请求。
 - [x] AI 能在页面内自动收集 / 填写 / 选择信息。
 - [x] AI 能在歧义时暂停询问。
 - [x] AI 能在人工干预后暂停。
@@ -110,11 +111,11 @@
 
 当前自动化证据：
 
-- `scripts/verify-browser-agent-product.mjs` 覆盖本地可控页面、技能包计划、授权后执行、接管视觉、高亮、歧义询问、风险拦截、人工干预 `interrupt`、remote viewer `/input` 中断审计和恢复前 inspect。
+- `scripts/verify-browser-agent-product.mjs` 覆盖本地可控页面、技能包计划、未授权 `executePlan` 阻断、授权后执行、接管视觉、高亮、歧义询问、风险拦截、人工干预 `interrupt`、remote viewer `/input` 中断审计和恢复前 inspect。
 - `scripts/verify-browser-real-smoke.mjs` 覆盖真实站点 remote navigate、inspect、标题 / URL /viewport 和不触发风险动作；可通过 `BROWSER_REAL_SMOKE_URLS` 扩展真实站点列表。
 - `scripts/verify-browser-docker-ui-e2e.mjs` 覆盖 Docker 部署后的真实登录、`/browser-e2e` 测试路由、真实 `BrowserPortal`、browser-service `navigate`/`inspect`/`execute-plan`、授权卡、计划卡、proxy iframe、风险拦截卡和审计时间线。
 - `scripts/verify-browser-skill-packs.mjs` 覆盖 `examples/browser-skill-packs` 或 `BROWSER_SKILL_PACK_VERIFY_DIR` 指向目录里的业务技能包静态结构和风险步骤约束。
-- `scripts/verify-browser-business-demo.mjs` 覆盖指定真实业务系统 URL + 外部技能包目录的端到端演示入口，要求匹配技能包、生成计划、完成安全步骤，并停在风险门。
+- `scripts/verify-browser-business-demo.mjs` 覆盖指定真实业务系统 URL + 外部技能包目录的端到端演示入口，要求匹配技能包、生成计划、先证明未授权阻断，再完成安全步骤，并停在风险门。
 - `src/features/Conversation/Messages/AssistantGroup/Tool/BrowserPanel.test.tsx` 覆盖 BrowserPanel 授权卡、暂停卡、clarification、suggestedTasks、问答 / 审阅 / 界面 / 接管模式、审计时间线、remote/iframe 视图和继续前 inspect。
 
 ## 12. 发布门槛

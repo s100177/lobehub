@@ -88,6 +88,7 @@ BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE=.omx/artifacts/browser-business-demo.jso
 - 必须显式提供 `BROWSER_BUSINESS_DEMO_URL`，否则脚本失败。
 - 必须显式提供 `BROWSER_BUSINESS_SKILL_PACKS_DIR`，否则脚本失败。
 - 页面必须匹配外部技能包。
+- 证据文件必须包含 `authorizationGate`，证明未传 `authorized: true` 时服务端停在 `waiting_user_authorization`，不会执行页面动作。
 - 计划必须来自 `skill_pack`。
 - 至少一个安全步骤执行完成。
 - 执行必须停在 `risk_blocked`，不能越过风险动作。
@@ -258,6 +259,7 @@ BROWSER_DOCKER_E2E_BASE_URL=http://192.168.1.36:3211 \
 验收点：
 
 - 未授权前无 click/fill/select。
+- 直接调用 `executePlan` 且未传 `authorized: true` 时，服务端返回 `authorization_required` 阻断事件。
 - 授权后进入 `ai_controlling`。
 - 动态边框可见。
 - 每次操作目标高亮。
@@ -516,6 +518,7 @@ BROWSER_DOCKER_E2E_BASE_URL=http://192.168.1.36:3211 \
 - 用户未点击确认前，服务端未收到 click/fill/select。
 - UI 状态为 `waiting_user_authorization`。
 - 计划中展示目标、步骤和风险节点。
+- `/execute-plan` 入口必须校验 `authorized: true`；缺少授权时只返回 `waiting_user_authorization`，不推进 workflow cursor。
 
 ### 4.5 AI 接管视觉态
 
@@ -552,7 +555,7 @@ BROWSER_DOCKER_E2E_BASE_URL=http://192.168.1.36:3211 \
 
 断言：
 
-- 用户授权后调用 `executePlan`，而不是只在前端切换状态。
+- 用户授权后调用 `executePlan({ authorized: true, ... })`，而不是只在前端切换状态。
 - 搜索页带 `query` 输入时，执行事件包含 fill 和 submit completed。
 - 购买页或订单页执行到 ask /risk_gate 前停止。
 - 停止时返回 blocked execution event，并且不触发购买、支付、删除、释放、授权等页面副作用。

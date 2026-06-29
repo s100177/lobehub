@@ -40,6 +40,7 @@ export interface SubmitParams {
 }
 
 export interface ExecutePlanParams {
+  authorized?: boolean;
   inputs?: Record<string, string>;
   intent?: string;
   maxSteps?: number;
@@ -91,7 +92,15 @@ export interface BrowserPageField {
 }
 
 export interface BrowserPlanExecutionEvent {
-  action?: 'click' | 'fill' | 'inspect' | 'interrupt' | 'select' | 'submit' | 'verify';
+  action?:
+    | 'authorize'
+    | 'click'
+    | 'fill'
+    | 'inspect'
+    | 'interrupt'
+    | 'select'
+    | 'submit'
+    | 'verify';
   id: string;
   status: 'blocked' | 'completed' | 'failed' | 'skipped';
   summary: string;
