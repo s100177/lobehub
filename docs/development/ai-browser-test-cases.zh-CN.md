@@ -62,6 +62,14 @@ examples/browser-skill-packs/expense-approval.json
 - 证明运行时能匹配外部技能包、生成 workflow plan、执行安全步骤，并停在风险门。
 - 避免把本地 fixture 或真实站点只读 smoke 误当成业务系统端到端演示。
 
+本地可控业务演示：
+
+```bash
+pnpm test:browser-business-demo-local
+```
+
+这个脚本会启动临时费用审批页面、生成匹配的技能包副本、调用真实业务 demo verifier，并校验 evidence 文件。它用于开发回归，证明授权门、安全步骤、风险门和 evidence 校验链路可复现；它不能替代接入方真实业务系统 URL 的最终验收。
+
 运行方式：
 
 ```bash

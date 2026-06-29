@@ -103,6 +103,14 @@ examples/browser-skill-packs/expense-approval.json
 
 真实业务系统演示用例：
 
+开发回归可先跑仓库内置的本地业务页演示：
+
+```bash
+pnpm test:browser-business-demo-local
+```
+
+它会启动临时费用审批页面，复用 `examples/browser-skill-packs/expense-approval.json` 生成本地匹配技能包，并校验 evidence。该命令只证明本地可控业务页闭环，不能替代接入方真实业务 URL 验收。
+
 ```bash
 BROWSER_BUSINESS_DEMO_URL=https://your-business-system.example/path \
   BROWSER_BUSINESS_SKILL_PACKS_DIR=/path/to/your/skill-packs \
