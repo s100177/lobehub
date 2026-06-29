@@ -116,7 +116,7 @@ try {
   const targetUrl = `http://127.0.0.1:${address.port}/business-expense.html`;
   const verifier = path.resolve(repoRoot, 'scripts/verify-browser-business-demo.mjs');
 
-  await runNodeScript(verifier, {
+  const demoEnv = {
     BROWSER_BUSINESS_ASSERTIONS:
       '[{"name":"未提交审批","code":"document.body.dataset.submitted ?? null","equals":null},{"name":"部门已填写","code":"document.querySelector(\\"#department\\").value","equals":"研发部"}]',
     BROWSER_BUSINESS_DEMO_INPUTS: '{"department":"研发部","reason":"客户现场紧急支持"}',
@@ -126,7 +126,14 @@ try {
     BROWSER_BUSINESS_EXPECT_RISK_ACTION: 'risk_gate',
     BROWSER_BUSINESS_EXPECT_SKILL_PAGE: 'expense_approval_form',
     BROWSER_BUSINESS_SKILL_PACKS_DIR: skillPackDir,
+  };
+
+  await runNodeScript(verifier, {
+    ...demoEnv,
+    BROWSER_BUSINESS_PREFLIGHT: '1',
   });
+
+  await runNodeScript(verifier, demoEnv);
 
   await runNodeScript(verifier, {
     BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE: evidenceFile,

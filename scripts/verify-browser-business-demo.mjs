@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import {
   cpSync,
@@ -12,6 +13,8 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+
+import { loadValidatedSkillPacks } from './verify-browser-skill-packs.mjs';
 
 const browserPort = Number.parseInt(process.env.BROWSER_BUSINESS_DEMO_PORT || '3340', 10);
 const browserOrigin = `http://127.0.0.1:${browserPort}`;
@@ -42,6 +45,7 @@ const evidenceFile = process.env.BROWSER_BUSINESS_EVIDENCE_FILE
 const evidenceValidateFile = process.env.BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE
   ? path.resolve(repoRoot, process.env.BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE)
   : undefined;
+const preflightOnly = process.env.BROWSER_BUSINESS_PREFLIGHT === '1';
 const verifierVersion = 2;
 let browserServiceRuntimeDir;
 
@@ -50,24 +54,62 @@ if (evidenceValidateFile) {
   process.exit(0);
 }
 
-if (!targetUrl) {
-  throw new Error('BROWSER_BUSINESS_DEMO_URL is required for a real business-system demo');
+validateDemoConfiguration();
+
+if (preflightOnly) {
+  console.log(`Browser business demo preflight passed for ${targetUrl}`);
+  process.exit(0);
 }
 
-if (!skillPacksDir) {
-  throw new Error('BROWSER_BUSINESS_SKILL_PACKS_DIR is required');
-}
+function validateDemoConfiguration() {
+  assert(targetUrl, 'BROWSER_BUSINESS_DEMO_URL is required for a real business-system demo');
+  assert(skillPacksDir, 'BROWSER_BUSINESS_SKILL_PACKS_DIR is required');
+  assert(
+    existsSync(skillPacksDir),
+    `BROWSER_BUSINESS_SKILL_PACKS_DIR does not exist: ${skillPacksDir}`,
+  );
+  assert(intent, 'BROWSER_BUSINESS_DEMO_INTENT is required');
+  assert(expectedSkillPage, 'BROWSER_BUSINESS_EXPECT_SKILL_PAGE is required');
+  assert(expectedRiskAction, 'BROWSER_BUSINESS_EXPECT_RISK_ACTION is required');
+  assert(evidenceFile, 'BROWSER_BUSINESS_EVIDENCE_FILE is required');
+  assert(Array.isArray(assertions), 'BROWSER_BUSINESS_ASSERTIONS must be a JSON array');
+  assert(
+    assertions.length > 0,
+    'BROWSER_BUSINESS_ASSERTIONS must include at least one side-effect assertion',
+  );
 
-if (!existsSync(skillPacksDir)) {
-  throw new Error(`BROWSER_BUSINESS_SKILL_PACKS_DIR does not exist: ${skillPacksDir}`);
-}
+  for (const [index, item] of assertions.entries()) {
+    assert(item && typeof item === 'object', `Assertion ${index} must be an object`);
+    assert(typeof item.code === 'string' && item.code, `Assertion ${index} requires code`);
+    assert(
+      Object.hasOwn(item, 'equals'),
+      `Assertion ${item.name || index} requires an equals field`,
+    );
+  }
 
-if (!Array.isArray(assertions)) {
-  throw new Error('BROWSER_BUSINESS_ASSERTIONS must be a JSON array when provided');
-}
-
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
+  const skillPacks = loadValidatedSkillPacks(skillPacksDir);
+  const expectedPack = skillPacks.find(({ pack }) => pack.page === expectedSkillPage);
+  assert(
+    expectedPack,
+    `BROWSER_BUSINESS_EXPECT_SKILL_PAGE "${expectedSkillPage}" was not found in ${skillPacksDir}`,
+  );
+  const expectedWorkflow = expectedPack.pack.workflows.find(
+    (workflow) => workflow.intent === intent,
+  );
+  assert(
+    expectedWorkflow,
+    `BROWSER_BUSINESS_DEMO_INTENT "${intent}" was not found in skill page ${expectedSkillPage}`,
+  );
+  assert(
+    expectedWorkflow.steps.some(
+      (step) =>
+        step.type === 'risk_gate' &&
+        (step.id === expectedRiskAction ||
+          step.riskAction === expectedRiskAction ||
+          step.risk === expectedRiskAction),
+    ),
+    `BROWSER_BUSINESS_EXPECT_RISK_ACTION "${expectedRiskAction}" did not match a risk_gate in workflow ${intent}`,
+  );
 }
 
 function valuesEqual(actual, expected) {

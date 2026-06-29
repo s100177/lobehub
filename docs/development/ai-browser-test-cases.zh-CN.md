@@ -81,6 +81,21 @@ BROWSER_BUSINESS_DEMO_URL=https://your-business-system.example/path \
   BROWSER_BUSINESS_EXPECT_RISK_ACTION=your_risk_gate_step_id \
   BROWSER_BUSINESS_ASSERTIONS='[{"name":"未提交审批","code":"document.body.dataset.submitted","equals":null}]' \
   BROWSER_BUSINESS_EVIDENCE_FILE=.omx/artifacts/browser-business-demo.json \
+  BROWSER_BUSINESS_PREFLIGHT=1 \
+  pnpm test:browser-business-demo
+```
+
+真实执行：
+
+```bash
+BROWSER_BUSINESS_DEMO_URL=https://your-business-system.example/path \
+  BROWSER_BUSINESS_SKILL_PACKS_DIR=/path/to/your/skill-packs \
+  BROWSER_BUSINESS_DEMO_INPUTS='{"department":"研发部","reason":"客户现场支持"}' \
+  BROWSER_BUSINESS_DEMO_INTENT=your_workflow_intent \
+  BROWSER_BUSINESS_EXPECT_SKILL_PAGE=your_page_id \
+  BROWSER_BUSINESS_EXPECT_RISK_ACTION=your_risk_gate_step_id \
+  BROWSER_BUSINESS_ASSERTIONS='[{"name":"未提交审批","code":"document.body.dataset.submitted","equals":null}]' \
+  BROWSER_BUSINESS_EVIDENCE_FILE=.omx/artifacts/browser-business-demo.json \
   pnpm test:browser-business-demo
 ```
 
@@ -95,6 +110,7 @@ BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE=.omx/artifacts/browser-business-demo.jso
 
 - 必须显式提供 `BROWSER_BUSINESS_DEMO_URL`，否则脚本失败。
 - 必须显式提供 `BROWSER_BUSINESS_SKILL_PACKS_DIR`，否则脚本失败。
+- `BROWSER_BUSINESS_PREFLIGHT=1` 必须能在不启动浏览器时通过配置检查。
 - 页面必须匹配外部技能包。
 - 证据文件必须包含 `authorizationGate`，证明未传 `authorized: true` 时服务端停在 `waiting_user_authorization`，不会执行页面动作。
 - 计划必须来自 `skill_pack`。

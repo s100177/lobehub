@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const defaultSkillPackDir = path.resolve(repoRoot, 'examples/browser-skill-packs');
@@ -216,6 +216,10 @@ function validateSkillPackData(pack, label) {
   }
 }
 
+export function readSkillPack(file) {
+  return JSON.parse(readFileSync(file, 'utf8'));
+}
+
 function validateSkillPack(file) {
   const pack = JSON.parse(readFileSync(file, 'utf8'));
   validateSkillPackData(pack, path.relative(repoRoot, file));
@@ -358,15 +362,27 @@ function runSelfTests() {
   );
 }
 
-runSelfTests();
+export function validateSkillPackDirectory(directory = skillPackDir) {
+  runSelfTests();
 
-assert(statSync(skillPackDir).isDirectory(), `${skillPackDir} must be a directory`);
+  assert(statSync(directory).isDirectory(), `${directory} must be a directory`);
 
-const files = listJsonFiles(skillPackDir);
-assert(files.length > 0, `No skill packs found in ${skillPackDir}`);
+  const files = listJsonFiles(directory);
+  assert(files.length > 0, `No skill packs found in ${directory}`);
 
-for (const file of files) validateSkillPack(file);
+  for (const file of files) validateSkillPack(file);
 
-console.log(
-  `Browser skill pack verification passed for ${files.length} file(s) in ${skillPackDir}`,
-);
+  return files;
+}
+
+export function loadValidatedSkillPacks(directory = skillPackDir) {
+  const files = validateSkillPackDirectory(directory);
+  return files.map((file) => ({ file, pack: readSkillPack(file) }));
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const files = validateSkillPackDirectory(skillPackDir);
+  console.log(
+    `Browser skill pack verification passed for ${files.length} file(s) in ${skillPackDir}`,
+  );
+}
