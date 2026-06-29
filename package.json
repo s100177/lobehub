@@ -112,6 +112,7 @@
     "test:browser-business-demo": "node scripts/verify-browser-business-demo.mjs",
     "test:browser-business-demo-evidence": "node scripts/run-browser-business-demo-evidence.mjs",
     "test:browser-business-demo-local": "node scripts/verify-browser-business-demo-local.mjs",
+    "test:browser-business-evidence-bundle": "node scripts/verify-browser-business-evidence-bundle.mjs",
     "test:browser-docker-ui-e2e": "node scripts/verify-browser-docker-ui-e2e.mjs",
     "test:browser-real-smoke": "node scripts/verify-browser-real-smoke.mjs",
     "test:browser-release-gate": "node scripts/verify-browser-release-gate.mjs",

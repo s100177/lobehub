@@ -5,6 +5,10 @@ import path from 'node:path';
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
 const envFile = process.env.BROWSER_BUSINESS_ENV_FILE;
+const bundleVerifier = path.resolve(
+  repoRoot,
+  'scripts/verify-browser-business-evidence-bundle.mjs',
+);
 const verifier = path.resolve(repoRoot, 'scripts/verify-browser-business-demo.mjs');
 
 assert(envFile, 'BROWSER_BUSINESS_ENV_FILE is required');
@@ -15,7 +19,21 @@ assert(existsSync(envFilePath), `BROWSER_BUSINESS_ENV_FILE does not exist: ${env
 const fileEnv = readEnvFile(envFilePath);
 const evidenceFile =
   process.env.BROWSER_BUSINESS_EVIDENCE_FILE || fileEnv.BROWSER_BUSINESS_EVIDENCE_FILE;
+const evidenceSummaryFile =
+  process.env.BROWSER_BUSINESS_EVIDENCE_SUMMARY_FILE ||
+  fileEnv.BROWSER_BUSINESS_EVIDENCE_SUMMARY_FILE;
+const preflightReportFile =
+  process.env.BROWSER_BUSINESS_PREFLIGHT_REPORT_FILE ||
+  fileEnv.BROWSER_BUSINESS_PREFLIGHT_REPORT_FILE;
 assert(evidenceFile, 'BROWSER_BUSINESS_EVIDENCE_FILE is required in env or env file');
+assert(
+  evidenceSummaryFile,
+  'BROWSER_BUSINESS_EVIDENCE_SUMMARY_FILE is required in env or env file',
+);
+assert(
+  preflightReportFile,
+  'BROWSER_BUSINESS_PREFLIGHT_REPORT_FILE is required in env or env file',
+);
 
 await runVerifier('Preflight browser business demo configuration', {
   BROWSER_BUSINESS_PREFLIGHT: '1',
@@ -26,6 +44,8 @@ await runVerifier('Run browser business demo and write evidence', {});
 await runVerifier('Validate browser business demo evidence', {
   BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE: evidenceFile,
 });
+
+await runBundleVerifier('Validate browser business demo evidence bundle');
 
 console.log(`Browser business demo evidence pipeline passed for ${envFilePath}`);
 
@@ -69,6 +89,32 @@ function runVerifier(name, env) {
         ...process.env,
         BROWSER_BUSINESS_ENV_FILE: envFilePath,
         ...env,
+      },
+      stdio: 'inherit',
+    });
+
+    child.once('error', reject);
+    child.once('exit', (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+
+      reject(new Error(`${name} failed with ${signal || `exit code ${code}`}`));
+    });
+  });
+}
+
+function runBundleVerifier(name) {
+  return new Promise((resolve, reject) => {
+    console.log(`\n[browser-business-demo-evidence] ${name}`);
+    const child = spawn(process.execPath, [bundleVerifier], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        BROWSER_BUSINESS_EVIDENCE_FILE: evidenceFile,
+        BROWSER_BUSINESS_EVIDENCE_SUMMARY_FILE: evidenceSummaryFile,
+        BROWSER_BUSINESS_PREFLIGHT_REPORT_FILE: preflightReportFile,
       },
       stdio: 'inherit',
     });

@@ -124,7 +124,7 @@ BROWSER_BUSINESS_ENV_FILE=/path/to/browser-business-demo.env \
   pnpm test:browser-business-demo-evidence
 ```
 
-该命令会依次执行不访问目标 URL 的预检、真实业务演示、evidence validate，并写出 preflight report、完整 evidence 和 summary。也可以分步执行，先跑预检：
+该命令会依次执行不访问目标 URL 的预检、真实业务演示、evidence validate 和 evidence bundle 校验，并写出 preflight report、完整 evidence 和 summary。也可以分步执行，先跑预检：
 
 ```bash
 BROWSER_BUSINESS_ENV_FILE=/path/to/browser-business-demo.env \
@@ -175,7 +175,16 @@ BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE=.omx/artifacts/browser-business-demo.jso
   pnpm test:browser-business-demo
 ```
 
-这个脚本不会默认跑本地 fixture。它要求接入方提供真实 URL 和技能包目录，验证技能包匹配、计划生成、安全步骤执行和风险门阻塞。`BROWSER_BUSINESS_PREFLIGHT=1` 只校验环境变量、技能包目录、期望 page、workflow intent、首个 risk gate、断言结构，以及 workflow 中所有 `action.inputKey` 是否都能在 `BROWSER_BUSINESS_DEMO_INPUTS` 找到非空字符串，不启动浏览器、不访问真实业务系统。预检时如果提供 `BROWSER_BUSINESS_PREFLIGHT_REPORT_FILE`，脚本会写出机器可读报告，包含目标 URL、技能包 page、workflow intent、首个风险门、输入 key、断言数和 `targetAccessed:false`。`BROWSER_BUSINESS_EXPECT_RISK_ACTION` 必须匹配 workflow 中第一个 `risk_gate` 的 `id`、`riskAction` 或 `risk`，因为真实执行会在第一个风险门停止。`BROWSER_BUSINESS_ASSERTIONS` 是真实 evidence 的必填只读 JS 断言数组，用于证明风险门后页面没有出现提交、购买、支付、删除等副作用。可选的 `BROWSER_BUSINESS_EVIDENCE_FILE` 会写入结构化 JSON 证据，包含 `verifierVersion`、`authorizationGate`、`riskGateStep`、执行事件和断言结果，便于审计真实业务演示。可选的 `BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE` 只校验证据文件，不启动浏览器。校验证据时如果提供 `BROWSER_BUSINESS_EVIDENCE_SUMMARY_FILE`，脚本会额外写出机器可读摘要，包含目标 URL、技能包 page、计划来源、风险门 id、完成 / 阻断事件数、断言数和 `passed: true`。
+单独校验三份证据文件是否一致：
+
+```bash
+BROWSER_BUSINESS_PREFLIGHT_REPORT_FILE=.omx/artifacts/browser-business-demo-preflight.json \
+  BROWSER_BUSINESS_EVIDENCE_FILE=.omx/artifacts/browser-business-demo.json \
+  BROWSER_BUSINESS_EVIDENCE_SUMMARY_FILE=.omx/artifacts/browser-business-demo-summary.json \
+  pnpm test:browser-business-evidence-bundle
+```
+
+这个脚本不会默认跑本地 fixture。它要求接入方提供真实 URL 和技能包目录，验证技能包匹配、计划生成、安全步骤执行和风险门阻塞。`BROWSER_BUSINESS_PREFLIGHT=1` 只校验环境变量、技能包目录、期望 page、workflow intent、首个 risk gate、断言结构，以及 workflow 中所有 `action.inputKey` 是否都能在 `BROWSER_BUSINESS_DEMO_INPUTS` 找到非空字符串，不启动浏览器、不访问真实业务系统。预检时如果提供 `BROWSER_BUSINESS_PREFLIGHT_REPORT_FILE`，脚本会写出机器可读报告，包含目标 URL、技能包 page、workflow intent、首个风险门、输入 key、断言数和 `targetAccessed:false`。`BROWSER_BUSINESS_EXPECT_RISK_ACTION` 必须匹配 workflow 中第一个 `risk_gate` 的 `id`、`riskAction` 或 `risk`，因为真实执行会在第一个风险门停止。`BROWSER_BUSINESS_ASSERTIONS` 是真实 evidence 的必填只读 JS 断言数组，用于证明风险门后页面没有出现提交、购买、支付、删除等副作用。可选的 `BROWSER_BUSINESS_EVIDENCE_FILE` 会写入结构化 JSON 证据，包含 `verifierVersion`、`authorizationGate`、`riskGateStep`、执行事件和断言结果，便于审计真实业务演示。可选的 `BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE` 只校验证据文件，不启动浏览器。校验证据时如果提供 `BROWSER_BUSINESS_EVIDENCE_SUMMARY_FILE`，脚本会额外写出机器可读摘要，包含目标 URL、技能包 page、计划来源、风险门 id、完成 / 阻断事件数、断言数和 `passed: true`。`pnpm test:browser-business-evidence-bundle` 会校验 preflight report、完整 evidence 和 summary 的目标 URL、技能包 page、workflow、风险门、事件数和断言数一致。
 
 ### 3.2 页面状态 inspect
 

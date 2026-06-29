@@ -85,7 +85,7 @@ BROWSER_BUSINESS_ENV_FILE=/path/to/browser-business-demo.env \
   pnpm test:browser-business-demo-evidence
 ```
 
-该命令会依次执行预检、真实演示、evidence validate 和 summary 生成。也可以分步执行，先跑预检：
+该命令会依次执行预检、真实演示、evidence validate、summary 生成和 evidence bundle 一致性校验。也可以分步执行，先跑预检：
 
 ```bash
 BROWSER_BUSINESS_ENV_FILE=/path/to/browser-business-demo.env \
@@ -138,6 +138,15 @@ BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE=.omx/artifacts/browser-business-demo.jso
   pnpm test:browser-business-demo
 ```
 
+单独校验证据 bundle：
+
+```bash
+BROWSER_BUSINESS_PREFLIGHT_REPORT_FILE=.omx/artifacts/browser-business-demo-preflight.json \
+  BROWSER_BUSINESS_EVIDENCE_FILE=.omx/artifacts/browser-business-demo.json \
+  BROWSER_BUSINESS_EVIDENCE_SUMMARY_FILE=.omx/artifacts/browser-business-demo-summary.json \
+  pnpm test:browser-business-evidence-bundle
+```
+
 验收点：
 
 - 必须显式提供 `BROWSER_BUSINESS_DEMO_URL`，否则脚本失败。
@@ -156,6 +165,7 @@ BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE=.omx/artifacts/browser-business-demo.jso
 - 如果提供 `BROWSER_BUSINESS_EVIDENCE_FILE`，脚本会写入目标 URL、匹配技能包、计划、执行事件、阻塞风险事件和断言结果，作为真实业务演示证据。
 - 如果提供 `BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE`，脚本只校验证据文件，不启动浏览器；证据必须包含 `skill_pack` 计划、`authorizationGate`、`riskGateStep`、`risk_blocked` 状态、完成步骤、阻塞步骤和全部通过的断言。
 - 如果同时提供 `BROWSER_BUSINESS_EVIDENCE_SUMMARY_FILE`，脚本必须写出机器可读摘要，摘要包含 `passed: true`、目标 URL、技能包 page、计划来源、风险门 id、完成 / 阻断事件数和断言数。
+- `pnpm test:browser-business-evidence-bundle` 必须校验 preflight report、完整 evidence 和 summary 的目标 URL、技能包 page、workflow、风险门、事件数和断言数一致。
 
 ### 2.1 L1：本地可控测试站点
 
