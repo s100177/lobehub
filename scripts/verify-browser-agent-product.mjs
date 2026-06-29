@@ -483,6 +483,13 @@ try {
       expenseExecution.executionEvents,
     )}`,
   );
+  assert(
+    expenseExecution.executionState?.blockedStepId === 'select_department' &&
+      expenseExecution.executionState?.phase === 'paused_for_input',
+    `Expected expense execution cursor to pause on select_department, got ${JSON.stringify(
+      expenseExecution.executionState,
+    )}`,
+  );
   const expenseSubmitted = await request(
     '/evaluate',
     { code: 'document.body.dataset.submitted' },
@@ -521,6 +528,16 @@ try {
       completedExpenseExecution.executionEvents,
     )}`,
   );
+  assert(
+    completedExpenseExecution.executionState?.completedStepIds?.includes('select_department') &&
+      completedExpenseExecution.executionState?.completedStepIds?.includes('fill_reason') &&
+      completedExpenseExecution.executionState?.blockedStepId === 'risk_gate' &&
+      completedExpenseExecution.executionState?.cursor === 4 &&
+      completedExpenseExecution.executionState?.phase === 'risk_blocked',
+    `Expected expense execution cursor to stop at risk gate after safe steps, got ${JSON.stringify(
+      completedExpenseExecution.executionState,
+    )}`,
+  );
   const expenseValues = await request(
     '/evaluate',
     {
@@ -537,6 +554,18 @@ try {
       expenseValues.result?.reason === '客户现场紧急支持' &&
       expenseValues.result?.submitted === undefined,
     `Expected expense form filled but not submitted, got ${JSON.stringify(expenseValues.result)}`,
+  );
+  const repeatedExpenseExecution = await request(
+    '/execute-plan',
+    { maxSteps: 5 },
+    'verify-agent-expense',
+  );
+  assert(
+    repeatedExpenseExecution.executionEvents?.[0]?.id === 'risk_gate' &&
+      repeatedExpenseExecution.executionEvents?.[0]?.status === 'blocked',
+    `Expected repeated expense execution to resume at risk gate, got ${JSON.stringify(
+      repeatedExpenseExecution.executionEvents,
+    )}`,
   );
 
   await request(

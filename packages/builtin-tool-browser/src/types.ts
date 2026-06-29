@@ -41,6 +41,7 @@ export interface SubmitParams {
 export interface ExecutePlanParams {
   inputs?: Record<string, string>;
   maxSteps?: number;
+  restart?: boolean;
   timeout?: number;
 }
 
@@ -88,6 +89,23 @@ export interface BrowserPlanExecutionEvent {
   summary: string;
   target?: string;
   timestamp: number;
+}
+
+export interface BrowserExecutionState {
+  blockedStepId?: string;
+  completedStepIds: string[];
+  currentStepId?: string;
+  cursor: number;
+  phase:
+    | 'acting'
+    | 'completed'
+    | 'paused_for_input'
+    | 'paused_for_login'
+    | 'risk_blocked'
+    | 'waiting_authorization';
+  planIntent?: string;
+  planKey?: string;
+  updatedAt: number;
 }
 
 export interface BrowserPageAction {
@@ -240,6 +258,7 @@ export interface BrowserState {
   blocked?: boolean;
   embeddable?: boolean;
   executionEvents?: BrowserPlanExecutionEvent[];
+  executionState?: BrowserExecutionState;
   fallbackReason?: string;
   iframeUrl?: string;
   mode?: 'iframe' | 'remote';

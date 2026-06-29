@@ -693,7 +693,19 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   const gaps = pageState?.gaps?.slice(0, 3) ?? [];
   const confirmationPoints = pageState?.confirmationPoints?.slice(0, 2) ?? [];
   const plan = currentState.plan;
-  const planSteps = plan?.steps?.slice(0, 6) ?? [];
+  const executionState = currentState.executionState;
+  const planSteps =
+    plan?.steps?.slice(0, 6).map((step) => ({
+      ...step,
+      status:
+        executionState?.blockedStepId === step.id
+          ? 'blocked'
+          : executionState?.completedStepIds.includes(step.id)
+            ? 'completed'
+            : executionState?.currentStepId === step.id
+              ? 'current'
+              : step.status,
+    })) ?? [];
   const isControlling = taskState ? controllingStates.has(taskState) : false;
   const activeClarification = pageState?.clarifications?.[0] ?? deriveClarification(pageState);
   const targetHighlight = pageState?.targetHighlight;
@@ -718,9 +730,9 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     pageState?.primaryActions?.[0]?.text ||
     recentEvents.find((event) => event.target)?.target;
 
-  const inspectBeforeContinue = async (nextTaskState: BrowserTaskState) => {
+  const continueExecutionAfterInspect = async () => {
     try {
-      const res = await fetch('/api/browser/action', {
+      const inspectRes = await fetch('/api/browser/action', {
         body: JSON.stringify({
           action: 'inspect',
           params: {},
@@ -730,10 +742,27 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
         headers: { 'Content-Type': 'application/json' },
         method: 'POST',
       });
-      const data = await res.json().catch(() => undefined);
-      if (!res.ok) throw new Error(data?.error || `Inspect failed with HTTP ${res.status}`);
+      const inspected = await inspectRes.json().catch(() => undefined);
+      if (!inspectRes.ok)
+        throw new Error(inspected?.error || `Inspect failed with HTTP ${inspectRes.status}`);
 
-      setLocalState({ ...data, sessionId, taskState: nextTaskState });
+      setLocalState({ ...inspected, sessionId, taskState: 'ai_controlling' });
+
+      const executeRes = await fetch('/api/browser/action', {
+        body: JSON.stringify({
+          action: 'executePlan',
+          params: { maxSteps: 4 },
+          sessionId,
+        }),
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+      const executed = await executeRes.json().catch(() => undefined);
+      if (!executeRes.ok)
+        throw new Error(executed?.error || `Execute plan failed with HTTP ${executeRes.status}`);
+
+      setLocalState({ ...executed, sessionId });
     } catch (err) {
       appendLocalEvent(err instanceof Error ? err.message : String(err), 'error');
       updateTaskState('failed');
@@ -778,7 +807,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     updateTaskState('paused_by_user_intervention');
   };
 
-  const continueAfterPause = () => inspectBeforeContinue('ai_controlling');
+  const continueAfterPause = () => continueExecutionAfterInspect();
 
   const submitClarification = (prompt?: BrowserClarificationPrompt) => {
     const answer = selectedClarification || clarificationText || prompt?.defaultValue;
@@ -857,6 +886,13 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
               </span>
             )}
             {needsUserAttention && <span className={styles.pill}>needs attention</span>}
+            {executionState?.phase && (
+              <span className={styles.pill}>phase: {executionState.phase}</span>
+            )}
+            {executionState && <span className={styles.pill}>cursor: {executionState.cursor}</span>}
+            {executionState?.currentStepId && (
+              <span className={styles.pill}>step: {executionState.currentStepId}</span>
+            )}
           </div>
         </div>
       )}

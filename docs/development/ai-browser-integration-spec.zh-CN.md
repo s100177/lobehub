@@ -69,6 +69,8 @@
 - workflow step 可以声明 `action.selector`、`action.inputKey`、`action.value`、`action.expectedText`。
 - 运行时只按声明式 action 执行安全的 `fill`、`select`、`click`、`verify`；风险词命中的点击会被阻塞。
 - 缺少 `inputKey` 对应用户输入时，执行暂停并要求用户补充，不猜测敏感字段。
+- `executePlan` 会按 session 记录 `executionState.cursor` 和 `completedStepIds`；暂停后再次执行默认从阻塞步骤继续。
+- 如果业务需要从头重跑 workflow，调用 `executePlan` 时显式传入 `restart: true`。
 
 ### 3.2 页面状态 inspect
 

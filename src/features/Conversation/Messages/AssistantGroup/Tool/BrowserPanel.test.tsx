@@ -180,6 +180,14 @@ describe('BrowserPanel dual mode rendering', () => {
   it('renders page intelligence signals for authorization and execution planning', () => {
     const state: BrowserState = {
       embeddable: false,
+      executionState: {
+        blockedStepId: 'risk_gate',
+        completedStepIds: ['inspect'],
+        cursor: 1,
+        currentStepId: 'risk_gate',
+        phase: 'risk_blocked',
+        updatedAt: 1,
+      },
       mode: 'remote',
       taskState: 'waiting_user_authorization',
       pageState: {
@@ -225,8 +233,13 @@ describe('BrowserPanel dual mode rendering', () => {
     expect(screen.getByText('Needs login')).toBeInTheDocument();
     expect(screen.getByText('Required')).toBeInTheDocument();
     expect(screen.getByText('Needs user input')).toBeInTheDocument();
+    expect(screen.getByText('phase: risk_blocked')).toBeInTheDocument();
+    expect(screen.getByText('cursor: 1')).toBeInTheDocument();
+    expect(screen.getByText('step: risk_gate')).toBeInTheDocument();
     expect(screen.getAllByText('读取配置并停在确认前').length).toBeGreaterThan(0);
     expect(screen.getByLabelText('Browser agent plan')).toHaveTextContent('页面技能包 workflow');
+    expect(screen.getByLabelText('Browser agent plan')).toHaveTextContent('completed');
+    expect(screen.getByLabelText('Browser agent plan')).toHaveTextContent('blocked');
     expect(screen.getByText('读取当前配置、价格和登录态')).toBeInTheDocument();
     expect(
       screen.getByText('停在购买、支付或提交订单前等待用户确认 (purchase)'),
@@ -388,17 +401,47 @@ describe('BrowserPanel dual mode rendering', () => {
   });
 
   it('pauses takeover when the user intervenes and re-inspects before continuing', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      json: async () => ({
-        embeddable: false,
-        mode: 'remote',
-        pageState: { pageType: 'dashboard' },
-        title: 'Dashboard',
-        url: 'https://example.com/dashboard',
-      }),
-      ok: true,
-      status: 200,
-    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        json: async () => ({
+          embeddable: false,
+          mode: 'remote',
+          pageState: { pageType: 'dashboard' },
+          taskState: 'ai_controlling',
+          title: 'Dashboard',
+          url: 'https://example.com/dashboard',
+        }),
+        ok: true,
+        status: 200,
+      })
+      .mockResolvedValueOnce({
+        json: async () => ({
+          embeddable: false,
+          executionEvents: [
+            {
+              action: 'verify',
+              id: 'verify_state',
+              status: 'completed',
+              summary: '重新读取后继续执行',
+              timestamp: 1,
+            },
+          ],
+          executionState: {
+            completedStepIds: ['verify_state'],
+            cursor: 2,
+            phase: 'completed',
+            updatedAt: 1,
+          },
+          mode: 'remote',
+          pageState: { pageType: 'dashboard' },
+          taskState: 'completed',
+          title: 'Dashboard',
+          url: 'https://example.com/dashboard',
+        }),
+        ok: true,
+        status: 200,
+      });
     vi.stubGlobal('fetch', fetchMock);
 
     render(
@@ -426,7 +469,7 @@ describe('BrowserPanel dual mode rendering', () => {
     fireEvent.click(screen.getByText('重新读取并继续'));
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith('/api/browser/action', {
+      expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/browser/action', {
         body: JSON.stringify({
           action: 'inspect',
           params: {},
@@ -437,10 +480,23 @@ describe('BrowserPanel dual mode rendering', () => {
         method: 'POST',
       });
     });
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/browser/action', {
+        body: JSON.stringify({
+          action: 'executePlan',
+          params: { maxSteps: 4 },
+          sessionId: 'session-pause',
+        }),
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+    });
 
     await waitFor(() => {
-      expect(screen.getByText('Task State: ai_controlling')).toBeInTheDocument();
+      expect(screen.getByText('Task State: completed')).toBeInTheDocument();
     });
+    expect(screen.getByText('重新读取后继续执行')).toBeInTheDocument();
   });
 
   it('pauses takeover when the remote viewer reports user input from inside the iframe', async () => {

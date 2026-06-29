@@ -176,6 +176,7 @@ scripts/verify-browser-agent-product.mjs
 - 没有在用户选择前自动选择规格。
 - 用户选择进入任务上下文。
 - 继续后重新 inspect 页面。
+- 继续执行时从暂停步骤恢复，不重复已经完成的安全步骤。
 
 ### 3.3 `/kiki-cloud-buy-risk`
 

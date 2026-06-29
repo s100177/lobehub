@@ -89,6 +89,7 @@ async function getOrCreateSession(sessionId) {
       actionEvents: [],
       browser,
       context,
+      executionState: undefined,
       lastInputAt: Date.now(),
       lastUsed: Date.now(),
       page,
@@ -124,6 +125,46 @@ function recordAction(session, { action, status = 'success', summary, target }) 
       timestamp: Date.now(),
     },
   ].slice(-20);
+}
+
+function resetExecutionState(session) {
+  session.executionState = undefined;
+}
+
+function createPlanKey(pageState, plan) {
+  return [pageState.url || '', pageState.skillPack?.source || 'builtin', plan?.intent || ''].join(
+    '::',
+  );
+}
+
+function ensureExecutionState(session, pageState, plan, restart = false) {
+  const planKey = createPlanKey(pageState, plan);
+  if (!restart && session.executionState?.planKey === planKey) return session.executionState;
+
+  session.executionState = {
+    completedStepIds: [],
+    cursor: 0,
+    phase: 'acting',
+    planIntent: plan?.intent,
+    planKey,
+    updatedAt: Date.now(),
+  };
+  return session.executionState;
+}
+
+function updateExecutionState(session, patch) {
+  const previous = session.executionState || {
+    completedStepIds: [],
+    cursor: 0,
+    phase: 'acting',
+  };
+
+  session.executionState = {
+    ...previous,
+    ...patch,
+    updatedAt: Date.now(),
+  };
+  return session.executionState;
 }
 
 async function getPointerState(page, pointer) {
@@ -164,6 +205,7 @@ async function getPageState(page, options = {}) {
     url: page.url(),
     viewport: VIEWPORT,
     ...(session?.actionEvents?.length ? { actionEvents: session.actionEvents } : {}),
+    ...(session?.executionState ? { executionState: session.executionState } : {}),
     ...(pageState ? { pageState } : {}),
     ...(pageState?.plan ? { plan: pageState.plan } : {}),
     ...(pointer ? { pointer } : {}),
@@ -1658,6 +1700,7 @@ app.post('/navigate', sessionMiddleware, async (req, res) => {
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
     await page.goto(normalizedUrl, { timeout, waitUntil: 'networkidle' });
+    resetExecutionState(session);
     recordAction(session, {
       action: 'navigate',
       summary: `Opened ${normalizedUrl}`,
@@ -1684,6 +1727,7 @@ app.post('/click', sessionMiddleware, async (req, res) => {
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
     const clicked = await performSafeClick(page, selector, timeout);
+    resetExecutionState(session);
     if (clicked.blocked) {
       recordAction(session, {
         action: 'click',
@@ -1713,6 +1757,7 @@ app.post('/fill', sessionMiddleware, async (req, res) => {
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
     await performSafeFill(page, selector, text, timeout);
+    resetExecutionState(session);
     recordAction(session, { action: 'fill', summary: `Filled ${selector}`, target: selector });
     res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
@@ -1728,6 +1773,7 @@ app.post('/submit', sessionMiddleware, async (req, res) => {
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
     const submitted = await performSafeSubmit(page, selector, timeout);
+    resetExecutionState(session);
     if (submitted.blocked) {
       recordAction(session, {
         action: 'submit',
@@ -1758,6 +1804,7 @@ app.post('/scroll', sessionMiddleware, async (req, res) => {
     const { page } = session;
     await page.evaluate(({ x, y }) => window.scrollTo(x, y), { x, y });
     await page.waitForTimeout(300);
+    resetExecutionState(session);
     recordAction(session, { action: 'scroll', summary: `Scrolled to x=${x}, y=${y}` });
     res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
@@ -1799,13 +1846,17 @@ app.post('/evaluate', sessionMiddleware, async (req, res) => {
 
 app.post('/execute-plan', sessionMiddleware, async (req, res) => {
   try {
-    const { inputs = {}, maxSteps = 4, timeout = 10000 } = req.body || {};
+    const { inputs = {}, maxSteps = 4, restart = false, timeout = 10000 } = req.body || {};
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
     const executionEvents = [];
 
     let pageState = await inspectPageState(page);
     if (!pageState.loggedIn) {
+      updateExecutionState(session, {
+        blockedStepId: 'login_required',
+        phase: 'paused_for_login',
+      });
       const state = await getPageState(page, { screenshot: false, sessionId: req.sessionId });
       return res.json({
         ...state,
@@ -1822,6 +1873,10 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
 
     const plan = pageState.plan;
     if (!plan?.steps?.length) {
+      updateExecutionState(session, {
+        blockedStepId: 'plan_missing',
+        phase: 'paused_for_input',
+      });
       const state = await getPageState(page, { screenshot: false, sessionId: req.sessionId });
       return res.json({
         ...state,
@@ -1835,6 +1890,14 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
         taskState: pageState.taskState || 'failed',
       });
     }
+
+    const executionState = ensureExecutionState(session, pageState, plan, restart);
+    const startIndex = Math.min(executionState.cursor || 0, plan.steps.length);
+    updateExecutionState(session, {
+      blockedStepId: undefined,
+      currentStepId: plan.steps[startIndex]?.id,
+      phase: startIndex >= plan.steps.length ? 'completed' : 'acting',
+    });
 
     const searchField = pageState.fields?.find((field) =>
       /搜索|查询|search|query|kw|wd/i.test(`${field.label} ${field.selector}`),
@@ -1852,11 +1915,32 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
 
       return undefined;
     };
+    const markCompleted = (step, index) => {
+      const completedStepIds = [
+        ...new Set([...(session.executionState?.completedStepIds || []), step.id]),
+      ];
+      updateExecutionState(session, {
+        blockedStepId: undefined,
+        completedStepIds,
+        cursor: Math.max(session.executionState?.cursor || 0, index + 1),
+        currentStepId: plan.steps[index + 1]?.id,
+        phase: index + 1 >= plan.steps.length ? 'completed' : 'acting',
+      });
+    };
+    const markBlocked = (step, phase = 'paused_for_input') => {
+      updateExecutionState(session, {
+        blockedStepId: step.id,
+        currentStepId: step.id,
+        phase,
+      });
+    };
 
-    for (const step of plan.steps) {
+    for (const [index, step] of plan.steps.entries()) {
+      if (index < startIndex) continue;
       if (executionEvents.length >= maxSteps) break;
 
       if (step.type === 'risk_gate' || step.risk) {
+        markBlocked(step, 'risk_blocked');
         executionEvents.push(
           createExecutionEvent({
             id: step.id,
@@ -1868,6 +1952,7 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
       }
 
       if (step.type === 'ask') {
+        markBlocked(step, 'paused_for_input');
         executionEvents.push(
           createExecutionEvent({
             id: step.id,
@@ -1892,7 +1977,11 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
             target: step.action.selector,
           }),
         );
-        if (!found) break;
+        if (!found) {
+          markBlocked(step, 'paused_for_input');
+          break;
+        }
+        markCompleted(step, index);
         continue;
       }
 
@@ -1906,6 +1995,7 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
             summary: step.title,
           }),
         );
+        markCompleted(step, index);
         continue;
       }
 
@@ -1913,6 +2003,7 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
         if (step.action?.selector) {
           const value = resolveStepValue(step);
           if (!value) {
+            markBlocked(step, 'paused_for_input');
             executionEvents.push(
               createExecutionEvent({
                 action: 'fill',
@@ -1940,10 +2031,12 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
               target: step.action.selector,
             }),
           );
+          markCompleted(step, index);
           continue;
         }
 
         if (!queryText || !searchField?.selector) {
+          markBlocked(step, 'paused_for_input');
           executionEvents.push(
             createExecutionEvent({
               action: 'fill',
@@ -1971,12 +2064,14 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
             target: searchField.selector,
           }),
         );
+        markCompleted(step, index);
         continue;
       }
 
       if (step.type === 'select') {
         const value = resolveStepValue(step);
         if (!step.action?.selector || !value) {
+          markBlocked(step, 'paused_for_input');
           executionEvents.push(
             createExecutionEvent({
               action: 'select',
@@ -2004,6 +2099,7 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
             target: step.action.selector,
           }),
         );
+        markCompleted(step, index);
         continue;
       }
 
@@ -2011,6 +2107,7 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
         if (step.action?.selector) {
           const clicked = await performSafeClick(page, step.action.selector, timeout);
           if (clicked.blocked) {
+            markBlocked(step, 'risk_blocked');
             recordAction(session, {
               action: 'click',
               status: 'blocked',
@@ -2048,11 +2145,13 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
               target: step.action.selector,
             }),
           );
+          markCompleted(step, index);
           continue;
         }
 
         const target = searchAction?.selector || searchField?.selector;
         if (!target) {
+          markBlocked(step, 'paused_for_input');
           executionEvents.push(
             createExecutionEvent({
               action: 'click',
@@ -2066,6 +2165,7 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
 
         const submitted = await performSafeSubmit(page, target, timeout);
         if (submitted.blocked) {
+          markBlocked(step, 'risk_blocked');
           recordAction(session, {
             action: 'submit',
             status: 'blocked',
@@ -2104,9 +2204,11 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
             target,
           }),
         );
+        markCompleted(step, index);
         continue;
       }
 
+      markCompleted(step, index);
       executionEvents.push(
         createExecutionEvent({
           id: step.id,
@@ -2118,13 +2220,16 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
 
     const state = await getPageState(page, { screenshot: false, sessionId: req.sessionId });
     const stopped = executionEvents.find((event) => event.status === 'blocked');
-    const completedAllSafeSteps = !stopped && executionEvents.length > 0;
+    const completedAllSafeSteps = !stopped && session.executionState?.cursor >= plan.steps.length;
 
     res.json({
       ...state,
       executionEvents,
+      executionState: session.executionState,
       taskState: stopped
-        ? state.taskState || 'asking_clarification'
+        ? session.executionState?.phase === 'risk_blocked'
+          ? 'risk_blocked'
+          : state.taskState || 'asking_clarification'
         : completedAllSafeSteps
           ? 'completed'
           : state.taskState || 'ai_controlling',
