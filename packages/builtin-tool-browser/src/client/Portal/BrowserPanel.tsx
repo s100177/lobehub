@@ -700,6 +700,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   const [selectedClarification, setSelectedClarification] = useState<string>();
   const [selectedSuggestedTask, setSelectedSuggestedTask] = useState<BrowserSuggestedTask>();
   const [riskDecision, setRiskDecision] = useState<'allowed_manual' | 'cancelled' | 'manual'>();
+  const [riskInspectedForResume, setRiskInspectedForResume] = useState(false);
 
   useEffect(() => {
     setLocalState(state);
@@ -710,6 +711,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     setSelectedClarification(undefined);
     setSelectedSuggestedTask(undefined);
     setRiskDecision(undefined);
+    setRiskInspectedForResume(false);
   }, [state]);
 
   const currentState = localState;
@@ -910,7 +912,10 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   };
 
   const continueExecutionAfterInspect = async (
-    proof: Pick<ExecutePlanParams, 'inspectedAfterIntervention' | 'inspectedAfterPause'>,
+    proof: Pick<
+      ExecutePlanParams,
+      'inspectedAfterIntervention' | 'inspectedAfterPause' | 'inspectedAfterRisk'
+    >,
   ) => {
     try {
       const inspectRes = await fetch('/api/browser/action', {
@@ -959,6 +964,38 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
       return;
     }
 
+    if (riskInspectedForResume) {
+      setRiskInspectedForResume(false);
+      appendLocalEvent('User authorized AI browser control after risk re-inspection.', 'success');
+      try {
+        const res = await fetch('/api/browser/action', {
+          body: JSON.stringify({
+            action: 'executePlan',
+            params: { ...buildExecutePlanParams(), inspectedAfterRisk: true },
+            sessionId,
+          }),
+          cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          method: 'POST',
+        });
+        const data = await res.json().catch(() => undefined);
+        if (!res.ok) throw new Error(data?.error || `Execute plan failed with HTTP ${res.status}`);
+
+        setLocalState({ ...data, sessionId });
+        setClarificationText('');
+        setSelectedClarification(undefined);
+      } catch (err) {
+        appendLocalEvent(err instanceof Error ? err.message : String(err), 'error');
+        updateTaskState('failed');
+      }
+      return;
+    }
+
+    if (taskState === 'risk_blocked' && executionState?.phase === 'risk_blocked') {
+      await continueExecutionAfterInspect({ inspectedAfterRisk: true });
+      return;
+    }
+
     try {
       const res = await fetch('/api/browser/action', {
         body: JSON.stringify({
@@ -990,6 +1027,31 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
 
   const continueAfterPause = () =>
     continueExecutionAfterInspect({ inspectedAfterIntervention: true });
+
+  const returnToPlanAfterRisk = async () => {
+    try {
+      const inspectRes = await fetch('/api/browser/action', {
+        body: JSON.stringify({
+          action: 'inspect',
+          params: {},
+          sessionId,
+        }),
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+      const inspected = await inspectRes.json().catch(() => undefined);
+      if (!inspectRes.ok)
+        throw new Error(inspected?.error || `Inspect failed with HTTP ${inspectRes.status}`);
+
+      setLocalState({ ...inspected, sessionId, taskState: 'waiting_user_authorization' });
+      setRiskInspectedForResume(true);
+      appendLocalEvent('Re-inspected page before returning from risk gate to plan.', 'success');
+    } catch (err) {
+      appendLocalEvent(err instanceof Error ? err.message : String(err), 'error');
+      updateTaskState('failed');
+    }
+  };
 
   const selectSuggestedTask = (task: BrowserSuggestedTask) => {
     setSelectedSuggestedTask(task);
@@ -1399,7 +1461,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
             <button
               className={styles.secondaryButton}
               type="button"
-              onClick={() => updateTaskState('waiting_user_authorization')}
+              onClick={returnToPlanAfterRisk}
             >
               回到计划
             </button>

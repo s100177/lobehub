@@ -862,6 +862,125 @@ describe('BrowserPanel dual mode rendering', () => {
     });
   });
 
+  it('inspects the page before resuming from a risk block', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        json: async () => ({
+          embeddable: false,
+          executionState: {
+            blockedStepId: 'risk_gate',
+            currentStepId: 'risk_gate',
+            cursor: 2,
+            inspectedRiskPauseVersion: 1,
+            phase: 'risk_blocked',
+            riskPauseVersion: 1,
+            updatedAt: 1,
+          },
+          mode: 'remote',
+          pageState: { pageType: 'purchase' },
+          taskState: 'risk_blocked',
+          title: 'Order',
+          url: 'https://example.com/order',
+        }),
+        ok: true,
+        status: 200,
+      })
+      .mockResolvedValueOnce({
+        json: async () => ({
+          embeddable: false,
+          executionEvents: [
+            {
+              id: 'risk_gate',
+              status: 'blocked',
+              summary: 'Execution stopped before risky step: 提交订单',
+              timestamp: 1,
+            },
+          ],
+          executionState: {
+            blockedStepId: 'risk_gate',
+            currentStepId: 'risk_gate',
+            cursor: 2,
+            phase: 'risk_blocked',
+            updatedAt: 1,
+          },
+          mode: 'remote',
+          taskState: 'risk_blocked',
+          title: 'Order',
+          url: 'https://example.com/order',
+        }),
+        ok: true,
+        status: 200,
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <BrowserPanel
+        sessionId="session-risk-card"
+        state={{
+          blocked: true,
+          embeddable: false,
+          mode: 'remote',
+          riskBlock: {
+            action: 'submit',
+            reason: 'Blocked risky submit on "提交订单"',
+            requiresUserConfirmation: true,
+            risk: 'purchase',
+            targetText: '提交订单',
+          },
+          taskState: 'risk_blocked',
+          title: 'Order',
+          url: 'https://example.com/order',
+        }}
+      />,
+    );
+
+    expect(screen.getByLabelText('Browser risk block card')).toHaveTextContent(
+      'AI will not execute it automatically',
+    );
+    expect(screen.getByText('允许本次，我手动完成')).toBeInTheDocument();
+    expect(screen.getByText('我手动处理')).toBeInTheDocument();
+    expect(screen.getByText('取消任务')).toBeInTheDocument();
+    expect(screen.getByText('Task State: risk_blocked')).toBeInTheDocument();
+    expect(screen.getByLabelText('Browser interaction mode')).toHaveTextContent('审阅模式');
+
+    fireEvent.click(screen.getByText('回到计划'));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/browser/action', {
+        body: JSON.stringify({
+          action: 'inspect',
+          params: {},
+          sessionId: 'session-risk-card',
+        }),
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+    });
+    expect(screen.getByText('Task State: waiting_user_authorization')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('帮我操作'));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/browser/action', {
+        body: JSON.stringify({
+          action: 'executePlan',
+          params: {
+            authorized: true,
+            inputs: {},
+            maxSteps: 4,
+            inspectedAfterRisk: true,
+          },
+          sessionId: 'session-risk-card',
+        }),
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+    });
+  });
+
   it('records manual risk handling as a server-side interruption', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       json: async () => ({
@@ -936,7 +1055,7 @@ describe('BrowserPanel dual mode rendering', () => {
     ).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith('/api/browser/action', {
+      expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/browser/action', {
         body: JSON.stringify({
           action: 'interrupt',
           params: {

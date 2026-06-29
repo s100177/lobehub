@@ -528,16 +528,83 @@ try {
   );
   const buyExecution = await request(
     '/execute-plan',
-    { authorized: true, maxSteps: 4 },
+    { authorized: true, intent: 'configure_before_purchase', maxSteps: 4 },
     'verify-agent-buy',
   );
   assert(
-    buyExecution.executionEvents?.some(
-      (event) => event.status === 'blocked' && /user input|risky|风险|缺/i.test(event.summary),
-    ),
-    `Expected buy execution to stop before missing input or risk, got ${JSON.stringify(
-      buyExecution.executionEvents,
+    buyExecution.taskState === 'risk_blocked' &&
+      buyExecution.executionState?.phase === 'risk_blocked' &&
+      buyExecution.executionEvents?.some(
+        (event) => event.status === 'blocked' && /risky|风险|购买|提交|支付/i.test(event.summary),
+      ),
+    `Expected buy execution to stop at risk gate, got ${JSON.stringify({
+      events: buyExecution.executionEvents,
+      state: buyExecution.executionState,
+      taskState: buyExecution.taskState,
+    })}`,
+  );
+  const directRiskResume = await request(
+    '/execute-plan',
+    { authorized: true, intent: 'configure_before_purchase', maxSteps: 4 },
+    'verify-agent-buy',
+  );
+  assert(
+    directRiskResume.taskState === 'risk_blocked' &&
+      directRiskResume.executionEvents?.some(
+        (event) => event.id === 'inspect_required_after_risk' && event.status === 'blocked',
+      ),
+    `Expected direct risk resume to require inspect, got ${JSON.stringify({
+      events: directRiskResume.executionEvents,
+      taskState: directRiskResume.taskState,
+    })}`,
+  );
+  const spoofedRiskResume = await request(
+    '/execute-plan',
+    {
+      authorized: true,
+      inspectedAfterRisk: true,
+      intent: 'configure_before_purchase',
+      maxSteps: 4,
+    },
+    'verify-agent-buy',
+  );
+  assert(
+    spoofedRiskResume.taskState === 'risk_blocked' &&
+      spoofedRiskResume.executionEvents?.some(
+        (event) => event.id === 'inspect_required_after_risk' && event.status === 'blocked',
+      ),
+    `Expected spoofed risk inspect proof to remain blocked, got ${JSON.stringify({
+      events: spoofedRiskResume.executionEvents,
+      taskState: spoofedRiskResume.taskState,
+    })}`,
+  );
+  const inspectedRisk = await request('/inspect', {}, 'verify-agent-buy');
+  assert(
+    inspectedRisk.executionState?.phase === 'risk_blocked' &&
+      inspectedRisk.executionState?.inspectedRiskPauseVersion ===
+        inspectedRisk.executionState?.riskPauseVersion,
+    `Expected inspect to cover risk pause version, got ${JSON.stringify(
+      inspectedRisk.executionState,
     )}`,
+  );
+  const inspectedRiskResume = await request(
+    '/execute-plan',
+    {
+      authorized: true,
+      inspectedAfterRisk: true,
+      intent: 'configure_before_purchase',
+      maxSteps: 4,
+    },
+    'verify-agent-buy',
+  );
+  assert(
+    !inspectedRiskResume.executionEvents?.some(
+      (event) => event.id === 'inspect_required_after_risk',
+    ),
+    `Expected inspected risk resume to pass the risk inspect guard, got ${JSON.stringify({
+      events: inspectedRiskResume.executionEvents,
+      state: inspectedRiskResume.executionState,
+    })}`,
   );
   const buyFlag = await request(
     '/evaluate',

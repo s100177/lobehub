@@ -94,10 +94,12 @@ async function getOrCreateSession(sessionId) {
       inputPauseVersion: 0,
       inspectedInputPauseVersion: 0,
       inspectedInterventionVersion: 0,
+      inspectedRiskPauseVersion: 0,
       interventionVersion: 0,
       lastInputAt: Date.now(),
       lastUsed: Date.now(),
       page,
+      riskPauseVersion: 0,
     };
     sessions.set(sessionId, session);
     return session;
@@ -246,6 +248,30 @@ function hasFreshInputPauseInspect(session) {
   return (
     (session.inspectedInputPauseVersion || 0) >= (session.inputPauseVersion || 0) &&
     (session.inputPauseVersion || 0) > 0
+  );
+}
+
+function markRiskPause(session, patch = {}) {
+  const riskPauseVersion = (session.riskPauseVersion || 0) + 1;
+  session.riskPauseVersion = riskPauseVersion;
+  updateExecutionState(session, {
+    ...patch,
+    riskPauseVersion,
+  });
+}
+
+function markRiskPauseInspected(session) {
+  if (session.executionState?.phase !== 'risk_blocked') return;
+  session.inspectedRiskPauseVersion = session.riskPauseVersion || 0;
+  updateExecutionState(session, {
+    inspectedRiskPauseVersion: session.inspectedRiskPauseVersion,
+  });
+}
+
+function hasFreshRiskPauseInspect(session) {
+  return (
+    (session.inspectedRiskPauseVersion || 0) >= (session.riskPauseVersion || 0) &&
+    (session.riskPauseVersion || 0) > 0
   );
 }
 
@@ -2264,6 +2290,7 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
       authorized = false,
       inspectedAfterPause = false,
       inspectedAfterIntervention = false,
+      inspectedAfterRisk = false,
       inputs = {},
       intent,
       maxSteps = 4,
@@ -2389,6 +2416,28 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
       });
     }
 
+    if (
+      session.executionState?.phase === 'risk_blocked' &&
+      (inspectedAfterRisk !== true || !hasFreshRiskPauseInspect(session))
+    ) {
+      const events = finalizeExecutionEvents([
+        createExecutionEvent({
+          action: 'inspect',
+          id: 'inspect_required_after_risk',
+          status: 'blocked',
+          summary:
+            'Execution stopped because risk recovery requires a fresh inspect before resume.',
+        }),
+      ]);
+      const state = await getCurrentPageState();
+      return res.json({
+        ...state,
+        executionEvents: events,
+        executionState: session.executionState,
+        taskState: 'risk_blocked',
+      });
+    }
+
     const executionState = ensureExecutionState(session, pageState, plan, restart);
     const startIndex = Math.min(executionState.cursor || 0, plan.steps.length);
     updateExecutionState(session, {
@@ -2464,6 +2513,7 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
       };
 
       if (phase === 'paused_for_input') markInputPause(session, patch);
+      else if (phase === 'risk_blocked') markRiskPause(session, patch);
       else updateExecutionState(session, patch);
     };
 
@@ -2777,6 +2827,7 @@ app.post('/inspect', sessionMiddleware, async (req, res) => {
     const { page } = session;
     markInterventionInspected(session);
     markInputPauseInspected(session);
+    markRiskPauseInspected(session);
     recordAction(session, { action: 'inspect', summary: `Inspected ${page.url()}` });
     res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {

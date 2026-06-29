@@ -81,6 +81,7 @@
 - clarification 的 `field` 会作为 `executePlan.inputs[field]` 传回运行时，建议与 workflow step 的 `action.inputKey` 保持一致。
 - 一个页面可以同时返回多个 clarification。BrowserPanel 会按队列逐项收集用户回答，展示已回答字段，并在用户确认继续规划后一次性传入 `executePlan.inputs`。
 - 从 `paused_for_input` 恢复执行前，BrowserPanel 必须先调用 `inspect`，再调用 `executePlan({ inspectedAfterPause:true })`；服务端会记录输入暂停版本，只有 `/inspect` 覆盖当前暂停版本后才允许继续，不能只伪造客户端参数。
+- 从 `risk_blocked` 回到计划或恢复执行前，BrowserPanel 必须先调用 `inspect`，再调用 `executePlan({ inspectedAfterRisk:true })`；服务端会记录风险暂停版本，只有 `/inspect` 覆盖当前风险版本后才允许继续，不能只伪造客户端参数。
 - 用户选择 `suggestedTasks` 后只会进入授权卡，不会直接执行。授权执行时可把 `suggestedTasks.intent` 作为 `executePlan.intent`，运行时优先选择匹配的 skill-pack workflow。
 
 技能包提交前必须先做静态校验：

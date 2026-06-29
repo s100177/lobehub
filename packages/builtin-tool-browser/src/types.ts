@@ -44,6 +44,7 @@ export interface ExecutePlanParams {
   inputs?: Record<string, string>;
   inspectedAfterIntervention?: boolean;
   inspectedAfterPause?: boolean;
+  inspectedAfterRisk?: boolean;
   intent?: string;
   maxSteps?: number;
   restart?: boolean;
