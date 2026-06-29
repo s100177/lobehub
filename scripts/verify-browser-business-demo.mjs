@@ -1,5 +1,13 @@
 import { spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -27,6 +35,9 @@ const inputs = process.env.BROWSER_BUSINESS_DEMO_INPUTS
 const assertions = process.env.BROWSER_BUSINESS_ASSERTIONS
   ? JSON.parse(process.env.BROWSER_BUSINESS_ASSERTIONS)
   : [];
+const evidenceFile = process.env.BROWSER_BUSINESS_EVIDENCE_FILE
+  ? path.resolve(repoRoot, process.env.BROWSER_BUSINESS_EVIDENCE_FILE)
+  : undefined;
 let browserServiceRuntimeDir;
 
 if (!targetUrl) {
@@ -54,6 +65,8 @@ function valuesEqual(actual, expected) {
 }
 
 async function runAssertions(sessionId) {
+  const results = [];
+
   for (const [index, item] of assertions.entries()) {
     assert(item && typeof item === 'object', `Assertion ${index} must be an object`);
     assert(typeof item.code === 'string' && item.code, `Assertion ${index} requires code`);
@@ -63,13 +76,30 @@ async function runAssertions(sessionId) {
     );
 
     const evaluated = await request('/evaluate', { code: item.code }, sessionId);
+    const passed = valuesEqual(evaluated.result, item.equals);
     assert(
-      valuesEqual(evaluated.result, item.equals),
+      passed,
       `Assertion ${item.name || index} failed: expected ${JSON.stringify(
         item.equals,
       )}, got ${JSON.stringify(evaluated.result)}`,
     );
+    results.push({
+      code: item.code,
+      expected: item.equals,
+      name: item.name || `assertion-${index}`,
+      passed,
+      result: evaluated.result,
+    });
   }
+
+  return results;
+}
+
+function writeEvidence(data) {
+  if (!evidenceFile) return;
+
+  mkdirSync(path.dirname(evidenceFile), { recursive: true });
+  writeFileSync(evidenceFile, `${JSON.stringify(data, null, 2)}\n`);
 }
 
 function waitForProcessExit(child, timeout = 5000) {
@@ -199,11 +229,24 @@ try {
     );
   }
 
-  await runAssertions(sessionId);
+  const assertionResults = await runAssertions(sessionId);
+
+  writeEvidence({
+    assertionResults,
+    blockedRiskEvent,
+    executionEvents: execution.executionEvents,
+    executionState: execution.executionState,
+    generatedAt: new Date().toISOString(),
+    inputs,
+    plan: navigated.plan,
+    skillPack: navigated.skillPack,
+    targetUrl,
+  });
 
   console.log(
     `Browser business demo verification passed for ${targetUrl} with skill pack ${navigated.skillPack.page} and ${assertions.length} assertion(s)`,
   );
+  if (evidenceFile) console.log(`Evidence written to ${evidenceFile}`);
 } finally {
   browserService.kill('SIGTERM');
   await waitForProcessExit(browserService);
