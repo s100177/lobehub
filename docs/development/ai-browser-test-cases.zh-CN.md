@@ -83,6 +83,7 @@ cp examples/browser-business-demo/.env.example /path/to/browser-business-demo.en
 ```bash
 BROWSER_BUSINESS_ENV_FILE=/path/to/browser-business-demo.env \
   BROWSER_BUSINESS_PREFLIGHT=1 \
+  BROWSER_BUSINESS_PREFLIGHT_REPORT_FILE=.omx/artifacts/browser-business-demo-preflight.json \
   pnpm test:browser-business-demo
 ```
 
@@ -135,6 +136,7 @@ BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE=.omx/artifacts/browser-business-demo.jso
 - 必须显式提供 `BROWSER_BUSINESS_DEMO_URL`，否则脚本失败。
 - 必须显式提供 `BROWSER_BUSINESS_SKILL_PACKS_DIR`，否则脚本失败。
 - `BROWSER_BUSINESS_PREFLIGHT=1` 必须能在不启动浏览器时通过配置检查。
+- 如果提供 `BROWSER_BUSINESS_PREFLIGHT_REPORT_FILE`，预检必须写出机器可读报告，并标记 `targetAccessed:false`。
 - `BROWSER_BUSINESS_PREFLIGHT=1` 必须校验 workflow 的全部 `action.inputKey` 都已在 `BROWSER_BUSINESS_DEMO_INPUTS` 中提供非空值。
 - `BROWSER_BUSINESS_EXPECT_RISK_ACTION` 必须匹配 workflow 的第一个 `risk_gate`，避免真实执行停在非预期风险门。
 - 页面必须匹配外部技能包。

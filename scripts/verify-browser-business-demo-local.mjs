@@ -10,6 +10,7 @@ const skillPackDir = path.join(tmpRoot, 'skill-packs');
 const multiRiskSkillPackDir = path.join(tmpRoot, 'skill-packs-multi-risk');
 const evidenceFile = path.join(tmpRoot, 'browser-business-demo-local.json');
 const evidenceSummaryFile = path.join(tmpRoot, 'browser-business-demo-local-summary.json');
+const preflightReportFile = path.join(tmpRoot, 'browser-business-demo-preflight.json');
 const expenseSkillPack = path.resolve(
   repoRoot,
   'examples/browser-skill-packs/expense-approval.json',
@@ -168,6 +169,24 @@ function assertEvidenceSummary(file, targetUrl) {
   assert(summary.assertionCount === 2, 'Evidence summary must include both assertions');
 }
 
+function assertPreflightReport(file, targetUrl) {
+  assert(existsSync(file), `Missing preflight report: ${file}`);
+
+  const report = JSON.parse(readFileSync(file, 'utf8'));
+  assert(report.passed === true, 'Preflight report must be marked passed');
+  assert(report.preflightOnly === true, 'Preflight report must be marked preflightOnly');
+  assert(report.targetAccessed === false, 'Preflight report must not access target URL');
+  assert(report.targetUrl === targetUrl, 'Preflight report targetUrl must match demo URL');
+  assert(report.skillPack.page === 'expense_approval_form', 'Preflight report page must match');
+  assert(report.workflow.intent === 'expense_approval', 'Preflight report workflow must match');
+  assert(report.riskGateStep.id === 'risk_gate', 'Preflight report risk gate must match');
+  assert(
+    report.requiredInputKeys.includes('department') && report.requiredInputKeys.includes('reason'),
+    'Preflight report must include required workflow inputs',
+  );
+  assert(report.assertionCount === 2, 'Preflight report must include assertion count');
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url || '/', 'http://127.0.0.1');
 
@@ -237,7 +256,9 @@ try {
   await runNodeScript(verifier, {
     BROWSER_BUSINESS_ENV_FILE: demoEnvFile,
     BROWSER_BUSINESS_PREFLIGHT: '1',
+    BROWSER_BUSINESS_PREFLIGHT_REPORT_FILE: preflightReportFile,
   });
+  assertPreflightReport(preflightReportFile, targetUrl);
 
   await runNodeScript(verifier, demoEnv);
 

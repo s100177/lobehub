@@ -51,6 +51,9 @@ const evidenceValidateFile = process.env.BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE
 const evidenceSummaryFile = process.env.BROWSER_BUSINESS_EVIDENCE_SUMMARY_FILE
   ? path.resolve(repoRoot, process.env.BROWSER_BUSINESS_EVIDENCE_SUMMARY_FILE)
   : undefined;
+const preflightReportFile = process.env.BROWSER_BUSINESS_PREFLIGHT_REPORT_FILE
+  ? path.resolve(repoRoot, process.env.BROWSER_BUSINESS_PREFLIGHT_REPORT_FILE)
+  : undefined;
 const preflightOnly = process.env.BROWSER_BUSINESS_PREFLIGHT === '1';
 const verifierVersion = 2;
 let browserServiceRuntimeDir;
@@ -60,10 +63,12 @@ if (evidenceValidateFile) {
   process.exit(0);
 }
 
-validateDemoConfiguration();
+const demoConfiguration = validateDemoConfiguration();
 
 if (preflightOnly) {
+  writePreflightReport(demoConfiguration);
   console.log(`Browser business demo preflight passed for ${targetUrl}`);
+  if (preflightReportFile) console.log(`Preflight report written to ${preflightReportFile}`);
   process.exit(0);
 }
 
@@ -153,24 +158,39 @@ function validateDemoConfiguration() {
     )}`,
   );
 
-  assertWorkflowInputsProvided(expectedWorkflow);
+  const requiredInputKeys = collectRequiredInputKeys(expectedWorkflow);
+  assertWorkflowInputsProvided(requiredInputKeys);
+
+  return {
+    firstRiskGateStep,
+    requiredInputKeys,
+    skillPack: expectedPack.pack,
+    workflow: expectedWorkflow,
+  };
 }
 
 function riskGateMatches(step, expected) {
   return step.id === expected || step.riskAction === expected || step.risk === expected;
 }
 
-function assertWorkflowInputsProvided(workflow) {
+function collectRequiredInputKeys(workflow) {
+  return [
+    ...new Set(
+      workflow.steps
+        .map((step) => step.action?.inputKey)
+        .filter((inputKey) => typeof inputKey === 'string' && inputKey),
+    ),
+  ];
+}
+
+function assertWorkflowInputsProvided(requiredInputKeys) {
   const missingInputs = [];
 
-  for (const step of workflow.steps) {
-    const inputKey = step.action?.inputKey;
-    if (!inputKey) continue;
-
+  for (const inputKey of requiredInputKeys) {
     const value = inputs[inputKey];
     if (typeof value === 'string' && value.trim()) continue;
 
-    missingInputs.push(`${inputKey} (${step.id})`);
+    missingInputs.push(inputKey);
   }
 
   assert(
@@ -179,6 +199,39 @@ function assertWorkflowInputsProvided(workflow) {
       ', ',
     )}`,
   );
+}
+
+function writePreflightReport(configuration) {
+  if (!preflightReportFile) return;
+
+  const report = {
+    assertionCount: assertions.length,
+    expectedRiskAction,
+    generatedAt: new Date().toISOString(),
+    inputKeysProvided: Object.keys(inputs).sort(),
+    passed: true,
+    preflightOnly: true,
+    requiredInputKeys: configuration.requiredInputKeys,
+    riskGateStep: {
+      id: configuration.firstRiskGateStep.id,
+      risk: configuration.firstRiskGateStep.risk,
+      riskAction: configuration.firstRiskGateStep.riskAction,
+    },
+    skillPack: {
+      page: configuration.skillPack.page,
+      site: configuration.skillPack.site,
+    },
+    targetAccessed: false,
+    targetUrl,
+    verifierVersion,
+    workflow: {
+      intent: configuration.workflow.intent,
+      stepCount: configuration.workflow.steps.length,
+    },
+  };
+
+  mkdirSync(path.dirname(preflightReportFile), { recursive: true });
+  writeFileSync(preflightReportFile, `${JSON.stringify(report, null, 2)}\n`);
 }
 
 function valuesEqual(actual, expected) {
