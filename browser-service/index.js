@@ -2310,6 +2310,17 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
     );
     const searchAction = pageState.actions?.find((action) => /搜索|查询/.test(action.text));
     const queryText = typeof inputs.query === 'string' ? inputs.query.trim() : '';
+    const inputPolicy = plan.layers?.execution?.inputPolicy || {};
+    const getStepInputPolicy = (step) => {
+      const keys = [
+        step.action?.inputKey,
+        ...(Array.isArray(step.gaps) ? step.gaps : []),
+        step.id,
+      ].filter(Boolean);
+      const key = keys.find((item) => typeof inputPolicy[item] === 'string');
+
+      return key ? { key, mode: inputPolicy[key] } : undefined;
+    };
     const resolveStepValue = (step) => {
       const inputKey = step.action?.inputKey;
       if (inputKey && typeof inputs[inputKey] === 'string') return inputs[inputKey].trim();
@@ -2320,6 +2331,25 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
       if (gapKey) return inputs[gapKey].trim();
 
       return undefined;
+    };
+    const pushPolicyBlock = (step, policy, action, target) => {
+      const inputLabel = policy?.key || step.action?.inputKey || step.gaps?.[0] || step.id;
+      const reason =
+        policy?.mode === 'manual_only'
+          ? `Execution paused because ${inputLabel} is marked manual_only and must be handled by the user.`
+          : policy?.mode === 'confirm_before'
+            ? `Execution paused before ${inputLabel} because inputPolicy requires confirmation.`
+            : `Execution needs input for ${inputLabel}.`;
+      markBlocked(step, 'paused_for_input');
+      executionEvents.push(
+        createExecutionEvent({
+          action,
+          id: step.id,
+          status: 'blocked',
+          summary: reason,
+          target,
+        }),
+      );
     };
     let blockedRiskBlock;
     const markCompleted = (step, index) => {
@@ -2413,18 +2443,14 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
 
       if (step.type === 'fill') {
         if (step.action?.selector) {
+          const policy = getStepInputPolicy(step);
           const value = resolveStepValue(step);
+          if (policy?.mode === 'manual_only' || policy?.mode === 'confirm_before') {
+            pushPolicyBlock(step, policy, 'fill', step.action.selector);
+            break;
+          }
           if (!value) {
-            markBlocked(step, 'paused_for_input');
-            executionEvents.push(
-              createExecutionEvent({
-                action: 'fill',
-                id: step.id,
-                status: 'blocked',
-                summary: `Execution needs input for ${step.action.inputKey || step.id}.`,
-                target: step.action.selector,
-              }),
-            );
+            pushPolicyBlock(step, policy, 'fill', step.action.selector);
             break;
           }
 
@@ -2481,18 +2507,14 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
       }
 
       if (step.type === 'select') {
+        const policy = getStepInputPolicy(step);
         const value = resolveStepValue(step);
+        if (policy?.mode === 'manual_only' || policy?.mode === 'confirm_before') {
+          pushPolicyBlock(step, policy, 'select', step.action?.selector);
+          break;
+        }
         if (!step.action?.selector || !value) {
-          markBlocked(step, 'paused_for_input');
-          executionEvents.push(
-            createExecutionEvent({
-              action: 'select',
-              id: step.id,
-              status: 'blocked',
-              summary: `Execution needs selector and input for ${step.action?.inputKey || step.id}.`,
-              target: step.action?.selector,
-            }),
-          );
+          pushPolicyBlock(step, policy, 'select', step.action?.selector);
           break;
         }
 

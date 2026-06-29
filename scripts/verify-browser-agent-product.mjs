@@ -608,27 +608,22 @@ try {
   );
   assert(
     completedExpenseExecution.executionEvents?.some(
-      (event) => event.id === 'fill_reason' && event.status === 'completed',
+      (event) =>
+        event.id === 'fill_reason' &&
+        event.status === 'blocked' &&
+        /inputPolicy requires confirmation/.test(event.summary),
     ),
-    `Expected expense execution to fill reason, got ${JSON.stringify(
-      completedExpenseExecution.executionEvents,
-    )}`,
-  );
-  assert(
-    completedExpenseExecution.executionEvents?.some(
-      (event) => event.id === 'risk_gate' && event.status === 'blocked',
-    ),
-    `Expected expense execution to stop at risk gate, got ${JSON.stringify(
+    `Expected expense execution to pause before confirm_before reason fill, got ${JSON.stringify(
       completedExpenseExecution.executionEvents,
     )}`,
   );
   assert(
     completedExpenseExecution.executionState?.completedStepIds?.includes('select_department') &&
-      completedExpenseExecution.executionState?.completedStepIds?.includes('fill_reason') &&
-      completedExpenseExecution.executionState?.blockedStepId === 'risk_gate' &&
-      completedExpenseExecution.executionState?.cursor === 4 &&
-      completedExpenseExecution.executionState?.phase === 'risk_blocked',
-    `Expected expense execution cursor to stop at risk gate after safe steps, got ${JSON.stringify(
+      !completedExpenseExecution.executionState?.completedStepIds?.includes('fill_reason') &&
+      completedExpenseExecution.executionState?.blockedStepId === 'fill_reason' &&
+      completedExpenseExecution.executionState?.cursor === 2 &&
+      completedExpenseExecution.executionState?.phase === 'paused_for_input',
+    `Expected expense execution cursor to stop before confirm_before fill, got ${JSON.stringify(
       completedExpenseExecution.executionState,
     )}`,
   );
@@ -645,9 +640,11 @@ try {
   );
   assert(
     expenseValues.result?.department === '研发部' &&
-      expenseValues.result?.reason === '客户现场紧急支持' &&
+      expenseValues.result?.reason === '客户现场支持' &&
       expenseValues.result?.submitted === undefined,
-    `Expected expense form filled but not submitted, got ${JSON.stringify(expenseValues.result)}`,
+    `Expected department selected but confirm_before reason left unchanged, got ${JSON.stringify(
+      expenseValues.result,
+    )}`,
   );
   const repeatedExpenseExecution = await request(
     '/execute-plan',
@@ -655,9 +652,9 @@ try {
     'verify-agent-expense',
   );
   assert(
-    repeatedExpenseExecution.executionEvents?.[0]?.id === 'risk_gate' &&
+    repeatedExpenseExecution.executionEvents?.[0]?.id === 'fill_reason' &&
       repeatedExpenseExecution.executionEvents?.[0]?.status === 'blocked',
-    `Expected repeated expense execution to resume at risk gate, got ${JSON.stringify(
+    `Expected repeated expense execution to resume at confirm_before fill, got ${JSON.stringify(
       repeatedExpenseExecution.executionEvents,
     )}`,
   );

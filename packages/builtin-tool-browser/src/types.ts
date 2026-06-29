@@ -245,7 +245,25 @@ export interface BrowserSkillPackWorkflow {
   constraints?: string[];
   goal: string;
   intent: string;
+  layers?: BrowserWorkflowLayers;
   steps: BrowserSkillPackWorkflowStep[];
+}
+
+export interface BrowserWorkflowLayers {
+  constraints?: {
+    forbiddenActions?: string[];
+    riskActions?: string[];
+    rules?: string[];
+  };
+  execution?: {
+    inputPolicy?: Record<string, 'ask_user' | 'auto' | 'confirm_before' | 'manual_only'>;
+    resumePolicy?: string;
+    steps?: string[];
+  };
+  goal?: {
+    description?: string;
+    intent?: string;
+  };
 }
 
 export interface BrowserAgentPlanStep extends BrowserSkillPackWorkflowStep {
@@ -256,6 +274,7 @@ export interface BrowserAgentPlan {
   confirmationRequired?: boolean;
   goal: string;
   intent: string;
+  layers?: BrowserWorkflowLayers;
   source: 'heuristic' | 'skill_pack';
   steps: BrowserAgentPlanStep[];
 }

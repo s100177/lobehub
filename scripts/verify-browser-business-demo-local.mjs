@@ -57,6 +57,8 @@ function prepareSkillPack() {
     ...skillPack.match,
     paths: ['/business-expense.html'],
   };
+  const workflow = skillPack.workflows.find((item) => item.intent === 'expense_approval');
+  workflow.layers.execution.inputPolicy.reason = 'auto';
 
   mkdirSync(skillPackDir, { recursive: true });
   writeFileSync(

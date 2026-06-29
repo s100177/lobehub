@@ -290,7 +290,7 @@ BROWSER_SKILL_PACK_VERIFY_DIR=/path/to/your/skill-packs pnpm test:browser-skill-
         "execution": {
           "inputPolicy": {
             "department": "ask_user",
-            "reason": "auto"
+            "reason": "confirm_before"
           },
           "resumePolicy": "inspect_before_resume",
           "steps": ["inspect", "select_department", "fill_reason", "verify_amount", "confirm"]
