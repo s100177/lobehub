@@ -653,6 +653,8 @@ BROWSER_DOCKER_E2E_BASE_URL=http://192.168.1.36:3211 \
 - 页面未发生真实风险状态变化。
 - UI 显示风险确认卡。
 - “允许本次，我手动完成” 必须调用 `interrupt` 写入服务端审计，只记录用户确认并切换到人工处理，不得触发 AI 自动 click/submit。
+- “我手动处理” 必须调用 `interrupt` 写入服务端审计，状态进入 `paused_by_user_intervention`，后续继续仍需要重新 `inspect`。
+- “取消任务” 必须调用 `cancelTask` / `/cancel-task` 写入服务端审计，状态进入 `cancelled`，不得再被当作可恢复暂停自动继续。
 - 从 `risk_blocked` 回到计划或恢复执行前必须重新 `inspect`；仅伪造 `inspectedAfterRisk:true` 不能越过服务端风险暂停边界。
 - 时间线记录风险原因。
 

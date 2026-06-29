@@ -609,6 +609,7 @@ asking_clarification
 risk_blocked
 verifying
 completed
+cancelled
 failed
 ```
 
@@ -627,6 +628,7 @@ ai_controlling -> paused_by_user_intervention
 ai_controlling -> asking_clarification
 ai_controlling -> risk_blocked
 ai_controlling -> completed
+risk_blocked -> cancelled
 ```
 
 关键规则：
@@ -635,6 +637,7 @@ ai_controlling -> completed
 - 用户干预后，必须进入 `paused_by_user_intervention`。
 - 歧义时，必须进入 `asking_clarification`。
 - 高风险时，必须进入 `risk_blocked`。
+- 用户取消风险任务时，必须进入 `cancelled`，并保留服务端审计事件。
 - 从暂停、歧义、风险状态恢复后，必须重新 inspect 页面。
 
 ### 4.16 基于 KiKi 截图提炼的 UI 细节

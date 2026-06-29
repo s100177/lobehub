@@ -74,7 +74,10 @@
 - 如果业务需要从头重跑 workflow，调用 `executePlan` 时显式传入 `restart: true`。
 - 用户在接管态手动点击、滚动、输入或键盘操作时，运行时必须调用 `interrupt`，把 `executionState.phase` 写为 `paused_by_user_intervention`。
 - 用户在风险确认卡选择 “允许本次，我手动完成” 时，BrowserPanel 也必须调用 `interrupt` 记录风险手动接管审计；AI 不能自动越过风险门，后续继续仍受重新 `inspect` 边界约束。
+- 用户在风险确认卡选择 “我手动处理” 时，也必须调用 `interrupt` 记录可恢复的人工接管审计；这不是自动越过风险门。
+- 用户在风险确认卡选择 “取消任务” 时，必须调用 `cancelTask` / `/cancel-task` 记录终态取消审计，并把 `executionState.phase` 与 `taskState` 写为 `cancelled`；取消态不能被当作可恢复暂停。
 - `interrupt` 返回单次 `executionEvents`，并把同一事件追加进 session 级 `executionTimeline`，后续 `inspect` 仍应能看到这条审计记录。
+- `cancelTask` 返回单次 `executionEvents`，并把取消事件追加进 session 级 `executionTimeline`；后续审计应能区分 `interrupt` 的可恢复暂停和 `cancel` 的终态取消。
 - BrowserPanel 应展示 session 级 `executionTimeline`，作为用户可见的审计时间线；单次 `executionEvents` 仍只表示当前工具调用结果。
 - 从 `paused_by_user_intervention` 恢复执行前，BrowserPanel 必须先调用 `inspect`，再调用 `executePlan`，不能基于旧页面状态继续。
 - 服务端 `/execute-plan` 也会强制这个边界：如果 session 仍处于 `paused_by_user_intervention`，请求必须带 `inspectedAfterIntervention:true`，且服务端必须已经记录过覆盖当前人工干预版本的 `/inspect`；否则只返回 `inspect_required_after_intervention` 阻断事件，不推进 workflow。
