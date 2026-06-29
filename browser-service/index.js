@@ -1492,6 +1492,61 @@ function renderViewerHtml({ basePath, sessionId, takeover }) {
       min-height: 0;
       overflow: hidden;
     }
+    .takeover-frame {
+      pointer-events: none;
+      position: absolute;
+      z-index: 3;
+      inset: 8px;
+      display: none;
+      border: 3px solid #16a34a;
+      border-radius: 18px;
+      box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.28);
+      animation: takeover-pulse 1.8s ease-in-out infinite;
+    }
+    .target-box {
+      pointer-events: none;
+      position: absolute;
+      z-index: 4;
+      display: none;
+      min-width: 16px;
+      min-height: 16px;
+      border: 3px solid #f59e0b;
+      border-radius: 10px;
+      background: rgba(245, 158, 11, 0.1);
+      box-shadow:
+        0 0 0 9999px rgba(15, 23, 42, 0.04),
+        0 0 0 8px rgba(245, 158, 11, 0.14),
+        0 12px 32px rgba(146, 64, 14, 0.22);
+    }
+    .target-label {
+      position: absolute;
+      top: -32px;
+      left: 0;
+      overflow: hidden;
+      max-width: min(360px, 80vw);
+      padding: 5px 9px;
+      border-radius: 999px;
+      color: #fff7ed;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      background: rgba(15, 23, 42, 0.88);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    @keyframes takeover-pulse {
+      0% {
+        border-color: #16a34a;
+        box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.28);
+      }
+      50% {
+        border-color: #06b6d4;
+        box-shadow: 0 0 0 7px rgba(6, 182, 212, 0.16);
+      }
+      100% {
+        border-color: #16a34a;
+        box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.28);
+      }
+    }
     canvas {
       width: 100%;
       height: 100%;
@@ -1541,6 +1596,8 @@ function renderViewerHtml({ basePath, sessionId, takeover }) {
     </div>
     <div class="stage">
       <canvas id="screen" tabindex="0" width="1280" height="800" aria-label="Interactive remote browser"></canvas>
+      <div id="takeover-frame" class="takeover-frame" aria-label="AI takeover frame"></div>
+      <div id="target-box" class="target-box" aria-label="AI target highlight"><span id="target-label" class="target-label"></span></div>
       <div id="empty" class="empty">Ask the AI to open a webpage, then interact here with mouse, wheel, and keyboard.</div>
     </div>
     <div class="footer">
@@ -1557,6 +1614,9 @@ function renderViewerHtml({ basePath, sessionId, takeover }) {
     const urlEl = document.getElementById('url');
     const statusEl = document.getElementById('status');
     const emptyEl = document.getElementById('empty');
+    const takeoverFrameEl = document.getElementById('takeover-frame');
+    const targetBoxEl = document.getElementById('target-box');
+    const targetLabelEl = document.getElementById('target-label');
     let viewport = { width: 1280, height: 800 };
     let eventSource;
     let lastFrameKey = '';
@@ -1635,13 +1695,40 @@ function renderViewerHtml({ basePath, sessionId, takeover }) {
       const img = new Image();
       img.onload = () => {
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        if (takeover) drawTargetHighlight(frame.pageState?.targetHighlight);
+        if (takeover) {
+          drawTargetHighlight(frame.pageState?.targetHighlight);
+          updateTakeoverOverlay(frame.pageState?.targetHighlight);
+        }
         statusEl.textContent = 'live';
       };
       img.onerror = () => {
         statusEl.textContent = 'frame error';
       };
       img.src = 'data:image/png;base64,' + frame.screenshot;
+    }
+
+    function updateTakeoverOverlay(target) {
+      takeoverFrameEl.style.display = 'block';
+      if (!target || !Number.isFinite(target.x) || !Number.isFinite(target.y) || !Number.isFinite(target.width) || !Number.isFinite(target.height)) {
+        targetBoxEl.style.display = 'none';
+        return;
+      }
+
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = rect.width / Math.max(1, viewport.width);
+      const scaleY = rect.height / Math.max(1, viewport.height);
+      const padding = 5;
+      const x = Math.max(0, target.x - padding) * scaleX;
+      const y = Math.max(0, target.y - padding) * scaleY;
+      const width = Math.max(16, (target.width + padding * 2) * scaleX);
+      const height = Math.max(16, (target.height + padding * 2) * scaleY);
+
+      targetBoxEl.style.display = 'block';
+      targetBoxEl.style.left = x + 'px';
+      targetBoxEl.style.top = y + 'px';
+      targetBoxEl.style.width = width + 'px';
+      targetBoxEl.style.height = height + 'px';
+      targetLabelEl.textContent = target.label ? 'AI 正在操作：' + target.label : 'AI 正在操作';
     }
 
     function drawTargetHighlight(target) {

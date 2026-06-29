@@ -224,6 +224,7 @@ const testPageServer = http.createServer((req, res) => {
   const url = new URL(req.url || '/', pageOrigin);
   if (url.pathname === '/viewer-wrapper') {
     const session = url.searchParams.get('session') || 'verify-agent-viewer';
+    const takeover = url.searchParams.get('takeover') === '1' ? '&takeover=1' : '';
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.end(`<!doctype html>
       <meta charset="utf-8" />
@@ -239,7 +240,7 @@ const testPageServer = http.createServer((req, res) => {
       </script>
       <iframe id="viewer" src="${browserOrigin}/viewer?session=${encodeURIComponent(
         session,
-      )}&basePath=/" style="width: 900px; height: 700px; border: 0"></iframe>`);
+      )}&basePath=/${takeover}" style="width: 900px; height: 700px; border: 0"></iframe>`);
     return;
   }
 
@@ -337,11 +338,18 @@ async function assertRemoteViewerPostsUserInput() {
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage({ viewport: { height: 760, width: 960 } });
-    await page.goto(`${pageOrigin}/viewer-wrapper?session=verify-agent-viewer`, {
+    await page.goto(`${pageOrigin}/viewer-wrapper?session=verify-agent-viewer&takeover=1`, {
       waitUntil: 'domcontentloaded',
     });
     const frame = page.frameLocator('#viewer');
     await frame.locator('#screen').waitFor({ state: 'visible', timeout: 10_000 });
+    await frame.getByLabel('AI takeover frame').waitFor({ state: 'visible', timeout: 10_000 });
+    await frame.getByLabel('AI target highlight').waitFor({ state: 'visible', timeout: 10_000 });
+    const targetBox = await frame.getByLabel('AI target highlight').boundingBox();
+    assert(
+      targetBox && targetBox.width > 0 && targetBox.height > 0,
+      `Expected visible remote target highlight, got ${JSON.stringify(targetBox)}`,
+    );
     await page.waitForFunction(() => {
       const frameElement = document.querySelector('#viewer');
       return frameElement instanceof HTMLIFrameElement;

@@ -351,6 +351,7 @@ scripts/verify-browser-agent-product.mjs
 - 推荐任务必须展示 `title`、`reason`、`intent` 和风险等级，且点击执行前仍需走授权卡。
 - 未授权前没有自动操作。
 - 接管边界只作用于 BrowserViewport，不作用于整个 LobeHub 页面。
+- remote viewer 的 takeover 模式必须能看到 `AI takeover frame` 和 `AI target highlight`，并继续向父页面发送用户输入事件。
 - `asking_clarification` 状态必须保留接管边界，但停止后续自动点击。
 - 结构化询问必须可操作，不能只是纯文本。
 - 多个结构化询问必须逐项收集，已回答字段可见，授权执行时所有字段同时进入 `executePlan.inputs`。
