@@ -697,6 +697,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   const [activeClarificationIndex, setActiveClarificationIndex] = useState(0);
   const [selectedClarification, setSelectedClarification] = useState<string>();
   const [selectedSuggestedTask, setSelectedSuggestedTask] = useState<BrowserSuggestedTask>();
+  const [riskDecision, setRiskDecision] = useState<'allowed_manual' | 'cancelled' | 'manual'>();
 
   useEffect(() => {
     setLocalState(state);
@@ -706,6 +707,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     setClarificationText('');
     setSelectedClarification(undefined);
     setSelectedSuggestedTask(undefined);
+    setRiskDecision(undefined);
   }, [state]);
 
   const currentState = localState;
@@ -981,6 +983,28 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     setSelectedSuggestedTask(task);
     appendLocalEvent(`Selected suggested task: ${task.title}`, 'success');
     updateTaskState('waiting_user_authorization');
+  };
+
+  const markRiskDecision = (decision: 'allowed_manual' | 'cancelled' | 'manual') => {
+    setRiskDecision(decision);
+
+    if (decision === 'allowed_manual') {
+      appendLocalEvent(
+        'User allowed this risky action for manual handling. AI did not execute it automatically.',
+        'blocked',
+      );
+      updateTaskState('paused_by_user_intervention');
+      return;
+    }
+
+    if (decision === 'manual') {
+      appendLocalEvent('User chose to handle the risky action manually.', 'blocked');
+      updateTaskState('idle');
+      return;
+    }
+
+    appendLocalEvent('User cancelled the risky browser task.', 'blocked');
+    updateTaskState('idle');
   };
 
   const saveClarification = (prompt?: BrowserClarificationPrompt) => {
@@ -1332,11 +1356,27 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
         <div aria-label="Browser risk block card" className={styles.riskNotice}>
           <strong>Risky action blocked.</strong> {currentState.riskBlock.reason}. This action is
           classified as {currentState.riskBlock.risk}; AI will not execute it automatically.
+          {riskDecision && (
+            <div aria-label="Browser risk decision" className={styles.taskText}>
+              {riskDecision === 'allowed_manual'
+                ? '你已允许本次风险动作，但需要你手动完成；AI 不会自动点击或提交。'
+                : riskDecision === 'manual'
+                  ? '你选择手动处理该风险动作。'
+                  : '你已取消当前风险任务。'}
+            </div>
+          )}
           <div className={styles.runtimeActions}>
+            <button
+              className={styles.primaryButton}
+              type="button"
+              onClick={() => markRiskDecision('allowed_manual')}
+            >
+              允许本次，我手动完成
+            </button>
             <button
               className={styles.secondaryButton}
               type="button"
-              onClick={() => updateTaskState('idle')}
+              onClick={() => markRiskDecision('manual')}
             >
               我手动处理
             </button>
@@ -1346,6 +1386,13 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
               onClick={() => updateTaskState('waiting_user_authorization')}
             >
               回到计划
+            </button>
+            <button
+              className={styles.secondaryButton}
+              type="button"
+              onClick={() => markRiskDecision('cancelled')}
+            >
+              取消任务
             </button>
           </div>
         </div>

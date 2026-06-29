@@ -813,7 +813,7 @@ describe('BrowserPanel dual mode rendering', () => {
     });
   });
 
-  it('shows a non-executing risk block card for dangerous browser actions', () => {
+  it('shows a non-executing risk decision card for dangerous browser actions', () => {
     render(
       <BrowserPanel
         sessionId="session-risk-card"
@@ -838,7 +838,22 @@ describe('BrowserPanel dual mode rendering', () => {
     expect(screen.getByLabelText('Browser risk block card')).toHaveTextContent(
       'AI will not execute it automatically',
     );
+    expect(screen.getByText('允许本次，我手动完成')).toBeInTheDocument();
+    expect(screen.getByText('我手动处理')).toBeInTheDocument();
+    expect(screen.getByText('取消任务')).toBeInTheDocument();
     expect(screen.getByText('Task State: risk_blocked')).toBeInTheDocument();
     expect(screen.getByLabelText('Browser interaction mode')).toHaveTextContent('审阅模式');
+
+    fireEvent.click(screen.getByText('允许本次，我手动完成'));
+
+    expect(screen.getByText('Task State: paused_by_user_intervention')).toBeInTheDocument();
+    expect(screen.getByLabelText('Browser risk decision')).toHaveTextContent(
+      'AI 不会自动点击或提交',
+    );
+    expect(
+      screen.getByText(
+        'User allowed this risky action for manual handling. AI did not execute it automatically.',
+      ),
+    ).toBeInTheDocument();
   });
 });
