@@ -184,6 +184,33 @@ AI 可以直接执行的动作，例如：
 
 ## 5. 示例
 
+仓库内提供了一个可运行示例：
+
+```text
+examples/browser-skill-packs/expense-approval.json
+```
+
+它模拟 “费用审批表单” 业务系统，覆盖外部技能包匹配、结构化补信息、安全填写、金额核对和提交前风险门。该示例也被 `pnpm test:browser-agent` 复用，避免文档示例和真实运行时行为分叉。
+
+校验示例：
+
+```bash
+pnpm test:browser-skill-packs
+```
+
+校验自定义目录：
+
+```bash
+BROWSER_SKILL_PACK_VERIFY_DIR=/path/to/your/skill-packs pnpm test:browser-skill-packs
+```
+
+校验内容：
+
+- 必填字段：`site`、`page`、`pageType`、`description`、`entities`、`safeActions`、`riskActions`、`ambiguityRules`、`workflows`。
+- workflow 必须有 `intent`、`goal` 和非空 `steps`。
+- step 类型只能是 `ask`、`click`、`fill`、`inspect`、`risk_gate`、`select`、`verify`。
+- 带风险词或 `risk` 字段的步骤必须使用 `risk_gate`，不能伪装成普通 `click`。
+
 ### 5.1 业务表单页
 
 ```json

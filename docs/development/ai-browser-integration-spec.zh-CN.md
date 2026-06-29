@@ -79,6 +79,20 @@
 - 一个页面可以同时返回多个 clarification。BrowserPanel 会按队列逐项收集用户回答，展示已回答字段，并在用户确认继续规划后一次性传入 `executePlan.inputs`。
 - 用户选择 `suggestedTasks` 后只会进入授权卡，不会直接执行。授权执行时可把 `suggestedTasks.intent` 作为 `executePlan.intent`，运行时优先选择匹配的 skill-pack workflow。
 
+技能包提交前必须先做静态校验：
+
+```bash
+BROWSER_SKILL_PACK_VERIFY_DIR=/path/to/your/skill-packs pnpm test:browser-skill-packs
+```
+
+仓库示例：
+
+```text
+examples/browser-skill-packs/expense-approval.json
+```
+
+该示例覆盖费用审批业务表单，已经被自动化验收脚本复用；业务系统接入时应先复制这个结构，再替换 `site`、`match`、字段、风险动作和 workflow。
+
 ### 3.2 页面状态 inspect
 
 每个页面至少要能返回：
@@ -239,6 +253,7 @@
 4. AI 在风险动作前会拦截并要求确认。
 5. 用户手动干预后，AI 会暂停并在继续前重新读取页面。
 6. 业务系统切换到新的页面技能包后，AI 仍能复用同一套协议。
+7. 业务技能包目录通过 `pnpm test:browser-skill-packs` 静态校验。
 
 ## 7. 推荐实施顺序
 

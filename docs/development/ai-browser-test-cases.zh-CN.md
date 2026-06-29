@@ -17,6 +17,40 @@
 
 ## 2. 测试分层
 
+### 2.0 L0：页面技能包静态校验
+
+目的：
+
+- 让业务系统在接入前先验证技能包结构。
+- 防止风险步骤被写成普通 `click`。
+- 防止文档示例、业务技能包和运行时验收分叉。
+
+默认校验仓库示例：
+
+```bash
+pnpm test:browser-skill-packs
+```
+
+校验业务系统目录：
+
+```bash
+BROWSER_SKILL_PACK_VERIFY_DIR=/path/to/your/skill-packs pnpm test:browser-skill-packs
+```
+
+默认示例：
+
+```text
+examples/browser-skill-packs/expense-approval.json
+```
+
+验收点：
+
+- 每个技能包都有 `site`、`page`、`pageType`、`description`。
+- `entities`、`safeActions`、`riskActions`、`ambiguityRules` 必须是字符串数组。
+- 每个 workflow 有 `intent`、`goal` 和非空 steps。
+- step 类型只能是声明式安全类型。
+- 带风险词或 `risk` 字段的 step 必须使用 `risk_gate`。
+
 ### 2.1 L1：本地可控测试站点
 
 目的：
@@ -583,6 +617,7 @@ P2 通过标准：
 
 发布前最低要求：
 
+- L0 页面技能包静态校验通过。
 - L1 本地可控测试全通过。
 - L2 自动化脚本全通过。
 - L3 真实网站冒烟无阻塞问题。

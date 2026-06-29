@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import http from 'node:http';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -14,6 +14,10 @@ const pageOrigin = `http://127.0.0.1:${pagePort}`;
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const inRepoServiceDir = path.resolve(repoRoot, 'browser-service');
 const deployedServiceDir = path.resolve(repoRoot, '..', 'browser-service');
+const expenseSkillPackExample = path.resolve(
+  repoRoot,
+  'examples/browser-skill-packs/expense-approval.json',
+);
 const browserServiceDir = process.env.BROWSER_SERVICE_DIR || inRepoServiceDir;
 const playwrightResolveDir = existsSync(path.resolve(inRepoServiceDir, 'node_modules'))
   ? inRepoServiceDir
@@ -25,84 +29,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = require(require.resolve('playwright', { paths: [playwrightResolveDir] }));
 let browserServiceRuntimeDir;
 const skillPacksDir = mkdtempSync(path.resolve(tmpdir(), 'lobe-browser-skill-packs-'));
-
-writeFileSync(
-  path.join(skillPacksDir, 'expense-approval.json'),
-  JSON.stringify(
-    {
-      ambiguityRules: ['部门缺失时必须询问用户'],
-      confirmationPoints: [
-        {
-          id: 'before_submit',
-          reason: '提交后进入审批流',
-          title: '提交前确认',
-        },
-      ],
-      description: '费用审批业务表单',
-      entities: ['department', 'amount', 'reason'],
-      fillGaps: [{ field: 'department', mode: 'ask_user', reason: '部门影响审批流' }],
-      match: {
-        keywords: ['费用审批', '报销金额'],
-        pageType: 'form',
-        paths: ['/business-expense'],
-      },
-      page: 'expense_approval_form',
-      pageType: 'form',
-      riskActions: ['submit_expense'],
-      safeActions: ['inspect_form', 'fill_reason'],
-      site: '127.0.0.1',
-      workflows: [
-        {
-          goal: '补齐费用审批表单并停在提交前',
-          intent: 'expense_approval',
-          steps: [
-            { id: 'inspect', title: '读取费用审批表单', type: 'inspect' },
-            {
-              action: { inputKey: 'department', selector: '#department' },
-              gaps: ['department'],
-              id: 'select_department',
-              title: '选择报销部门',
-              type: 'select',
-            },
-            {
-              action: { inputKey: 'reason', selector: '#reason' },
-              id: 'fill_reason',
-              title: '填写报销原因',
-              type: 'fill',
-            },
-            {
-              action: { expectedText: '报销金额 ¥128.00', selector: 'body' },
-              id: 'verify_amount',
-              title: '核对报销金额',
-              type: 'verify',
-            },
-            {
-              id: 'risk_gate',
-              risk: 'submit',
-              title: '提交审批前等待用户确认',
-              type: 'risk_gate',
-            },
-          ],
-        },
-        {
-          goal: '只核对费用审批金额，不填写或提交',
-          intent: 'expense_review_only',
-          steps: [
-            { id: 'inspect_review', title: '读取费用审批表单', type: 'inspect' },
-            {
-              action: { expectedText: '报销金额 ¥128.00', selector: 'body' },
-              id: 'verify_amount_only',
-              title: '只核对报销金额',
-              type: 'verify',
-            },
-          ],
-        },
-      ],
-    },
-    null,
-    2,
-  ),
-);
+cpSync(expenseSkillPackExample, path.join(skillPacksDir, 'expense-approval.json'));
 
 const html = (title, body) => `<!doctype html>
 <html lang="zh-CN">
