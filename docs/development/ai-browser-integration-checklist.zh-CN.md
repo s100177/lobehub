@@ -98,6 +98,7 @@
 - [x] 歧义时有结构化询问卡。
 - [x] 风险时有确认卡。
 - [x] 人工干预时边框变为暂停态。
+- [x] 审计时间线能展示跨调用的中断、恢复、风险和完成记录。
 
 ## 11. 自动化测试
 
@@ -109,7 +110,7 @@
 当前自动化证据：
 
 - `scripts/verify-browser-agent-product.mjs` 覆盖本地可控页面、技能包计划、授权后执行、接管视觉、高亮、歧义询问、风险拦截、人工干预 `interrupt`、remote viewer `/input` 中断审计和恢复前 inspect。
-- `src/features/Conversation/Messages/AssistantGroup/Tool/BrowserPanel.test.tsx` 覆盖 BrowserPanel 授权卡、暂停卡、clarification、suggestedTasks、remote/iframe 视图和继续前 inspect。
+- `src/features/Conversation/Messages/AssistantGroup/Tool/BrowserPanel.test.tsx` 覆盖 BrowserPanel 授权卡、暂停卡、clarification、suggestedTasks、审计时间线、remote/iframe 视图和继续前 inspect。
 
 ## 12. 发布门槛
 

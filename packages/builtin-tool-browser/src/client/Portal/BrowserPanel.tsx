@@ -382,6 +382,18 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
 
     background: ${cssVar.colorBgContainer};
   `,
+  timelineHeader: css`
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+
+    margin-block-end: 2px;
+
+    font-size: 12px;
+    font-weight: 800;
+    color: ${cssVar.colorText};
+  `,
   eventItem: css`
     display: grid;
     grid-template-columns: auto 1fr;
@@ -758,6 +770,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   const modeLabel = isIframeMode ? 'Iframe' : 'Remote';
   const recentEvents = currentState.actionEvents?.slice(-20).reverse() ?? [];
   const executionEvents = currentState.executionEvents?.slice(-20).reverse() ?? [];
+  const executionTimeline = currentState.executionTimeline?.slice(-30).reverse() ?? [];
   const pageState = currentState.pageState;
   const riskyActions = pageState?.actions?.filter((action) => action.risk).slice(0, 3) ?? [];
   const selectedOptions = pageState?.selectedOptions?.filter(Boolean).slice(0, 3) ?? [];
@@ -1331,6 +1344,20 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
           ))}
           {recentEvents.map((event) => (
             <div className={styles.eventItem} key={event.id}>
+              <span className={styles.eventStatus}>{event.status}</span>
+              <span>{event.summary}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {executionTimeline.length > 0 && (
+        <div aria-label="Browser audit timeline" className={styles.timeline}>
+          <div className={styles.timelineHeader}>
+            <span>审计时间线</span>
+            <span className={styles.pill}>session persisted</span>
+          </div>
+          {executionTimeline.map((event) => (
+            <div className={styles.eventItem} key={`audit-${event.id}`}>
               <span className={styles.eventStatus}>{event.status}</span>
               <span>{event.summary}</span>
             </div>

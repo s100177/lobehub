@@ -73,6 +73,7 @@
 - 如果业务需要从头重跑 workflow，调用 `executePlan` 时显式传入 `restart: true`。
 - 用户在接管态手动点击、滚动、输入或键盘操作时，运行时必须调用 `interrupt`，把 `executionState.phase` 写为 `paused_by_user_intervention`。
 - `interrupt` 返回单次 `executionEvents`，并把同一事件追加进 session 级 `executionTimeline`，后续 `inspect` 仍应能看到这条审计记录。
+- BrowserPanel 应展示 session 级 `executionTimeline`，作为用户可见的审计时间线；单次 `executionEvents` 仍只表示当前工具调用结果。
 - 从 `paused_by_user_intervention` 恢复执行前，BrowserPanel 必须先调用 `inspect`，再调用 `executePlan`，不能基于旧页面状态继续。
 - clarification 的 `field` 会作为 `executePlan.inputs[field]` 传回运行时，建议与 workflow step 的 `action.inputKey` 保持一致。
 - 一个页面可以同时返回多个 clarification。BrowserPanel 会按队列逐项收集用户回答，展示已回答字段，并在用户确认继续规划后一次性传入 `executePlan.inputs`。

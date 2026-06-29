@@ -149,6 +149,22 @@ describe('BrowserPanel dual mode rendering', () => {
       ],
       blocked: true,
       embeddable: false,
+      executionTimeline: [
+        {
+          action: 'interrupt',
+          id: 'audit-1',
+          status: 'blocked',
+          summary: 'Automation paused because the user performed click in the browser.',
+          timestamp: 3,
+        },
+        {
+          action: 'inspect',
+          id: 'audit-2',
+          status: 'completed',
+          summary: 'Re-inspected page before resume.',
+          timestamp: 4,
+        },
+      ],
       mode: 'remote',
       pageState: {
         actions: [{ risk: 'purchase', text: '立即购买' }],
@@ -175,6 +191,12 @@ describe('BrowserPanel dual mode rendering', () => {
     expect(screen.getByText('立即购买')).toBeInTheDocument();
     expect(screen.getByText('Opened https://example.com/checkout')).toBeInTheDocument();
     expect(screen.getByText('Blocked risky click on "立即购买"')).toBeInTheDocument();
+    expect(screen.getByLabelText('Browser audit timeline')).toBeInTheDocument();
+    expect(screen.getByText('审计时间线')).toBeInTheDocument();
+    expect(
+      screen.getByText('Automation paused because the user performed click in the browser.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Re-inspected page before resume.')).toBeInTheDocument();
   });
 
   it('selects a suggested task before authorizing plan execution', async () => {
@@ -623,6 +645,15 @@ describe('BrowserPanel dual mode rendering', () => {
           phase: 'paused_by_user_intervention',
           updatedAt: 1,
         },
+        executionTimeline: [
+          {
+            action: 'interrupt',
+            id: 'user_intervention:2',
+            status: 'blocked',
+            summary: 'Automation paused because the user performed click in the browser.',
+            timestamp: 1,
+          },
+        ],
         mode: 'remote',
         pageState: { pageType: 'dashboard' },
         taskState: 'paused_by_user_intervention',
@@ -665,8 +696,9 @@ describe('BrowserPanel dual mode rendering', () => {
       expect(screen.getByText('Task State: paused_by_user_intervention')).toBeInTheDocument();
     });
     expect(
-      screen.getByText('Automation paused because the user performed click in the browser.'),
-    ).toBeInTheDocument();
+      screen.getAllByText('Automation paused because the user performed click in the browser.'),
+    ).toHaveLength(2);
+    expect(screen.getByLabelText('Browser audit timeline')).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/browser/action', {
       body: JSON.stringify({
         action: 'interrupt',
