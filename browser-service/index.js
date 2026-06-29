@@ -212,6 +212,33 @@ function recordUserIntervention(session, { inputType = 'input', reason } = {}) {
   return event;
 }
 
+function recordTaskCancellation(session, { reason } = {}) {
+  const currentStepId = session.executionState?.currentStepId;
+  const blockedStepId = currentStepId || session.executionState?.blockedStepId || 'task_cancelled';
+  const summary = reason || 'Browser automation task was cancelled by the user.';
+
+  updateExecutionState(session, {
+    blockedStepId,
+    currentStepId,
+    phase: 'cancelled',
+  });
+
+  const event = createExecutionEvent({
+    action: 'cancel',
+    id: `task_cancelled:${Date.now()}`,
+    status: 'blocked',
+    summary,
+  });
+  appendExecutionEvent(session, event);
+  recordAction(session, {
+    action: 'cancel',
+    status: 'blocked',
+    summary,
+  });
+
+  return event;
+}
+
 function markInterventionInspected(session) {
   if (session.executionState?.phase !== 'paused_by_user_intervention') return;
   session.inspectedInterventionVersion = session.interventionVersion || 0;
@@ -2849,6 +2876,25 @@ app.post('/interrupt', sessionMiddleware, async (req, res) => {
       executionEvents: [event],
       executionState: session.executionState,
       taskState: 'paused_by_user_intervention',
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/cancel-task', sessionMiddleware, async (req, res) => {
+  try {
+    const session = await getOrCreateSession(req.sessionId);
+    const { reason } = req.body || {};
+    const event = recordTaskCancellation(session, {
+      reason: typeof reason === 'string' ? reason.slice(0, 240) : undefined,
+    });
+    const state = await getPageState(session.page, { screenshot: false, sessionId: req.sessionId });
+    res.json({
+      ...state,
+      executionEvents: [event],
+      executionState: session.executionState,
+      taskState: 'cancelled',
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

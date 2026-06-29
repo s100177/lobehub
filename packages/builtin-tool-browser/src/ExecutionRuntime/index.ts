@@ -3,12 +3,14 @@ import { type BuiltinServerRuntimeOutput } from '@lobechat/types';
 import {
   type BrowserActionEvent,
   type BrowserState,
+  type CancelTaskParams,
   type ExecutePlanParams,
   type InterruptParams,
 } from '../types';
 
 export interface BrowserRuntimeService {
   back: () => Promise<BrowserState>;
+  cancelTask: (args: CancelTaskParams) => Promise<BrowserState>;
   click: (args: { selector: string; timeout?: number }) => Promise<BrowserState>;
   evaluate: (args: { code: string }) => Promise<BrowserState>;
   executePlan: (args: ExecutePlanParams) => Promise<BrowserState>;
@@ -250,6 +252,27 @@ export class BrowserExecutionRuntime {
     } catch (error) {
       return {
         content: `Failed to pause browser automation: ${error instanceof Error ? error.message : String(error)}`,
+        error,
+        success: false,
+      };
+    }
+  }
+
+  async cancelTask(args: CancelTaskParams = {}): Promise<BuiltinServerRuntimeOutput> {
+    try {
+      const state = await this.service.cancelTask(args);
+
+      return {
+        content: `Browser automation cancelled: ${args.reason || 'user cancelled the task'}`,
+        state: this.withEvent(
+          state,
+          this.createEvent('cancelTask', 'blocked', args.reason || 'Browser task cancelled'),
+        ),
+        success: true,
+      };
+    } catch (error) {
+      return {
+        content: `Failed to cancel browser automation: ${error instanceof Error ? error.message : String(error)}`,
         error,
         success: false,
       };

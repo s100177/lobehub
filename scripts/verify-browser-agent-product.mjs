@@ -613,6 +613,45 @@ try {
   );
   assert(buyFlag.result === undefined, `Expected buy plan not to purchase, got ${buyFlag.result}`);
 
+  await request(
+    '/navigate',
+    { mode: 'remote', url: `${pageOrigin}/kiki-cloud-buy-risk` },
+    'verify-agent-buy-cancel',
+  );
+  const cancelRiskExecution = await request(
+    '/execute-plan',
+    { authorized: true, intent: 'configure_before_purchase', maxSteps: 4 },
+    'verify-agent-buy-cancel',
+  );
+  assert(
+    cancelRiskExecution.taskState === 'risk_blocked',
+    `Expected cancel test to reach risk gate, got ${JSON.stringify({
+      events: cancelRiskExecution.executionEvents,
+      taskState: cancelRiskExecution.taskState,
+    })}`,
+  );
+  const cancelledRiskTask = await request(
+    '/cancel-task',
+    { reason: 'User cancelled the risky browser task before execution.' },
+    'verify-agent-buy-cancel',
+  );
+  assert(
+    cancelledRiskTask.taskState === 'cancelled' &&
+      cancelledRiskTask.executionState?.phase === 'cancelled' &&
+      cancelledRiskTask.executionEvents?.some(
+        (event) => event.action === 'cancel' && event.status === 'blocked',
+      ) &&
+      cancelledRiskTask.executionTimeline?.some(
+        (event) => event.action === 'cancel' && event.status === 'blocked',
+      ),
+    `Expected risk cancellation to be audited as terminal cancellation, got ${JSON.stringify({
+      events: cancelledRiskTask.executionEvents,
+      state: cancelledRiskTask.executionState,
+      taskState: cancelledRiskTask.taskState,
+      timeline: cancelledRiskTask.executionTimeline,
+    })}`,
+  );
+
   const ambiguous = await request(
     '/navigate',
     { mode: 'remote', url: `${pageOrigin}/kiki-cloud-buy-ambiguous` },

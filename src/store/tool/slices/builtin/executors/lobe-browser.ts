@@ -4,6 +4,7 @@ import {
   BrowserIdentifier,
   type BrowserRuntimeService,
   type BrowserState,
+  type CancelTaskParams,
   type ExecutePlanParams,
   type InterruptParams,
 } from '@lobechat/builtin-tool-browser';
@@ -40,6 +41,7 @@ const createBrowserRuntimeService = (
   signal?: AbortSignal,
 ): BrowserRuntimeService => ({
   back: () => callBrowserAction(sessionId, BrowserApiName.back, undefined, signal),
+  cancelTask: (args) => callBrowserAction(sessionId, BrowserApiName.cancelTask, args, signal),
   click: (args) => callBrowserAction(sessionId, BrowserApiName.click, args, signal),
   evaluate: (args) => callBrowserAction(sessionId, BrowserApiName.evaluate, args, signal),
   executePlan: (args) => callBrowserAction(sessionId, BrowserApiName.executePlan, args, signal),
@@ -107,6 +109,11 @@ class BrowserExecutor extends BaseExecutor<typeof BrowserApiName> {
     params: InterruptParams,
     ctx?: BuiltinToolContext,
   ): Promise<BuiltinToolResult> => this.runtime(ctx).interrupt(params);
+
+  cancelTask = async (
+    params: CancelTaskParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => this.runtime(ctx).cancelTask(params);
 
   inspect = async (_params: unknown, ctx?: BuiltinToolContext): Promise<BuiltinToolResult> =>
     this.runtime(ctx).inspect();

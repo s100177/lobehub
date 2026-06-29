@@ -1,15 +1,16 @@
 export const BrowserIdentifier = 'lobe-browser';
 
 export const BrowserApiName = {
-  navigate: 'navigate',
-  click: 'click',
   back: 'back',
+  cancelTask: 'cancelTask',
+  click: 'click',
   evaluate: 'evaluate',
   executePlan: 'executePlan',
   fill: 'fill',
   forward: 'forward',
   interrupt: 'interrupt',
   inspect: 'inspect',
+  navigate: 'navigate',
   screenshot: 'screenshot',
   scroll: 'scroll',
   submit: 'submit',
@@ -56,6 +57,10 @@ export interface InterruptParams {
   reason?: string;
 }
 
+export interface CancelTaskParams {
+  reason?: string;
+}
+
 export interface ScrollParams {
   x?: number;
   y?: number;
@@ -68,6 +73,7 @@ export interface EvaluateParams {
 export interface BrowserActionEvent {
   action:
     | 'back'
+    | 'cancelTask'
     | 'click'
     | 'evaluate'
     | 'executePlan'
@@ -97,6 +103,7 @@ export interface BrowserPageField {
 export interface BrowserPlanExecutionEvent {
   action?:
     | 'authorize'
+    | 'cancel'
     | 'click'
     | 'fill'
     | 'inspect'
@@ -123,6 +130,7 @@ export interface BrowserExecutionState {
     | 'paused_by_user_intervention'
     | 'paused_for_login'
     | 'risk_blocked'
+    | 'cancelled'
     | 'waiting_authorization';
   planIntent?: string;
   planKey?: string;
@@ -211,6 +219,7 @@ export type BrowserTaskState =
   | 'risk_blocked'
   | 'verifying'
   | 'completed'
+  | 'cancelled'
   | 'failed';
 
 export type BrowserRiskType =

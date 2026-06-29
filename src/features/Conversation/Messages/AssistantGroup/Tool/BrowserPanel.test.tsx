@@ -1071,4 +1071,156 @@ describe('BrowserPanel dual mode rendering', () => {
       });
     });
   });
+
+  it('records risk manual takeover as a server-side interruption', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({
+        embeddable: false,
+        executionEvents: [
+          {
+            action: 'interrupt',
+            id: 'user_intervention:risk_manual_takeover',
+            status: 'blocked',
+            summary:
+              'Automation paused because the user chose to handle the risky action manually.',
+            timestamp: 1,
+          },
+        ],
+        executionState: {
+          blockedStepId: 'risk_gate',
+          currentStepId: 'risk_gate',
+          cursor: 2,
+          phase: 'paused_by_user_intervention',
+          updatedAt: 1,
+        },
+        mode: 'remote',
+        taskState: 'paused_by_user_intervention',
+        title: 'Order',
+        url: 'https://example.com/order',
+      }),
+      ok: true,
+      status: 200,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <BrowserPanel
+        sessionId="session-risk-manual"
+        state={{
+          blocked: true,
+          embeddable: false,
+          mode: 'remote',
+          riskBlock: {
+            action: 'submit',
+            reason: 'Blocked risky submit on "提交订单"',
+            requiresUserConfirmation: true,
+            risk: 'purchase',
+            targetText: '提交订单',
+          },
+          taskState: 'risk_blocked',
+          title: 'Order',
+          url: 'https://example.com/order',
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByText('我手动处理'));
+
+    expect(screen.getByText('Task State: paused_by_user_intervention')).toBeInTheDocument();
+    expect(screen.getByLabelText('Browser risk decision')).toHaveTextContent(
+      '你选择手动处理该风险动作',
+    );
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/browser/action', {
+        body: JSON.stringify({
+          action: 'interrupt',
+          params: {
+            inputType: 'risk_manual_takeover',
+            reason: 'Automation paused because the user chose to handle the risky action manually.',
+          },
+          sessionId: 'session-risk-manual',
+        }),
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+    });
+  });
+
+  it('records risk cancellation as a terminal browser task cancellation', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({
+        embeddable: false,
+        executionEvents: [
+          {
+            action: 'cancel',
+            id: 'task_cancelled:risk',
+            status: 'blocked',
+            summary: 'User cancelled the risky browser task before execution.',
+            timestamp: 1,
+          },
+        ],
+        executionState: {
+          blockedStepId: 'risk_gate',
+          currentStepId: 'risk_gate',
+          cursor: 2,
+          phase: 'cancelled',
+          updatedAt: 1,
+        },
+        mode: 'remote',
+        taskState: 'cancelled',
+        title: 'Order',
+        url: 'https://example.com/order',
+      }),
+      ok: true,
+      status: 200,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <BrowserPanel
+        sessionId="session-risk-cancel"
+        state={{
+          blocked: true,
+          embeddable: false,
+          mode: 'remote',
+          riskBlock: {
+            action: 'submit',
+            reason: 'Blocked risky submit on "提交订单"',
+            requiresUserConfirmation: true,
+            risk: 'purchase',
+            targetText: '提交订单',
+          },
+          taskState: 'risk_blocked',
+          title: 'Order',
+          url: 'https://example.com/order',
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByText('取消任务'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Task State: cancelled')).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText('User cancelled the risky browser task before execution.'),
+    ).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/browser/action', {
+        body: JSON.stringify({
+          action: 'cancelTask',
+          params: {
+            reason: 'User cancelled the risky browser task before execution.',
+          },
+          sessionId: 'session-risk-cancel',
+        }),
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+    });
+  });
 });

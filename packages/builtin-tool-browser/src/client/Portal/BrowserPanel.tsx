@@ -588,6 +588,7 @@ const taskStateDescriptions: Partial<Record<BrowserTaskState, string>> = {
   acting: 'AI is executing the authorized workflow.',
   ai_controlling: 'AI is controlling this browser after your authorization.',
   asking_clarification: 'AI needs your help to disambiguate the page or intent.',
+  cancelled: 'The browser workflow was cancelled by the user.',
   completed: 'The browser workflow is completed.',
   failed: 'The browser workflow failed and needs review.',
   idle: 'No active workflow has started yet.',
@@ -782,6 +783,32 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
         setLocalState({ ...data, sessionId });
       } catch (err) {
         appendLocalEvent(err instanceof Error ? err.message : String(err), 'error');
+      }
+    },
+    [appendLocalEvent, sessionId],
+  );
+
+  const cancelAutomationTask = useCallback(
+    async (reason: string) => {
+      appendLocalEvent(reason, 'blocked');
+
+      try {
+        const res = await fetch('/api/browser/action', {
+          body: JSON.stringify({
+            action: 'cancelTask',
+            params: { reason },
+            sessionId,
+          }),
+          cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          method: 'POST',
+        });
+        const data = await res.json().catch(() => undefined);
+        if (!res.ok) throw new Error(data?.error || `Cancel task failed with HTTP ${res.status}`);
+        setLocalState({ ...data, sessionId });
+      } catch (err) {
+        appendLocalEvent(err instanceof Error ? err.message : String(err), 'error');
+        updateTaskState('failed');
       }
     },
     [appendLocalEvent, sessionId],
@@ -1077,12 +1104,15 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
 
     if (decision === 'manual') {
       appendLocalEvent('User chose to handle the risky action manually.', 'blocked');
-      updateTaskState('idle');
+      updateTaskState('paused_by_user_intervention');
+      void interruptAutomation(
+        'risk_manual_takeover',
+        'Automation paused because the user chose to handle the risky action manually.',
+      );
       return;
     }
 
-    appendLocalEvent('User cancelled the risky browser task.', 'blocked');
-    updateTaskState('idle');
+    void cancelAutomationTask('User cancelled the risky browser task before execution.');
   };
 
   const saveClarification = (prompt?: BrowserClarificationPrompt) => {

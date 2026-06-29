@@ -11,6 +11,8 @@ const ALLOWED_ACTIONS = new Set([
   'scroll',
   'screenshot',
   'evaluate',
+  'cancelTask',
+  'cancel-task',
   'execute-plan',
   'executePlan',
   'inspect',
@@ -41,7 +43,8 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const serviceAction = action === 'executePlan' ? 'execute-plan' : action;
+    const serviceAction =
+      action === 'executePlan' ? 'execute-plan' : action === 'cancelTask' ? 'cancel-task' : action;
     const res = await fetch(`${browserServiceUrl}/${serviceAction}`, {
       body: JSON.stringify(params ?? {}),
       cache: 'no-store',

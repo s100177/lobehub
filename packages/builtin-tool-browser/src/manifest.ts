@@ -154,6 +154,20 @@ export const BrowserManifest: BuiltinToolManifest = {
     },
     {
       description:
+        'Cancel the current browser automation task as a terminal user decision. Use this when the user cancels a risky or unwanted browser workflow; it records an auditable cancellation and does not resume the workflow.',
+      name: BrowserApiName.cancelTask,
+      parameters: {
+        properties: {
+          reason: {
+            description: 'Human-readable reason for cancelling the browser automation task.',
+            type: 'string',
+          },
+        },
+        type: 'object',
+      },
+    },
+    {
+      description:
         'Execute the current page skill-pack plan only after explicit user authorization. Set authorized=true only when the user has confirmed the visible browser authorization card or explicitly approved execution. Runs only safe steps such as inspect, fill, search submit, and verify. Stops before missing information or risky actions such as purchase, payment, submit order, delete, release, or authorization.',
       name: BrowserApiName.executePlan,
       parameters: {

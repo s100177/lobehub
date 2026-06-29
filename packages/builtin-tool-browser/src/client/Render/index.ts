@@ -5,6 +5,7 @@ import BrowserCard from './BrowserCard';
 
 export const BrowserRenders: Record<string, BuiltinRender> = {
   [BrowserApiName.navigate]: BrowserCard,
+  [BrowserApiName.cancelTask]: BrowserCard,
   [BrowserApiName.click]: BrowserCard,
   [BrowserApiName.fill]: BrowserCard,
   [BrowserApiName.submit]: BrowserCard,

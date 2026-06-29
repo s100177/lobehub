@@ -294,6 +294,68 @@ describe('browser executor', () => {
     });
   });
 
+  it('proxies cancelTask actions as terminal browser task cancellations', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({
+        executionEvents: [
+          {
+            action: 'cancel',
+            id: 'task_cancelled:1',
+            status: 'blocked',
+            summary: 'User cancelled the risky browser task before execution.',
+            timestamp: 1,
+          },
+        ],
+        executionState: {
+          blockedStepId: 'risk_gate',
+          completedStepIds: ['inspect_current_page'],
+          currentStepId: 'risk_gate',
+          cursor: 2,
+          phase: 'cancelled',
+          updatedAt: 1,
+        },
+        taskState: 'cancelled',
+        title: 'Checkout',
+        url: 'https://example.com/checkout',
+      }),
+      ok: true,
+      status: 200,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await invokeExecutor(
+      BrowserIdentifier,
+      BrowserApiName.cancelTask,
+      { reason: 'User cancelled the risky browser task before execution.' },
+      { messageId: 'tool-message-id', topicId: 'topic-1', toolCallId: 'call-1' },
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/browser/action', {
+      body: JSON.stringify({
+        action: BrowserApiName.cancelTask,
+        params: {
+          reason: 'User cancelled the risky browser task before execution.',
+        },
+        sessionId: 'topic-1',
+      }),
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      signal: undefined,
+    });
+    expect(result).toMatchObject({
+      content: expect.stringContaining('Browser automation cancelled'),
+      state: {
+        executionState: expect.objectContaining({
+          phase: 'cancelled',
+        }),
+        sessionId: 'topic-1',
+        taskState: 'cancelled',
+      },
+      success: true,
+    });
+  });
+
   it('returns blocked state when the browser service rejects a risky click', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       json: async () => ({
