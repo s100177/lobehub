@@ -109,10 +109,11 @@ BROWSER_BUSINESS_DEMO_URL=https://your-business-system.example/path \
   BROWSER_BUSINESS_DEMO_INTENT=your_workflow_intent \
   BROWSER_BUSINESS_EXPECT_SKILL_PAGE=your_page_id \
   BROWSER_BUSINESS_EXPECT_RISK_ACTION=your_risk_gate_step_id \
+  BROWSER_BUSINESS_ASSERTIONS='[{"name":"未提交","code":"document.body.dataset.submitted","equals":null}]' \
   pnpm test:browser-business-demo
 ```
 
-这个脚本不会默认跑本地 fixture。它要求接入方提供真实 URL 和技能包目录，验证技能包匹配、计划生成、安全步骤执行和风险门阻塞。
+这个脚本不会默认跑本地 fixture。它要求接入方提供真实 URL 和技能包目录，验证技能包匹配、计划生成、安全步骤执行和风险门阻塞。可选的 `BROWSER_BUSINESS_ASSERTIONS` 是只读 JS 断言数组，用于证明风险门后页面没有出现提交、购买、支付、删除等副作用。
 
 ### 3.2 页面状态 inspect
 

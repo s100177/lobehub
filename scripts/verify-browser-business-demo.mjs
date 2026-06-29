@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -8,12 +9,13 @@ const browserOrigin = `http://127.0.0.1:${browserPort}`;
 const repoRoot = path.resolve(import.meta.dirname, '..');
 const inRepoServiceDir = path.resolve(repoRoot, 'browser-service');
 const deployedServiceDir = path.resolve(repoRoot, '..', 'browser-service');
-const browserServiceDir =
-  process.env.BROWSER_SERVICE_DIR ||
-  (existsSync(path.resolve(inRepoServiceDir, 'node_modules'))
-    ? inRepoServiceDir
-    : deployedServiceDir);
-const skillPacksDir = process.env.BROWSER_BUSINESS_SKILL_PACKS_DIR;
+const browserServiceDir = process.env.BROWSER_SERVICE_DIR || inRepoServiceDir;
+const dependencyServiceDir = existsSync(path.resolve(browserServiceDir, 'node_modules'))
+  ? browserServiceDir
+  : deployedServiceDir;
+const skillPacksDir = process.env.BROWSER_BUSINESS_SKILL_PACKS_DIR
+  ? path.resolve(repoRoot, process.env.BROWSER_BUSINESS_SKILL_PACKS_DIR)
+  : undefined;
 const targetUrl = process.env.BROWSER_BUSINESS_DEMO_URL;
 const intent = process.env.BROWSER_BUSINESS_DEMO_INTENT;
 const expectedSkillPage = process.env.BROWSER_BUSINESS_EXPECT_SKILL_PAGE;
@@ -22,6 +24,10 @@ const maxSteps = Number.parseInt(process.env.BROWSER_BUSINESS_DEMO_MAX_STEPS || 
 const inputs = process.env.BROWSER_BUSINESS_DEMO_INPUTS
   ? JSON.parse(process.env.BROWSER_BUSINESS_DEMO_INPUTS)
   : {};
+const assertions = process.env.BROWSER_BUSINESS_ASSERTIONS
+  ? JSON.parse(process.env.BROWSER_BUSINESS_ASSERTIONS)
+  : [];
+let browserServiceRuntimeDir;
 
 if (!targetUrl) {
   throw new Error('BROWSER_BUSINESS_DEMO_URL is required for a real business-system demo');
@@ -35,8 +41,35 @@ if (!existsSync(skillPacksDir)) {
   throw new Error(`BROWSER_BUSINESS_SKILL_PACKS_DIR does not exist: ${skillPacksDir}`);
 }
 
+if (!Array.isArray(assertions)) {
+  throw new Error('BROWSER_BUSINESS_ASSERTIONS must be a JSON array when provided');
+}
+
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function valuesEqual(actual, expected) {
+  return JSON.stringify(actual) === JSON.stringify(expected);
+}
+
+async function runAssertions(sessionId) {
+  for (const [index, item] of assertions.entries()) {
+    assert(item && typeof item === 'object', `Assertion ${index} must be an object`);
+    assert(typeof item.code === 'string' && item.code, `Assertion ${index} requires code`);
+    assert(
+      Object.hasOwn(item, 'equals'),
+      `Assertion ${item.name || index} requires an equals field`,
+    );
+
+    const evaluated = await request('/evaluate', { code: item.code }, sessionId);
+    assert(
+      valuesEqual(evaluated.result, item.equals),
+      `Assertion ${item.name || index} failed: expected ${JSON.stringify(
+        item.equals,
+      )}, got ${JSON.stringify(evaluated.result)}`,
+    );
+  }
 }
 
 function waitForProcessExit(child, timeout = 5000) {
@@ -87,7 +120,7 @@ async function request(pathname, body, sessionId) {
 }
 
 const browserService = spawn(process.execPath, ['index.js'], {
-  cwd: browserServiceDir,
+  cwd: createBrowserServiceRuntimeDir(),
   env: {
     ...process.env,
     BROWSER_SKILL_PACKS_DIR: skillPacksDir,
@@ -166,10 +199,39 @@ try {
     );
   }
 
+  await runAssertions(sessionId);
+
   console.log(
-    `Browser business demo verification passed for ${targetUrl} with skill pack ${navigated.skillPack.page}`,
+    `Browser business demo verification passed for ${targetUrl} with skill pack ${navigated.skillPack.page} and ${assertions.length} assertion(s)`,
   );
 } finally {
   browserService.kill('SIGTERM');
   await waitForProcessExit(browserService);
+  cleanupBrowserServiceRuntimeDir();
+}
+
+function createBrowserServiceRuntimeDir() {
+  if (existsSync(path.resolve(browserServiceDir, 'node_modules'))) return browserServiceDir;
+
+  browserServiceRuntimeDir = mkdtempSync(path.resolve(tmpdir(), 'lobe-browser-service-'));
+  cpSync(
+    path.resolve(browserServiceDir, 'index.js'),
+    path.resolve(browserServiceRuntimeDir, 'index.js'),
+  );
+  cpSync(
+    path.resolve(browserServiceDir, 'package.json'),
+    path.resolve(browserServiceRuntimeDir, 'package.json'),
+  );
+  symlinkSync(
+    path.resolve(dependencyServiceDir, 'node_modules'),
+    path.resolve(browserServiceRuntimeDir, 'node_modules'),
+    'dir',
+  );
+
+  return browserServiceRuntimeDir;
+}
+
+function cleanupBrowserServiceRuntimeDir() {
+  if (!browserServiceRuntimeDir) return;
+  rmSync(browserServiceRuntimeDir, { force: true, recursive: true });
 }

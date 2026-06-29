@@ -871,7 +871,8 @@ async function inspectPageState(page, options = {}) {
         const path = `${location.pathname}${location.search}`;
         const haystack = `${location.href} ${document.title} ${bodyText}`.toLowerCase();
         const siteMatches = !pack.site || site === pack.site || site.endsWith(`.${pack.site}`);
-        const pageTypeMatches = !pack.match?.pageType || pack.match.pageType === pageType;
+        const pageTypeMatches =
+          !pack.match?.pageType || pageType === 'page' || pack.match.pageType === pageType;
         const pathMatches =
           !pack.match?.paths?.length || pack.match.paths.some((item) => path.includes(item));
         const keywordMatches =

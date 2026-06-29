@@ -71,6 +71,7 @@ BROWSER_BUSINESS_DEMO_URL=https://your-business-system.example/path \
   BROWSER_BUSINESS_DEMO_INTENT=your_workflow_intent \
   BROWSER_BUSINESS_EXPECT_SKILL_PAGE=your_page_id \
   BROWSER_BUSINESS_EXPECT_RISK_ACTION=your_risk_gate_step_id \
+  BROWSER_BUSINESS_ASSERTIONS='[{"name":"未提交审批","code":"document.body.dataset.submitted","equals":null}]' \
   pnpm test:browser-business-demo
 ```
 
@@ -82,6 +83,7 @@ BROWSER_BUSINESS_DEMO_URL=https://your-business-system.example/path \
 - 计划必须来自 `skill_pack`。
 - 至少一个安全步骤执行完成。
 - 执行必须停在 `risk_blocked`，不能越过风险动作。
+- 如果提供 `BROWSER_BUSINESS_ASSERTIONS`，脚本会在风险门后执行只读 JS 断言，用于证明提交、购买、支付、删除等副作用没有发生。
 
 ### 2.1 L1：本地可控测试站点
 
