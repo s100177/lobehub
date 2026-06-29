@@ -97,6 +97,14 @@
   "prices": [{ "label": "配置费用", "value": "¥114.36" }],
   "primaryActions": [{ "text": "提交订单", "risk": "submit" }],
   "selectedOptions": ["2核4GB"],
+  "suggestedTasks": [
+    {
+      "intent": "configure_before_purchase",
+      "reason": "页面存在配置字段和购买风险动作",
+      "risk": "medium",
+      "title": "配置一套合适方案，但停在下单前"
+    }
+  ],
   "summary": "当前配置适合个人建站",
   "title": "...",
   "url": "...",

@@ -289,6 +289,22 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
 
     background: ${cssVar.colorBgContainer};
   `,
+  suggestedTaskGrid: css`
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 8px;
+    margin-block-start: 8px;
+  `,
+  suggestedTaskCard: css`
+    display: grid;
+    gap: 5px;
+
+    padding: 9px;
+    border: 1px solid ${cssVar.colorBorderSecondary};
+    border-radius: 10px;
+
+    background: ${cssVar.colorBgContainer};
+  `,
   planStatus: css`
     padding-block: 2px;
     padding-inline: 6px;
@@ -709,6 +725,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   const confirmBeforeProceed = pageState?.confirmBeforeProceed;
   const needsUserAttention = pageState?.needsUserAttention;
   const workflowHints = pageState?.workflowHints?.slice(0, 3) ?? [];
+  const suggestedTasks = pageState?.suggestedTasks?.slice(0, 4) ?? [];
   const gaps = pageState?.gaps?.slice(0, 3) ?? [];
   const confirmationPoints = pageState?.confirmationPoints?.slice(0, 2) ?? [];
   const plan = currentState.plan;
@@ -966,6 +983,29 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
           </div>
         </div>
       )}
+      {suggestedTasks.length > 0 && (
+        <div aria-label="Browser suggested tasks" className={styles.runtimeCard}>
+          <div className={styles.runtimeHeader}>
+            <span>当前页面推荐任务</span>
+            <span className={styles.pill}>from page state</span>
+          </div>
+          <div className={styles.taskText}>
+            这些任务来自当前页面类型、字段、价格、风险按钮和技能包匹配结果；点击执行前仍需要授权。
+          </div>
+          <div className={styles.suggestedTaskGrid}>
+            {suggestedTasks.map((task) => (
+              <div className={styles.suggestedTaskCard} key={task.intent}>
+                <div className={styles.taskTitle}>{task.title}</div>
+                <div className={styles.taskText}>{task.reason}</div>
+                <div className={styles.taskPills}>
+                  <span className={styles.pill}>{task.risk}</span>
+                  <span className={styles.pill}>{task.intent}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {taskState && authorizationStates.has(taskState) && (
         <div aria-label="Browser authorization card" className={styles.runtimeCard}>
           <div className={styles.runtimeHeader}>
@@ -1115,10 +1155,10 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
             </button>
             <button
               className={styles.primaryButton}
+              type="button"
               disabled={
                 !allRequiredClarificationsAnswered && !selectedClarification && !clarificationText
               }
-              type="button"
               onClick={() => submitClarifications(activeClarification)}
             >
               确认并继续规划

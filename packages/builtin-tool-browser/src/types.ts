@@ -143,6 +143,13 @@ export interface BrowserTargetHighlight {
   y?: number;
 }
 
+export interface BrowserSuggestedTask {
+  intent: string;
+  reason: string;
+  risk: 'high' | 'low' | 'medium';
+  title: string;
+}
+
 export interface BrowserPageState {
   actions?: BrowserPageAction[];
   clarifications?: BrowserClarificationPrompt[];
@@ -160,6 +167,7 @@ export interface BrowserPageState {
   prices?: BrowserPagePrice[];
   primaryActions?: BrowserPageAction[];
   selectedOptions?: string[];
+  suggestedTasks?: BrowserSuggestedTask[];
   targetHighlight?: BrowserTargetHighlight;
   taskState?: BrowserTaskState;
   textSample?: string;

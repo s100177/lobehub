@@ -348,6 +348,7 @@ scripts/verify-browser-agent-product.mjs
 视觉断言：
 
 - 推荐任务不得是固定模板，必须来自当前测试页状态。
+- 推荐任务必须展示 `title`、`reason`、`intent` 和风险等级，且点击执行前仍需走授权卡。
 - 未授权前没有自动操作。
 - 接管边界只作用于 BrowserViewport，不作用于整个 LobeHub 页面。
 - `asking_clarification` 状态必须保留接管边界，但停止后续自动点击。

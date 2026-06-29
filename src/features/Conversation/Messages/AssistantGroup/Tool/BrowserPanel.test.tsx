@@ -199,6 +199,20 @@ describe('BrowserPanel dual mode rendering', () => {
         loggedIn: false,
         needsUserAttention: true,
         pageType: 'purchase',
+        suggestedTasks: [
+          {
+            intent: 'explain_price',
+            reason: '页面检测到价格和购买确认动作',
+            risk: 'low',
+            title: '解释当前配置的价格构成',
+          },
+          {
+            intent: 'configure_before_purchase',
+            reason: '页面存在云服务器配置字段和购买风险动作',
+            risk: 'medium',
+            title: '配置个人建站服务器但停在下单前',
+          },
+        ],
         workflowHints: ['读取配置并停在确认前'],
       },
       plan: {
@@ -237,6 +251,14 @@ describe('BrowserPanel dual mode rendering', () => {
     expect(screen.getByText('cursor: 1')).toBeInTheDocument();
     expect(screen.getByText('step: risk_gate')).toBeInTheDocument();
     expect(screen.getAllByText('读取配置并停在确认前').length).toBeGreaterThan(0);
+    expect(screen.getByLabelText('Browser suggested tasks')).toHaveTextContent(
+      '解释当前配置的价格构成',
+    );
+    expect(screen.getByLabelText('Browser suggested tasks')).toHaveTextContent('low');
+    expect(screen.getByLabelText('Browser suggested tasks')).toHaveTextContent(
+      '配置个人建站服务器但停在下单前',
+    );
+    expect(screen.getByLabelText('Browser suggested tasks')).toHaveTextContent('medium');
     expect(screen.getByLabelText('Browser agent plan')).toHaveTextContent('页面技能包 workflow');
     expect(screen.getByLabelText('Browser agent plan')).toHaveTextContent('completed');
     expect(screen.getByLabelText('Browser agent plan')).toHaveTextContent('blocked');

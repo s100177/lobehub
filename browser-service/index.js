@@ -988,6 +988,105 @@ async function inspectPageState(page) {
       })
       .slice(0, 5);
 
+    const suggestedTasks = (() => {
+      const tasks = [];
+      const addTask = (task) => {
+        if (!task?.title || tasks.some((item) => item.intent === task.intent)) return;
+        tasks.push(task);
+      };
+      const hasRiskAction = actions.some((action) => action.risk);
+      const hasPrice = prices.length > 0;
+      const missingFieldCount = fields.filter((field) => field.label && !field.value).length;
+
+      if (workflow) {
+        addTask({
+          intent: workflow.intent,
+          reason: skillPack?.description
+            ? `当前页面匹配技能包：${skillPack.description}`
+            : '当前页面匹配页面技能包 workflow',
+          risk: workflow.steps.some((step) => step.type === 'risk_gate' || step.risk)
+            ? 'medium'
+            : 'low',
+          title: workflow.goal || workflow.intent,
+        });
+      }
+
+      if (pageType === 'purchase') {
+        if (hasPrice) {
+          addTask({
+            intent: 'explain_current_price',
+            reason: '页面检测到价格区域，可先审阅价格构成',
+            risk: 'low',
+            title: '解释当前配置的价格构成',
+          });
+        }
+        addTask({
+          intent: 'configure_before_purchase',
+          reason: hasRiskAction
+            ? '页面存在购买、支付或提交类风险动作，自动化必须停在确认前'
+            : '页面包含购买配置字段，可在安全范围内调整配置',
+          risk: hasRiskAction ? 'medium' : 'low',
+          title: '配置一套合适方案，但停在下单前',
+        });
+      }
+
+      if (pageType === 'search') {
+        addTask({
+          intent: 'search_and_summarize',
+          reason: '页面检测到搜索输入或结果区域',
+          risk: 'low',
+          title: '搜索并总结当前结果',
+        });
+        addTask({
+          intent: 'find_official_source',
+          reason: '搜索页可对比结果并识别可信来源',
+          risk: 'low',
+          title: '找到官方网站或可信来源',
+        });
+      }
+
+      if (pageType === 'form') {
+        addTask({
+          intent: 'complete_form_before_submit',
+          reason:
+            missingFieldCount > 0
+              ? `页面还有 ${missingFieldCount} 个未填写字段`
+              : '页面是表单流程，提交前必须确认',
+          risk: confirmBeforeProceed ? 'medium' : 'low',
+          title: '补全表单并停在提交前',
+        });
+      }
+
+      if (pageType === 'dashboard') {
+        addTask({
+          intent: 'review_resource_status',
+          reason: '页面检测到控制台或资源管理信息',
+          risk: 'low',
+          title: '读取当前资源状态并给出下一步建议',
+        });
+      }
+
+      if (!loggedIn) {
+        addTask({
+          intent: 'wait_for_login',
+          reason: '当前页面需要用户登录，AI 不会绕过登录或验证码',
+          risk: 'medium',
+          title: '等待你完成登录后继续',
+        });
+      }
+
+      if (hasRiskAction) {
+        addTask({
+          intent: 'review_risky_actions',
+          reason: '页面出现购买、支付、提交、删除或授权类动作',
+          risk: 'high',
+          title: '检查风险动作并标出需要你确认的位置',
+        });
+      }
+
+      return tasks.slice(0, 4);
+    })();
+
     const targetHighlight = (() => {
       const currentStep =
         plan?.steps?.find((step) => step.status === 'current') ||
@@ -1070,6 +1169,7 @@ async function inspectPageState(page) {
       primaryActions: actions.filter((action) => action.risk).slice(0, 10),
       plan,
       skillPack,
+      suggestedTasks,
       targetHighlight,
       taskState,
       workflowHints,

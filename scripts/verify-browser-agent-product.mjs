@@ -403,6 +403,12 @@ try {
     `Expected purchase workflow hint, got ${JSON.stringify(buy.pageState?.workflowHints)}`,
   );
   assert(
+    buy.pageState?.suggestedTasks?.some(
+      (task) => task.intent === 'configure_before_purchase' && task.risk === 'medium',
+    ),
+    `Expected purchase suggested task, got ${JSON.stringify(buy.pageState?.suggestedTasks)}`,
+  );
+  assert(
     buy.pageState?.prices?.some((price) => price.value.includes('¥114.36')),
     `Expected price extraction, got ${JSON.stringify(buy.pageState?.prices)}`,
   );
@@ -619,6 +625,10 @@ try {
       plan: search.plan,
       skillPack: search.skillPack,
     })}`,
+  );
+  assert(
+    search.pageState?.suggestedTasks?.some((task) => task.intent === 'find_official_source'),
+    `Expected search suggested task, got ${JSON.stringify(search.pageState?.suggestedTasks)}`,
   );
   assertTargetHighlight(search.pageState?.targetHighlight, /搜索|查询/, 'search page');
   const searchExecution = await request(
