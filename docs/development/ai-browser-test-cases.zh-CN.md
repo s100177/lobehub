@@ -78,7 +78,14 @@ pnpm test:browser-business-demo-local
 cp examples/browser-business-demo/.env.example /path/to/browser-business-demo.env
 ```
 
-填好真实值后，先跑预检：
+填好真实值后，推荐用一条命令跑完整证据链：
+
+```bash
+BROWSER_BUSINESS_ENV_FILE=/path/to/browser-business-demo.env \
+  pnpm test:browser-business-demo-evidence
+```
+
+该命令会依次执行预检、真实演示、evidence validate 和 summary 生成。也可以分步执行，先跑预检：
 
 ```bash
 BROWSER_BUSINESS_ENV_FILE=/path/to/browser-business-demo.env \

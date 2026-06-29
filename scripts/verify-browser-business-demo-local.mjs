@@ -244,28 +244,22 @@ try {
   assert(address && typeof address === 'object', 'Local business demo server did not start');
 
   const targetUrl = `http://127.0.0.1:${address.port}/business-expense.html`;
+  const evidencePipeline = path.resolve(repoRoot, 'scripts/run-browser-business-demo-evidence.mjs');
 
   const demoEnv = {
     ...baseDemoEnv,
     BROWSER_BUSINESS_DEMO_INPUTS: '{"department":"研发部","reason":"客户现场紧急支持"}',
     BROWSER_BUSINESS_DEMO_URL: targetUrl,
+    BROWSER_BUSINESS_EVIDENCE_SUMMARY_FILE: evidenceSummaryFile,
+    BROWSER_BUSINESS_PREFLIGHT_REPORT_FILE: preflightReportFile,
   };
   const demoEnvFile = path.join(tmpRoot, 'browser-business-demo.env');
   writeDemoEnvFile(demoEnvFile, demoEnv);
 
-  await runNodeScript(verifier, {
+  await runNodeScript(evidencePipeline, {
     BROWSER_BUSINESS_ENV_FILE: demoEnvFile,
-    BROWSER_BUSINESS_PREFLIGHT: '1',
-    BROWSER_BUSINESS_PREFLIGHT_REPORT_FILE: preflightReportFile,
   });
   assertPreflightReport(preflightReportFile, targetUrl);
-
-  await runNodeScript(verifier, demoEnv);
-
-  await runNodeScript(verifier, {
-    BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE: evidenceFile,
-    BROWSER_BUSINESS_EVIDENCE_SUMMARY_FILE: evidenceSummaryFile,
-  });
   assertEvidenceSummary(evidenceSummaryFile, targetUrl);
 
   console.log(`Local browser business demo passed for ${targetUrl}`);

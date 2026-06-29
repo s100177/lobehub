@@ -117,7 +117,14 @@ pnpm test:browser-business-demo-local
 cp examples/browser-business-demo/.env.example /path/to/browser-business-demo.env
 ```
 
-填好真实 URL、技能包目录、workflow intent、输入和只读断言后，先跑不访问目标 URL 的预检：
+填好真实 URL、技能包目录、workflow intent、输入和只读断言后，推荐用一条命令跑完整证据链：
+
+```bash
+BROWSER_BUSINESS_ENV_FILE=/path/to/browser-business-demo.env \
+  pnpm test:browser-business-demo-evidence
+```
+
+该命令会依次执行不访问目标 URL 的预检、真实业务演示、evidence validate，并写出 preflight report、完整 evidence 和 summary。也可以分步执行，先跑预检：
 
 ```bash
 BROWSER_BUSINESS_ENV_FILE=/path/to/browser-business-demo.env \
