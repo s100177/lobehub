@@ -728,6 +728,7 @@ P2 通过标准：
 
 - 非部署浏览器门禁 `pnpm test:browser-release-gate` 通过。
 - 部署环境可用时，使用 `BROWSER_RELEASE_GATE_INCLUDE_DOCKER_E2E=1 pnpm test:browser-release-gate` 把 Docker UI E2E 纳入同一条门禁。
+- 真实业务系统 URL 和技能包可用时，使用 `BROWSER_RELEASE_GATE_INCLUDE_BUSINESS_EVIDENCE=1 pnpm test:browser-release-gate` 把真实业务 evidence 纳入同一条门禁。
 - L0 页面技能包静态校验通过。
 - L1 本地可控测试全通过。
 - L2 自动化脚本全通过。

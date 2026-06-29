@@ -140,6 +140,27 @@ BROWSER_RELEASE_GATE_INCLUDE_DOCKER_E2E=1 \
 
 开启后，release gate 会在非部署检查之后继续跑 `scripts/verify-browser-docker-ui-e2e.mjs`。`BROWSER_DOCKER_E2E_BASE_URL` 必须匹配部署容器信任的 `APP_URL` origin。
 
+拿到真实业务系统 URL 和匹配技能包后，也可以把真实业务 evidence 纳入同一条 release gate：
+
+```bash
+BROWSER_RELEASE_GATE_INCLUDE_BUSINESS_EVIDENCE=1 \
+  BROWSER_BUSINESS_ENV_FILE=/path/to/browser-business-demo.env \
+  pnpm test:browser-release-gate
+```
+
+最终上线前可以同时打开两个外部门禁：
+
+```bash
+BROWSER_RELEASE_GATE_INCLUDE_DOCKER_E2E=1 \
+  BROWSER_RELEASE_GATE_INCLUDE_BUSINESS_EVIDENCE=1 \
+  BROWSER_DOCKER_E2E_BASE_URL=http://192.168.1.36:3211 \
+  BROWSER_DOCKER_E2E_DATABASE_URL='postgresql://postgres:<password>@127.0.0.1:5435/lobechat' \
+  BROWSER_BUSINESS_ENV_FILE=/path/to/browser-business-demo.env \
+  pnpm test:browser-release-gate
+```
+
+真实业务 evidence 阶段会调用 `scripts/run-browser-business-demo-evidence.mjs`，按顺序生成 preflight report、完整 evidence 和 summary。
+
 上线前至少满足：
 
 - [x] 本地可控测试全通过。

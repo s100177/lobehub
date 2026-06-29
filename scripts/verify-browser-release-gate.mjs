@@ -3,6 +3,7 @@ import path from 'node:path';
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
 const defaultRealSmokeUrls = 'https://example.com/,https://www.iana.org/';
+const includeBusinessEvidence = process.env.BROWSER_RELEASE_GATE_INCLUDE_BUSINESS_EVIDENCE === '1';
 const includeDockerUiE2e = process.env.BROWSER_RELEASE_GATE_INCLUDE_DOCKER_E2E === '1';
 
 const steps = [
@@ -32,6 +33,13 @@ if (includeDockerUiE2e) {
   });
 }
 
+if (includeBusinessEvidence) {
+  steps.push({
+    args: ['scripts/run-browser-business-demo-evidence.mjs'],
+    name: 'User-provided real business-system evidence verification',
+  });
+}
+
 function runStep(step) {
   return new Promise((resolve, reject) => {
     console.log(`\n[browser-release-gate] ${step.name}`);
@@ -57,9 +65,24 @@ for (const step of steps) {
   await runStep(step);
 }
 
-if (includeDockerUiE2e) {
+if (includeDockerUiE2e && includeBusinessEvidence) {
+  console.log(
+    '\nBrowser release gate passed for non-deployment checks, Docker UI E2E, and user-provided real business-system evidence.',
+  );
+} else if (includeDockerUiE2e) {
   console.log('\nBrowser release gate passed for non-deployment checks and Docker UI E2E.');
   console.log('Remaining external gate: user-provided real business-system evidence.');
+  console.log(
+    'Set BROWSER_RELEASE_GATE_INCLUDE_BUSINESS_EVIDENCE=1 with BROWSER_BUSINESS_ENV_FILE to include the real business-system evidence gate.',
+  );
+} else if (includeBusinessEvidence) {
+  console.log(
+    '\nBrowser release gate passed for non-deployment checks and user-provided real business-system evidence.',
+  );
+  console.log('Remaining external gate: Docker UI E2E.');
+  console.log(
+    'Set BROWSER_RELEASE_GATE_INCLUDE_DOCKER_E2E=1 with BROWSER_DOCKER_E2E_BASE_URL and BROWSER_DOCKER_E2E_DATABASE_URL to include the deployed UI gate.',
+  );
 } else {
   console.log('\nBrowser release gate passed for non-deployment checks.');
   console.log(
@@ -67,5 +90,8 @@ if (includeDockerUiE2e) {
   );
   console.log(
     'Set BROWSER_RELEASE_GATE_INCLUDE_DOCKER_E2E=1 with BROWSER_DOCKER_E2E_BASE_URL and BROWSER_DOCKER_E2E_DATABASE_URL to include the deployed UI gate.',
+  );
+  console.log(
+    'Set BROWSER_RELEASE_GATE_INCLUDE_BUSINESS_EVIDENCE=1 with BROWSER_BUSINESS_ENV_FILE to include the real business-system evidence gate.',
   );
 }
