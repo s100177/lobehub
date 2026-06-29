@@ -136,6 +136,7 @@ BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE=.omx/artifacts/browser-business-demo.jso
 - 必须显式提供 `BROWSER_BUSINESS_SKILL_PACKS_DIR`，否则脚本失败。
 - `BROWSER_BUSINESS_PREFLIGHT=1` 必须能在不启动浏览器时通过配置检查。
 - `BROWSER_BUSINESS_PREFLIGHT=1` 必须校验 workflow 的全部 `action.inputKey` 都已在 `BROWSER_BUSINESS_DEMO_INPUTS` 中提供非空值。
+- `BROWSER_BUSINESS_EXPECT_RISK_ACTION` 必须匹配 workflow 的第一个 `risk_gate`，避免真实执行停在非预期风险门。
 - 页面必须匹配外部技能包。
 - 证据文件必须包含 `authorizationGate`，证明未传 `authorized: true` 时服务端停在 `waiting_user_authorization`，不会执行页面动作。
 - 计划必须来自 `skill_pack`。

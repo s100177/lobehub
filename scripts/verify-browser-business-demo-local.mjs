@@ -7,6 +7,7 @@ import path from 'node:path';
 const repoRoot = path.resolve(import.meta.dirname, '..');
 const tmpRoot = mkdtempSync(path.resolve(tmpdir(), 'lobe-browser-business-demo-local-'));
 const skillPackDir = path.join(tmpRoot, 'skill-packs');
+const multiRiskSkillPackDir = path.join(tmpRoot, 'skill-packs-multi-risk');
 const evidenceFile = path.join(tmpRoot, 'browser-business-demo-local.json');
 const evidenceSummaryFile = path.join(tmpRoot, 'browser-business-demo-local-summary.json');
 const expenseSkillPack = path.resolve(
@@ -59,6 +60,27 @@ function prepareSkillPack() {
   mkdirSync(skillPackDir, { recursive: true });
   writeFileSync(
     path.join(skillPackDir, 'expense-approval.json'),
+    `${JSON.stringify(skillPack, null, 2)}\n`,
+  );
+
+  return skillPack;
+}
+
+function prepareMultiRiskSkillPack(baseSkillPack) {
+  const skillPack = structuredClone(baseSkillPack);
+  const workflow = skillPack.workflows.find((item) => item.intent === 'expense_approval');
+  workflow.steps.push({
+    confirmationPoint: 'before_submit',
+    id: 'second_risk_gate',
+    risk: 'submit_again',
+    riskAction: 'submit_expense',
+    title: '第二个风险门不应成为演示期望',
+    type: 'risk_gate',
+  });
+
+  mkdirSync(multiRiskSkillPackDir, { recursive: true });
+  writeFileSync(
+    path.join(multiRiskSkillPackDir, 'expense-approval.json'),
     `${JSON.stringify(skillPack, null, 2)}\n`,
   );
 }
@@ -160,7 +182,8 @@ const server = http.createServer((req, res) => {
 });
 
 try {
-  prepareSkillPack();
+  const skillPack = prepareSkillPack();
+  prepareMultiRiskSkillPack(skillPack);
 
   const verifier = path.resolve(repoRoot, 'scripts/verify-browser-business-demo.mjs');
   const baseDemoEnv = {
@@ -182,6 +205,19 @@ try {
       BROWSER_BUSINESS_PREFLIGHT: '1',
     },
     /BROWSER_BUSINESS_DEMO_INPUTS is missing required workflow input/,
+  );
+
+  await expectNodeScriptFailure(
+    verifier,
+    {
+      ...baseDemoEnv,
+      BROWSER_BUSINESS_DEMO_INPUTS: '{"department":"研发部","reason":"客户现场紧急支持"}',
+      BROWSER_BUSINESS_DEMO_URL: 'http://127.0.0.1:1/business-expense.html',
+      BROWSER_BUSINESS_EXPECT_RISK_ACTION: 'second_risk_gate',
+      BROWSER_BUSINESS_PREFLIGHT: '1',
+      BROWSER_BUSINESS_SKILL_PACKS_DIR: multiRiskSkillPackDir,
+    },
+    /must match the first risk_gate/,
   );
 
   await listen(server);

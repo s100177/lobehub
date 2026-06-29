@@ -140,18 +140,24 @@ function validateDemoConfiguration() {
     expectedWorkflow,
     `BROWSER_BUSINESS_DEMO_INTENT "${intent}" was not found in skill page ${expectedSkillPage}`,
   );
+  const firstRiskGateStep = expectedWorkflow.steps.find((step) => step.type === 'risk_gate');
+  assert(firstRiskGateStep, `Workflow ${intent} must contain a risk_gate`);
   assert(
-    expectedWorkflow.steps.some(
-      (step) =>
-        step.type === 'risk_gate' &&
-        (step.id === expectedRiskAction ||
-          step.riskAction === expectedRiskAction ||
-          step.risk === expectedRiskAction),
-    ),
-    `BROWSER_BUSINESS_EXPECT_RISK_ACTION "${expectedRiskAction}" did not match a risk_gate in workflow ${intent}`,
+    riskGateMatches(firstRiskGateStep, expectedRiskAction),
+    `BROWSER_BUSINESS_EXPECT_RISK_ACTION "${expectedRiskAction}" must match the first risk_gate in workflow ${intent}, got ${JSON.stringify(
+      {
+        id: firstRiskGateStep.id,
+        risk: firstRiskGateStep.risk,
+        riskAction: firstRiskGateStep.riskAction,
+      },
+    )}`,
   );
 
   assertWorkflowInputsProvided(expectedWorkflow);
+}
+
+function riskGateMatches(step, expected) {
+  return step.id === expected || step.riskAction === expected || step.risk === expected;
 }
 
 function assertWorkflowInputsProvided(workflow) {
