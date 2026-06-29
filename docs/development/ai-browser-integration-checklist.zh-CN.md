@@ -121,6 +121,14 @@
 
 ## 12. 发布门槛
 
+提交前先跑非部署浏览器门禁：
+
+```bash
+pnpm test:browser-release-gate
+```
+
+该命令顺序覆盖技能包静态校验、KiKi 式浏览器代理产品验证、本地业务系统 demo evidence 校验和真实站点只读 smoke。它不覆盖 Docker 部署 UI E2E，也不能替代指定业务系统真实页面 evidence。
+
 上线前至少满足：
 
 - [x] 本地可控测试全通过。
