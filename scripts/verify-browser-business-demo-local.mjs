@@ -126,6 +126,11 @@ function expectNodeScriptFailure(script, env, pattern) {
   });
 }
 
+function writeDemoEnvFile(file, env) {
+  const lines = Object.entries(env).map(([key, value]) => `${key}='${String(value)}'`);
+  writeFileSync(file, `${lines.join('\n')}\n`);
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url || '/', 'http://127.0.0.1');
 
@@ -175,9 +180,11 @@ try {
     BROWSER_BUSINESS_DEMO_INPUTS: '{"department":"研发部","reason":"客户现场紧急支持"}',
     BROWSER_BUSINESS_DEMO_URL: targetUrl,
   };
+  const demoEnvFile = path.join(tmpRoot, 'browser-business-demo.env');
+  writeDemoEnvFile(demoEnvFile, demoEnv);
 
   await runNodeScript(verifier, {
-    ...demoEnv,
+    BROWSER_BUSINESS_ENV_FILE: demoEnvFile,
     BROWSER_BUSINESS_PREFLIGHT: '1',
   });
 

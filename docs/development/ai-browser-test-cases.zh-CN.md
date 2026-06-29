@@ -72,6 +72,29 @@ pnpm test:browser-business-demo-local
 
 运行方式：
 
+推荐先复制真实业务 demo env 模板：
+
+```bash
+cp examples/browser-business-demo/.env.example /path/to/browser-business-demo.env
+```
+
+填好真实值后，先跑预检：
+
+```bash
+BROWSER_BUSINESS_ENV_FILE=/path/to/browser-business-demo.env \
+  BROWSER_BUSINESS_PREFLIGHT=1 \
+  pnpm test:browser-business-demo
+```
+
+预检通过后再执行真实演示：
+
+```bash
+BROWSER_BUSINESS_ENV_FILE=/path/to/browser-business-demo.env \
+  pnpm test:browser-business-demo
+```
+
+也可以直接在命令行传环境变量：
+
 ```bash
 BROWSER_BUSINESS_DEMO_URL=https://your-business-system.example/path \
   BROWSER_BUSINESS_SKILL_PACKS_DIR=/path/to/your/skill-packs \

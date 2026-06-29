@@ -16,9 +16,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import { loadValidatedSkillPacks } from './verify-browser-skill-packs.mjs';
 
+const repoRoot = path.resolve(import.meta.dirname, '..');
+
+loadEnvFile(process.env.BROWSER_BUSINESS_ENV_FILE);
+
 const browserPort = Number.parseInt(process.env.BROWSER_BUSINESS_DEMO_PORT || '3340', 10);
 const browserOrigin = `http://127.0.0.1:${browserPort}`;
-const repoRoot = path.resolve(import.meta.dirname, '..');
 const inRepoServiceDir = path.resolve(repoRoot, 'browser-service');
 const deployedServiceDir = path.resolve(repoRoot, '..', 'browser-service');
 const browserServiceDir = process.env.BROWSER_SERVICE_DIR || inRepoServiceDir;
@@ -59,6 +62,40 @@ validateDemoConfiguration();
 if (preflightOnly) {
   console.log(`Browser business demo preflight passed for ${targetUrl}`);
   process.exit(0);
+}
+
+function loadEnvFile(file) {
+  if (!file) return;
+
+  const envFile = path.resolve(repoRoot, file);
+  assert(existsSync(envFile), `BROWSER_BUSINESS_ENV_FILE does not exist: ${envFile}`);
+
+  const lines = readFileSync(envFile, 'utf8').split(/\r?\n/);
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+
+    const separatorIndex = line.indexOf('=');
+    assert(separatorIndex > 0, `${envFile}:${index + 1} must use KEY=value syntax`);
+
+    const key = line.slice(0, separatorIndex).trim();
+    const rawValue = line.slice(separatorIndex + 1);
+    assert(/^[A-Z0-9_]+$/.test(key), `${envFile}:${index + 1} has invalid key "${key}"`);
+    if (process.env[key] !== undefined) continue;
+
+    process.env[key] = unquoteEnvValue(rawValue.trim());
+  }
+}
+
+function unquoteEnvValue(value) {
+  if (
+    (value.startsWith("'") && value.endsWith("'")) ||
+    (value.startsWith('"') && value.endsWith('"'))
+  ) {
+    return value.slice(1, -1);
+  }
+
+  return value;
 }
 
 function validateDemoConfiguration() {

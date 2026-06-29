@@ -111,6 +111,29 @@ pnpm test:browser-business-demo-local
 
 它会启动临时费用审批页面，复用 `examples/browser-skill-packs/expense-approval.json` 生成本地匹配技能包，并校验 evidence。该命令只证明本地可控业务页闭环，不能替代接入方真实业务 URL 验收。
 
+真实业务系统建议先复制 env 模板，避免多行命令里漏字段：
+
+```bash
+cp examples/browser-business-demo/.env.example /path/to/browser-business-demo.env
+```
+
+填好真实 URL、技能包目录、workflow intent、输入和只读断言后，先跑不访问目标 URL 的预检：
+
+```bash
+BROWSER_BUSINESS_ENV_FILE=/path/to/browser-business-demo.env \
+  BROWSER_BUSINESS_PREFLIGHT=1 \
+  pnpm test:browser-business-demo
+```
+
+预检通过后再执行真实演示：
+
+```bash
+BROWSER_BUSINESS_ENV_FILE=/path/to/browser-business-demo.env \
+  pnpm test:browser-business-demo
+```
+
+也可以直接通过命令行传环境变量：
+
 ```bash
 BROWSER_BUSINESS_DEMO_URL=https://your-business-system.example/path \
   BROWSER_BUSINESS_SKILL_PACKS_DIR=/path/to/your/skill-packs \
