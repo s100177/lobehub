@@ -116,6 +116,7 @@ vertex-ai-key.json
 .mcp.json
 CLAUDE.local.md
 .agent/
+.omx/artifacts/
 
 # MCP tools
 .serena/**

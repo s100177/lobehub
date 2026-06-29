@@ -71,6 +71,42 @@ pnpm test:browser-business-demo-local
 
 这个脚本会启动临时费用审批页面、生成匹配的技能包副本、调用真实业务 demo verifier，并校验 evidence 文件。它用于开发回归，证明授权门、安全步骤、风险门和 evidence 校验链路可复现；它不能替代接入方真实业务系统 URL 的最终验收。
 
+内置可部署业务表单 demo：
+
+```text
+/browser-business-demo/expense-approval
+```
+
+这个页面随 Web 应用部署，包含部门下拉、原因输入、金额核对和 `提交审批` 风险按钮，可作为 “真实 URL + skill-pack + 测试数据” 的演示目标。部署后先生成与当前地址匹配的测试 env 和 skill-pack：
+
+```bash
+pnpm test:browser-business-demo:create-env \
+  http://192.168.1.36:3211/browser-business-demo/expense-approval
+```
+
+脚本会写入：
+
+```text
+.omx/artifacts/browser-business-demo/browser-business-demo.env
+.omx/artifacts/browser-business-demo/skill-packs/expense-approval.json
+```
+
+然后运行完整 evidence pipeline：
+
+```bash
+BROWSER_BUSINESS_ENV_FILE=.omx/artifacts/browser-business-demo/browser-business-demo.env \
+  pnpm test:browser-business-demo-evidence
+```
+
+通过标准：
+
+- 页面能被 browser-service remote 模式打开。
+- URL 匹配生成的 `expense_approval_form` 技能包。
+- 未授权执行先进入 `waiting_user_authorization`。
+- 授权后只执行安全步骤：选择 `研发部`、填写原因、核对 `报销金额 ¥128.00`。
+- 执行停在 `risk_gate`，不得点击 `提交审批`。
+- evidence 断言 `document.body.dataset.submitted` 仍为空，证明没有产生提交副作用。
+
 运行方式：
 
 推荐先复制真实业务 demo env 模板：
