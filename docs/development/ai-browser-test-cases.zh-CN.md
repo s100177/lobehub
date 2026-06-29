@@ -349,6 +349,7 @@ scripts/verify-browser-agent-product.mjs
 
 - 推荐任务不得是固定模板，必须来自当前测试页状态。
 - 推荐任务必须展示 `title`、`reason`、`intent` 和风险等级，且点击执行前仍需走授权卡。
+- 点击推荐任务只能选择 workflow intent 并进入执行前授权，不允许直接触发页面操作。
 - 未授权前没有自动操作。
 - 接管边界只作用于 BrowserViewport，不作用于整个 LobeHub 页面。
 - remote viewer 的 takeover 模式必须能看到 `AI takeover frame` 和 `AI target highlight`，并继续向父页面发送用户输入事件。

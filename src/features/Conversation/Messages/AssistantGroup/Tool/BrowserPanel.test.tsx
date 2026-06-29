@@ -177,7 +177,21 @@ describe('BrowserPanel dual mode rendering', () => {
     expect(screen.getByText('Blocked risky click on "立即购买"')).toBeInTheDocument();
   });
 
-  it('renders page intelligence signals for authorization and execution planning', () => {
+  it('selects a suggested task before authorizing plan execution', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({
+        embeddable: false,
+        executionEvents: [],
+        mode: 'remote',
+        taskState: 'completed',
+        title: 'Purchase',
+        url: 'https://example.com/purchase',
+      }),
+      ok: true,
+      status: 200,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
     const state: BrowserState = {
       embeddable: false,
       executionState: {
@@ -259,6 +273,11 @@ describe('BrowserPanel dual mode rendering', () => {
       '配置个人建站服务器但停在下单前',
     );
     expect(screen.getByLabelText('Browser suggested tasks')).toHaveTextContent('medium');
+    fireEvent.click(screen.getByText('配置个人建站服务器但停在下单前'));
+    expect(screen.getByText('已选择推荐任务')).toBeInTheDocument();
+    expect(screen.getByLabelText('Browser authorization card')).toHaveTextContent(
+      '配置个人建站服务器但停在下单前',
+    );
     expect(screen.getByLabelText('Browser agent plan')).toHaveTextContent('页面技能包 workflow');
     expect(screen.getByLabelText('Browser agent plan')).toHaveTextContent('completed');
     expect(screen.getByLabelText('Browser agent plan')).toHaveTextContent('blocked');
@@ -268,6 +287,25 @@ describe('BrowserPanel dual mode rendering', () => {
     ).toBeInTheDocument();
     expect(screen.getByText('login_required')).toBeInTheDocument();
     expect(screen.getByText('提交前确认 - 提交后不可撤销')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('帮我操作'));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/browser/action', {
+        body: JSON.stringify({
+          action: 'executePlan',
+          params: {
+            inputs: {},
+            intent: 'configure_before_purchase',
+            maxSteps: 4,
+          },
+          sessionId: 'session-signal',
+        }),
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+    });
   });
 
   it('authorizes AI takeover and executes the safe browser plan', async () => {

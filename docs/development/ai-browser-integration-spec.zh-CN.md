@@ -73,6 +73,7 @@
 - 如果业务需要从头重跑 workflow，调用 `executePlan` 时显式传入 `restart: true`。
 - clarification 的 `field` 会作为 `executePlan.inputs[field]` 传回运行时，建议与 workflow step 的 `action.inputKey` 保持一致。
 - 一个页面可以同时返回多个 clarification。BrowserPanel 会按队列逐项收集用户回答，展示已回答字段，并在用户确认继续规划后一次性传入 `executePlan.inputs`。
+- 用户选择 `suggestedTasks` 后只会进入授权卡，不会直接执行。授权执行时可把 `suggestedTasks.intent` 作为 `executePlan.intent`，运行时优先选择匹配的 skill-pack workflow。
 
 ### 3.2 页面状态 inspect
 

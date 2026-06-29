@@ -84,6 +84,19 @@ writeFileSync(
             },
           ],
         },
+        {
+          goal: '只核对费用审批金额，不填写或提交',
+          intent: 'expense_review_only',
+          steps: [
+            { id: 'inspect_review', title: '读取费用审批表单', type: 'inspect' },
+            {
+              action: { expectedText: '报销金额 ¥128.00', selector: 'body' },
+              id: 'verify_amount_only',
+              title: '只核对报销金额',
+              type: 'verify',
+            },
+          ],
+        },
       ],
     },
     null,
@@ -497,6 +510,26 @@ try {
     `Expected expense page to expose department clarification options, got ${JSON.stringify(
       expense.pageState?.clarifications,
     )}`,
+  );
+  await request(
+    '/navigate',
+    { mode: 'remote', url: `${pageOrigin}/business-expense` },
+    'verify-agent-expense-review',
+  );
+  const reviewOnlyExecution = await request(
+    '/execute-plan',
+    { intent: 'expense_review_only', maxSteps: 3 },
+    'verify-agent-expense-review',
+  );
+  assert(
+    reviewOnlyExecution.plan?.intent === 'expense_review_only' &&
+      reviewOnlyExecution.executionEvents?.some(
+        (event) => event.id === 'verify_amount_only' && event.status === 'completed',
+      ),
+    `Expected selected review-only workflow, got ${JSON.stringify({
+      events: reviewOnlyExecution.executionEvents,
+      plan: reviewOnlyExecution.plan,
+    })}`,
   );
   const expenseExecution = await request('/execute-plan', { maxSteps: 4 }, 'verify-agent-expense');
   assert(

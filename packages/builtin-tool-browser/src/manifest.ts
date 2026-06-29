@@ -146,6 +146,11 @@ export const BrowserManifest: BuiltinToolManifest = {
               'Structured user-provided inputs for the plan, for example {"query":"复星医药"}. Do not guess missing required inputs.',
             type: 'object',
           },
+          intent: {
+            description:
+              'Optional workflow intent selected from page suggested tasks. The browser runtime will prefer a matching skill-pack workflow and still require user authorization before executing.',
+            type: 'string',
+          },
           maxSteps: {
             description: 'Maximum safe plan steps to run in one call (default: 4).',
             type: 'number',

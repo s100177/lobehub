@@ -40,6 +40,7 @@ export interface SubmitParams {
 
 export interface ExecutePlanParams {
   inputs?: Record<string, string>;
+  intent?: string;
   maxSteps?: number;
   restart?: boolean;
   timeout?: number;

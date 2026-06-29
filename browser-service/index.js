@@ -195,7 +195,9 @@ async function getPageState(page, options = {}) {
     page.title().catch(() => ''),
     includeScreenshot ? page.screenshot({ fullPage: false, type: 'png' }).catch(() => null) : null,
     getPointerState(page, options.pointer),
-    includePageState ? inspectPageState(page).catch(() => undefined) : undefined,
+    includePageState
+      ? inspectPageState(page, { intent: options.intent }).catch(() => undefined)
+      : undefined,
   ]);
 
   return {
@@ -573,612 +575,632 @@ function createExecutionEvent({ action, id, status, summary, target }) {
   };
 }
 
-async function inspectPageState(page) {
-  return await page.evaluate((externalSkillPacks) => {
-    const visible = (element) => {
-      const rect = element.getBoundingClientRect();
-      const style = getComputedStyle(element);
-      return (
-        rect.width > 0 &&
-        rect.height > 0 &&
-        style.display !== 'none' &&
-        style.visibility !== 'hidden'
-      );
-    };
+async function inspectPageState(page, options = {}) {
+  const requestedIntent =
+    typeof options.intent === 'string' && options.intent.trim() ? options.intent.trim() : undefined;
 
-    const clean = (value) => value?.replaceAll(/\s+/g, ' ').trim() || '';
-
-    const cssEscape = (value) =>
-      globalThis.CSS?.escape
-        ? globalThis.CSS.escape(value)
-        : String(value).replaceAll(/[^\w-]/g, '\\$&');
-
-    const cssAttrEscape = (value) => String(value).replaceAll('\\', '\\\\').replaceAll('"', '\\"');
-
-    const isUniqueSelector = (selector) => {
-      try {
-        return document.querySelectorAll(selector).length === 1;
-      } catch {
-        return false;
-      }
-    };
-
-    const selectorFor = (element) => {
-      if (element.id) {
-        const idSelector = `#${cssEscape(element.id)}`;
-        if (isUniqueSelector(idSelector)) return idSelector;
-      }
-
-      for (const attr of ['data-testid', 'data-test-id', 'data-cy', 'name', 'aria-label']) {
-        const value = element.getAttribute(attr);
-        if (!value) continue;
-
-        const selector = `${element.tagName.toLowerCase()}[${attr}="${cssAttrEscape(value)}"]`;
-        if (isUniqueSelector(selector)) return selector;
-      }
-
-      const parts = [];
-      let current = element;
-      while (current && current.nodeType === Node.ELEMENT_NODE && current !== document.body) {
-        const tag = current.tagName.toLowerCase();
-        const parent = current.parentElement;
-        if (!parent) break;
-
-        const siblings = [...parent.children].filter((child) => child.tagName === current.tagName);
-        const index = siblings.indexOf(current) + 1;
-        parts.unshift(siblings.length > 1 ? `${tag}:nth-of-type(${index})` : tag);
-
-        const selector = parts.join(' > ');
-        if (isUniqueSelector(selector)) return selector;
-
-        current = parent;
-      }
-
-      return parts.length > 0 ? `body > ${parts.join(' > ')}` : element.tagName.toLowerCase();
-    };
-
-    const rectFor = (element) => {
-      const rect = element.getBoundingClientRect();
-      const x = Math.max(0, Math.min(window.innerWidth, rect.left));
-      const y = Math.max(0, Math.min(window.innerHeight, rect.top));
-      const right = Math.max(0, Math.min(window.innerWidth, rect.right));
-      const bottom = Math.max(0, Math.min(window.innerHeight, rect.bottom));
-
-      return {
-        height: Math.max(1, Math.round((bottom - y) * 10) / 10),
-        width: Math.max(1, Math.round((right - x) * 10) / 10),
-        x: Math.round(x * 10) / 10,
-        y: Math.round(y * 10) / 10,
-      };
-    };
-
-    const highlightFor = (element, label) => {
-      if (!element || !visible(element)) return undefined;
-
-      return {
-        ...rectFor(element),
-        label: clean(label).slice(0, 120),
-        selector: selectorFor(element),
-      };
-    };
-
-    const classifyRisk = (text = '') => {
-      const normalized = text.replaceAll(/\s+/g, '');
-      if (!normalized) return undefined;
-      if (/购买|下单|订单|支付|付款|续费|充值/.test(normalized)) return 'purchase';
-      if (/删除|释放|销毁|退订|注销|移除/.test(normalized)) return 'delete';
-      if (/授权|同意授权|允许访问|绑定/.test(normalized)) return 'authorization';
-      if (/创建|开通|新建|部署|申请|提交/.test(normalized)) return 'create';
-      if (/确认|提交|保存更改|修改密码|实名认证/.test(normalized)) return 'submit';
-      return undefined;
-    };
-
-    const fieldLabel = (element) => {
-      const id = element.id;
-      const explicit = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
-      const implicit = element.closest('label');
-      const aria = element.getAttribute('aria-label');
-      const placeholder = element.getAttribute('placeholder');
-      const parentText = clean(element.closest('.tea-form__item, .form-item, .field')?.innerText);
-      return clean(explicit?.innerText || implicit?.innerText || aria || placeholder || parentText);
-    };
-
-    const fieldCandidates = [...document.querySelectorAll('input, textarea, select')]
-      .filter(visible)
-      .slice(0, 80)
-      .map((element) => {
-        const isCheckbox = element instanceof HTMLInputElement && element.type === 'checkbox';
-        const isRadio = element instanceof HTMLInputElement && element.type === 'radio';
-        const value =
-          element instanceof HTMLSelectElement
-            ? element.selectedOptions[0]?.textContent || element.value
-            : element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
-              ? element.value
-              : '';
-
-        return {
-          element,
-          field: {
-            ...(isCheckbox || isRadio ? { checked: element.checked } : {}),
-            label: fieldLabel(element).slice(0, 120),
-            ...(element instanceof HTMLSelectElement
-              ? {
-                  options: [...element.options]
-                    .map((option) => clean(option.textContent))
-                    .slice(0, 30),
-                }
-              : {}),
-            selector: selectorFor(element),
-            value: clean(value).slice(0, 120),
-          },
-        };
-      })
-      .filter(({ field }) => field.label || field.value);
-
-    const fields = fieldCandidates.map(({ field }) => field);
-
-    const selectedOptions = [
-      ...document.querySelectorAll(
-        '.is-selected, .is-active, .is-checked, .selected, [aria-selected="true"], [aria-checked="true"], input:checked',
-      ),
-    ]
-      .filter(visible)
-      .map((element) =>
-        clean(element.innerText || element.closest('label')?.innerText || element.value),
-      )
-      .filter(Boolean)
-      .slice(0, 30);
-
-    const actionCandidates = [
-      ...document.querySelectorAll(
-        'button, a, [role="button"], input[type="button"], input[type="submit"]',
-      ),
-    ]
-      .filter(visible)
-      .map((element) => {
-        const text = clean(
-          element.innerText ||
-            element.getAttribute('aria-label') ||
-            element.getAttribute('title') ||
-            element.value,
+  return await page.evaluate(
+    ({ externalSkillPacks, requestedIntent }) => {
+      const visible = (element) => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return (
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.display !== 'none' &&
+          style.visibility !== 'hidden'
         );
-        if (!text) return null;
+      };
+
+      const clean = (value) => value?.replaceAll(/\s+/g, ' ').trim() || '';
+
+      const cssEscape = (value) =>
+        globalThis.CSS?.escape
+          ? globalThis.CSS.escape(value)
+          : String(value).replaceAll(/[^\w-]/g, '\\$&');
+
+      const cssAttrEscape = (value) =>
+        String(value).replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+
+      const isUniqueSelector = (selector) => {
+        try {
+          return document.querySelectorAll(selector).length === 1;
+        } catch {
+          return false;
+        }
+      };
+
+      const selectorFor = (element) => {
+        if (element.id) {
+          const idSelector = `#${cssEscape(element.id)}`;
+          if (isUniqueSelector(idSelector)) return idSelector;
+        }
+
+        for (const attr of ['data-testid', 'data-test-id', 'data-cy', 'name', 'aria-label']) {
+          const value = element.getAttribute(attr);
+          if (!value) continue;
+
+          const selector = `${element.tagName.toLowerCase()}[${attr}="${cssAttrEscape(value)}"]`;
+          if (isUniqueSelector(selector)) return selector;
+        }
+
+        const parts = [];
+        let current = element;
+        while (current && current.nodeType === Node.ELEMENT_NODE && current !== document.body) {
+          const tag = current.tagName.toLowerCase();
+          const parent = current.parentElement;
+          if (!parent) break;
+
+          const siblings = [...parent.children].filter(
+            (child) => child.tagName === current.tagName,
+          );
+          const index = siblings.indexOf(current) + 1;
+          parts.unshift(siblings.length > 1 ? `${tag}:nth-of-type(${index})` : tag);
+
+          const selector = parts.join(' > ');
+          if (isUniqueSelector(selector)) return selector;
+
+          current = parent;
+        }
+
+        return parts.length > 0 ? `body > ${parts.join(' > ')}` : element.tagName.toLowerCase();
+      };
+
+      const rectFor = (element) => {
+        const rect = element.getBoundingClientRect();
+        const x = Math.max(0, Math.min(window.innerWidth, rect.left));
+        const y = Math.max(0, Math.min(window.innerHeight, rect.top));
+        const right = Math.max(0, Math.min(window.innerWidth, rect.right));
+        const bottom = Math.max(0, Math.min(window.innerHeight, rect.bottom));
+
         return {
-          action: {
-            ...(classifyRisk(text) ? { risk: classifyRisk(text) } : {}),
-            selector: selectorFor(element),
-            text: text.slice(0, 120),
-          },
-          element,
+          height: Math.max(1, Math.round((bottom - y) * 10) / 10),
+          width: Math.max(1, Math.round((right - x) * 10) / 10),
+          x: Math.round(x * 10) / 10,
+          y: Math.round(y * 10) / 10,
         };
-      })
-      .filter(Boolean)
-      .slice(0, 60);
+      };
 
-    const actions = actionCandidates.map(({ action }) => action);
+      const highlightFor = (element, label) => {
+        if (!element || !visible(element)) return undefined;
 
-    const bodyText = clean(document.body?.innerText || '');
-    const prices = [...bodyText.matchAll(/([^。\n]{0,12})[¥￥]\s?[\d,.]+(?:\/[^\s，。]+)?/g)]
-      .map((match) => ({
-        label: clean(match[1] || 'price').slice(0, 40),
-        value: clean(match[0]).slice(0, 80),
-      }))
-      .slice(0, 20);
+        return {
+          ...rectFor(element),
+          label: clean(label).slice(0, 120),
+          selector: selectorFor(element),
+        };
+      };
 
-    const warnings = bodyText
-      .split(/[。！？\n]/)
-      .map(clean)
-      .filter((line) => /不支持|风险|警告|注意|需要|禁止|失败|停服/.test(line))
-      .slice(0, 20);
+      const classifyRisk = (text = '') => {
+        const normalized = text.replaceAll(/\s+/g, '');
+        if (!normalized) return undefined;
+        if (/购买|下单|订单|支付|付款|续费|充值/.test(normalized)) return 'purchase';
+        if (/删除|释放|销毁|退订|注销|移除/.test(normalized)) return 'delete';
+        if (/授权|同意授权|允许访问|绑定/.test(normalized)) return 'authorization';
+        if (/创建|开通|新建|部署|申请|提交/.test(normalized)) return 'create';
+        if (/确认|提交|保存更改|修改密码|实名认证/.test(normalized)) return 'submit';
+        return undefined;
+      };
 
-    const pageType = (() => {
-      if (/登录|sign in|log in|账号密码|验证码|手机号验证/i.test(bodyText)) return 'login';
-      if (/购物车|立即购买|下单|支付|订单|结算|购买/.test(bodyText)) return 'purchase';
-      if (/搜索|查询|结果|百度一下|google|bing/i.test(bodyText)) return 'search';
-      if (fields.length > 0 && /提交|保存|申请|表单|审批/.test(bodyText)) return 'form';
-      if (/控制台|仪表盘|dashboard|overview|资源|管理/i.test(bodyText)) return 'dashboard';
-      return 'page';
-    })();
+      const fieldLabel = (element) => {
+        const id = element.id;
+        const explicit = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
+        const implicit = element.closest('label');
+        const aria = element.getAttribute('aria-label');
+        const placeholder = element.getAttribute('placeholder');
+        const parentText = clean(element.closest('.tea-form__item, .form-item, .field')?.innerText);
+        return clean(
+          explicit?.innerText || implicit?.innerText || aria || placeholder || parentText,
+        );
+      };
 
-    const loggedIn = !/登录|sign in|log in|请先登录|未登录/i.test(bodyText);
-    const confirmBeforeProceed = Boolean(
-      /立即购买|下单|提交订单|去支付|确认支付|删除|释放|授权|开通|保存更改/.test(bodyText),
-    );
-    const needsUserAttention = Boolean(
-      confirmBeforeProceed || /多个|请选择|二选一|请确认|需要补充|缺少|未填写/.test(bodyText),
-    );
+      const fieldCandidates = [...document.querySelectorAll('input, textarea, select')]
+        .filter(visible)
+        .slice(0, 80)
+        .map((element) => {
+          const isCheckbox = element instanceof HTMLInputElement && element.type === 'checkbox';
+          const isRadio = element instanceof HTMLInputElement && element.type === 'radio';
+          const value =
+            element instanceof HTMLSelectElement
+              ? element.selectedOptions[0]?.textContent || element.value
+              : element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+                ? element.value
+                : '';
 
-    const confirmationPoints = [
-      {
-        id: 'before_risk_action',
-        reason: '页面存在购买、支付、提交或删除类动作',
-        title: '风险动作前确认',
-      },
-    ].filter(() => confirmBeforeProceed);
+          return {
+            element,
+            field: {
+              ...(isCheckbox || isRadio ? { checked: element.checked } : {}),
+              label: fieldLabel(element).slice(0, 120),
+              ...(element instanceof HTMLSelectElement
+                ? {
+                    options: [...element.options]
+                      .map((option) => clean(option.textContent))
+                      .slice(0, 30),
+                  }
+                : {}),
+              selector: selectorFor(element),
+              value: clean(value).slice(0, 120),
+            },
+          };
+        })
+        .filter(({ field }) => field.label || field.value);
 
-    const gaps = [];
-    if (!loggedIn) gaps.push('login_required');
-    if (needsUserAttention) gaps.push('user_attention_required');
-    if (fields.some((field) => !field.value && field.label)) gaps.push('missing_field_values');
+      const fields = fieldCandidates.map(({ field }) => field);
 
-    const workflowHints = [];
-    if (pageType === 'login') workflowHints.push('先完成登录，再继续当前任务');
-    if (pageType === 'search') workflowHints.push('先输入搜索词，再提交搜索');
-    if (pageType === 'purchase') workflowHints.push('读取配置并停在确认前');
-    if (pageType === 'form') workflowHints.push('先补全必填字段，再提交前确认');
-    if (pageType === 'dashboard') workflowHints.push('先读取当前资源状态，再判断下一步');
+      const selectedOptions = [
+        ...document.querySelectorAll(
+          '.is-selected, .is-active, .is-checked, .selected, [aria-selected="true"], [aria-checked="true"], input:checked',
+        ),
+      ]
+        .filter(visible)
+        .map((element) =>
+          clean(element.innerText || element.closest('label')?.innerText || element.value),
+        )
+        .filter(Boolean)
+        .slice(0, 30);
 
-    const taskState = (() => {
-      if (!loggedIn) return 'needs_more_info';
-      if (confirmBeforeProceed) return 'waiting_user_authorization';
-      if (needsUserAttention) return 'asking_clarification';
-      if (pageType === 'purchase') return 'plan_ready';
-      if (pageType === 'search' || pageType === 'form' || pageType === 'dashboard')
-        return 'understanding';
-      return 'idle';
-    })();
+      const actionCandidates = [
+        ...document.querySelectorAll(
+          'button, a, [role="button"], input[type="button"], input[type="submit"]',
+        ),
+      ]
+        .filter(visible)
+        .map((element) => {
+          const text = clean(
+            element.innerText ||
+              element.getAttribute('aria-label') ||
+              element.getAttribute('title') ||
+              element.value,
+          );
+          if (!text) return null;
+          return {
+            action: {
+              ...(classifyRisk(text) ? { risk: classifyRisk(text) } : {}),
+              selector: selectorFor(element),
+              text: text.slice(0, 120),
+            },
+            element,
+          };
+        })
+        .filter(Boolean)
+        .slice(0, 60);
 
-    const matchesExternalSkillPack = (pack) => {
-      const site = location.hostname || 'local-page';
-      const path = `${location.pathname}${location.search}`;
-      const haystack = `${location.href} ${document.title} ${bodyText}`.toLowerCase();
-      const siteMatches = !pack.site || site === pack.site || site.endsWith(`.${pack.site}`);
-      const pageTypeMatches = !pack.match?.pageType || pack.match.pageType === pageType;
-      const pathMatches =
-        !pack.match?.paths?.length || pack.match.paths.some((item) => path.includes(item));
-      const keywordMatches =
-        !pack.match?.keywords?.length ||
-        pack.match.keywords.some((keyword) => haystack.includes(String(keyword).toLowerCase()));
+      const actions = actionCandidates.map(({ action }) => action);
 
-      return siteMatches && pageTypeMatches && pathMatches && keywordMatches;
-    };
+      const bodyText = clean(document.body?.innerText || '');
+      const prices = [...bodyText.matchAll(/([^。\n]{0,12})[¥￥]\s?[\d,.]+(?:\/[^\s，。]+)?/g)]
+        .map((match) => ({
+          label: clean(match[1] || 'price').slice(0, 40),
+          value: clean(match[0]).slice(0, 80),
+        }))
+        .slice(0, 20);
 
-    const externalSkillPack = externalSkillPacks.find(matchesExternalSkillPack);
+      const warnings = bodyText
+        .split(/[。！？\n]/)
+        .map(clean)
+        .filter((line) => /不支持|风险|警告|注意|需要|禁止|失败|停服/.test(line))
+        .slice(0, 20);
 
-    const buildSkillPack = () => {
-      if (externalSkillPack) return externalSkillPack;
+      const pageType = (() => {
+        if (/登录|sign in|log in|账号密码|验证码|手机号验证/i.test(bodyText)) return 'login';
+        if (/购物车|立即购买|下单|支付|订单|结算|购买/.test(bodyText)) return 'purchase';
+        if (/搜索|查询|结果|百度一下|google|bing/i.test(bodyText)) return 'search';
+        if (fields.length > 0 && /提交|保存|申请|表单|审批/.test(bodyText)) return 'form';
+        if (/控制台|仪表盘|dashboard|overview|资源|管理/i.test(bodyText)) return 'dashboard';
+        return 'page';
+      })();
 
-      const site = location.hostname || 'local-page';
-      const isCloudBuyPage = /kiki-cloud-buy|云服务器购买|订单确认/i.test(
-        `${location.pathname} ${bodyText}`,
+      const loggedIn = !/登录|sign in|log in|请先登录|未登录/i.test(bodyText);
+      const confirmBeforeProceed = Boolean(
+        /立即购买|下单|提交订单|去支付|确认支付|删除|释放|授权|开通|保存更改/.test(bodyText),
+      );
+      const needsUserAttention = Boolean(
+        confirmBeforeProceed || /多个|请选择|二选一|请确认|需要补充|缺少|未填写/.test(bodyText),
       );
 
-      if (isCloudBuyPage) {
-        return {
-          ambiguityRules: [
-            '多个地域、规格或预算都可行时必须询问用户',
-            '预算缺失时先询问或给出推荐',
-          ],
-          confirmationPoints: [
-            {
-              id: 'before_order',
-              reason: '提交订单、购买、支付、删除、释放和授权都属于风险动作',
-              title: '风险动作前确认',
-            },
-          ],
-          description: '云服务器购买/订单确认页面',
-          entities: ['region', 'scenario', 'instanceType', 'price', 'budget'],
-          fillGaps: [
-            {
-              field: 'region',
-              mode: 'ask_user',
-              reason: '地域影响延迟、价格和资源可用性',
-            },
-            {
-              field: 'budget',
-              mode: 'ask_user',
-              reason: '预算决定推荐配置上限',
-            },
-          ],
-          page: 'cloud_buy',
-          pageType: 'purchase',
-          riskActions: ['purchase', 'payment', 'submit_order', 'delete', 'release', 'authorize'],
-          safeActions: ['inspect_configuration', 'select_region', 'select_instance', 'read_price'],
-          site,
-          workflows: [
-            {
-              constraints: ['不要付款', '不要提交订单', '风险动作前必须停下'],
-              goal: '选择适合目标的云服务器配置并停在风险确认前',
-              intent: 'cloud_server_purchase',
-              steps: [
-                { id: 'inspect', title: '读取当前配置、价格和登录态', type: 'inspect' },
-                {
-                  gaps: ['region', 'budget'],
-                  id: 'collect_requirements',
-                  title: '补齐地域、预算或用途等关键信息',
-                  type: 'ask',
-                },
-                { id: 'select_config', title: '选择安全范围内的地域和实例规格', type: 'select' },
-                { id: 'read_price', title: '读取并核对费用', type: 'verify' },
-                {
-                  id: 'risk_gate',
-                  risk: 'purchase',
-                  title: '停在购买、支付或提交订单前等待用户确认',
-                  type: 'risk_gate',
-                },
-              ],
-            },
-          ],
-        };
-      }
+      const confirmationPoints = [
+        {
+          id: 'before_risk_action',
+          reason: '页面存在购买、支付、提交或删除类动作',
+          title: '风险动作前确认',
+        },
+      ].filter(() => confirmBeforeProceed);
 
-      if (pageType === 'search') {
-        return {
-          ambiguityRules: ['搜索词缺失时必须询问用户'],
-          description: '搜索页面',
-          entities: ['query', 'result'],
-          fillGaps: [{ field: 'query', mode: 'ask_user', reason: '搜索词决定查询目标' }],
-          page: 'search',
-          pageType: 'search',
-          riskActions: [],
-          safeActions: ['fill_query', 'submit_search', 'open_result'],
-          site,
-          workflows: [
-            {
-              goal: '输入搜索词并提交搜索',
-              intent: 'search_web',
-              steps: [
-                { id: 'inspect', title: '读取搜索框和当前页面状态', type: 'inspect' },
-                { gaps: ['query'], id: 'fill_query', title: '填写搜索词', type: 'fill' },
-                { id: 'submit_search', title: '提交搜索表单', type: 'click' },
-                { id: 'verify_results', title: '确认搜索结果已出现', type: 'verify' },
-              ],
-            },
-          ],
-        };
-      }
+      const gaps = [];
+      if (!loggedIn) gaps.push('login_required');
+      if (needsUserAttention) gaps.push('user_attention_required');
+      if (fields.some((field) => !field.value && field.label)) gaps.push('missing_field_values');
 
-      return undefined;
-    };
+      const workflowHints = [];
+      if (pageType === 'login') workflowHints.push('先完成登录，再继续当前任务');
+      if (pageType === 'search') workflowHints.push('先输入搜索词，再提交搜索');
+      if (pageType === 'purchase') workflowHints.push('读取配置并停在确认前');
+      if (pageType === 'form') workflowHints.push('先补全必填字段，再提交前确认');
+      if (pageType === 'dashboard') workflowHints.push('先读取当前资源状态，再判断下一步');
 
-    const skillPack = buildSkillPack();
-    const workflow = skillPack?.workflows?.[0];
-    const plan = workflow
-      ? {
-          confirmationRequired: workflow.steps.some((step) => step.type === 'risk_gate'),
-          goal: workflow.goal,
-          intent: workflow.intent,
-          source: 'skill_pack',
-          steps: workflow.steps.map((step, index) => ({
-            ...step,
-            status:
-              step.type === 'risk_gate'
-                ? 'blocked'
-                : index === 0
-                  ? 'current'
-                  : step.gaps?.some((gap) => gaps.includes(gap) || gaps.includes(`${gap}_required`))
-                    ? 'current'
-                    : 'pending',
-          })),
-        }
-      : undefined;
+      const taskState = (() => {
+        if (!loggedIn) return 'needs_more_info';
+        if (confirmBeforeProceed) return 'waiting_user_authorization';
+        if (needsUserAttention) return 'asking_clarification';
+        if (pageType === 'purchase') return 'plan_ready';
+        if (pageType === 'search' || pageType === 'form' || pageType === 'dashboard')
+          return 'understanding';
+        return 'idle';
+      })();
 
-    const currentPlanStep =
-      plan?.steps?.find((step) => step.status === 'current') ||
-      plan?.steps?.find((step) => step.status === 'blocked');
-    const fillGapByField = new Map((skillPack?.fillGaps || []).map((gap) => [gap.field, gap]));
-    const findFieldForGap = (gap) =>
-      fieldCandidates.find(({ field }) => {
-        const descriptor = `${field.label} ${field.selector}`.toLowerCase();
-        return descriptor.includes(String(gap).toLowerCase());
-      });
-    const clarificationFields =
-      currentPlanStep?.gaps?.length > 0
-        ? currentPlanStep.gaps
-        : skillPack?.fillGaps?.map((gap) => gap.field) || [];
-    const clarifications = clarificationFields
-      .map((fieldName) => {
-        const gap = fillGapByField.get(fieldName);
-        const matchedField = findFieldForGap(fieldName);
-        const options = matchedField?.field.options?.filter(Boolean).map((option, index) => ({
-          id: `${fieldName}_${index + 1}`,
-          label: option,
-          value: option,
-        }));
+      const matchesExternalSkillPack = (pack) => {
+        const site = location.hostname || 'local-page';
+        const path = `${location.pathname}${location.search}`;
+        const haystack = `${location.href} ${document.title} ${bodyText}`.toLowerCase();
+        const siteMatches = !pack.site || site === pack.site || site.endsWith(`.${pack.site}`);
+        const pageTypeMatches = !pack.match?.pageType || pack.match.pageType === pageType;
+        const pathMatches =
+          !pack.match?.paths?.length || pack.match.paths.some((item) => path.includes(item));
+        const keywordMatches =
+          !pack.match?.keywords?.length ||
+          pack.match.keywords.some((keyword) => haystack.includes(String(keyword).toLowerCase()));
 
-        return {
-          field: fieldName,
-          id: fieldName,
-          ...(options?.length ? { options } : {}),
-          question: gap?.reason
-            ? `${gap.reason}。请提供 ${fieldName}。`
-            : `请提供 ${fieldName}，用于继续执行当前页面任务。`,
-          required: gap?.mode !== 'auto_suggest',
-        };
-      })
-      .slice(0, 5);
-
-    const suggestedTasks = (() => {
-      const tasks = [];
-      const addTask = (task) => {
-        if (!task?.title || tasks.some((item) => item.intent === task.intent)) return;
-        tasks.push(task);
+        return siteMatches && pageTypeMatches && pathMatches && keywordMatches;
       };
-      const hasRiskAction = actions.some((action) => action.risk);
-      const hasPrice = prices.length > 0;
-      const missingFieldCount = fields.filter((field) => field.label && !field.value).length;
 
-      if (workflow) {
-        addTask({
-          intent: workflow.intent,
-          reason: skillPack?.description
-            ? `当前页面匹配技能包：${skillPack.description}`
-            : '当前页面匹配页面技能包 workflow',
-          risk: workflow.steps.some((step) => step.type === 'risk_gate' || step.risk)
-            ? 'medium'
-            : 'low',
-          title: workflow.goal || workflow.intent,
-        });
-      }
+      const externalSkillPack = externalSkillPacks.find(matchesExternalSkillPack);
 
-      if (pageType === 'purchase') {
-        if (hasPrice) {
-          addTask({
-            intent: 'explain_current_price',
-            reason: '页面检测到价格区域，可先审阅价格构成',
-            risk: 'low',
-            title: '解释当前配置的价格构成',
-          });
+      const buildSkillPack = () => {
+        if (externalSkillPack) return externalSkillPack;
+
+        const site = location.hostname || 'local-page';
+        const isCloudBuyPage = /kiki-cloud-buy|云服务器购买|订单确认/i.test(
+          `${location.pathname} ${bodyText}`,
+        );
+
+        if (isCloudBuyPage) {
+          return {
+            ambiguityRules: [
+              '多个地域、规格或预算都可行时必须询问用户',
+              '预算缺失时先询问或给出推荐',
+            ],
+            confirmationPoints: [
+              {
+                id: 'before_order',
+                reason: '提交订单、购买、支付、删除、释放和授权都属于风险动作',
+                title: '风险动作前确认',
+              },
+            ],
+            description: '云服务器购买/订单确认页面',
+            entities: ['region', 'scenario', 'instanceType', 'price', 'budget'],
+            fillGaps: [
+              {
+                field: 'region',
+                mode: 'ask_user',
+                reason: '地域影响延迟、价格和资源可用性',
+              },
+              {
+                field: 'budget',
+                mode: 'ask_user',
+                reason: '预算决定推荐配置上限',
+              },
+            ],
+            page: 'cloud_buy',
+            pageType: 'purchase',
+            riskActions: ['purchase', 'payment', 'submit_order', 'delete', 'release', 'authorize'],
+            safeActions: [
+              'inspect_configuration',
+              'select_region',
+              'select_instance',
+              'read_price',
+            ],
+            site,
+            workflows: [
+              {
+                constraints: ['不要付款', '不要提交订单', '风险动作前必须停下'],
+                goal: '选择适合目标的云服务器配置并停在风险确认前',
+                intent: 'cloud_server_purchase',
+                steps: [
+                  { id: 'inspect', title: '读取当前配置、价格和登录态', type: 'inspect' },
+                  {
+                    gaps: ['region', 'budget'],
+                    id: 'collect_requirements',
+                    title: '补齐地域、预算或用途等关键信息',
+                    type: 'ask',
+                  },
+                  { id: 'select_config', title: '选择安全范围内的地域和实例规格', type: 'select' },
+                  { id: 'read_price', title: '读取并核对费用', type: 'verify' },
+                  {
+                    id: 'risk_gate',
+                    risk: 'purchase',
+                    title: '停在购买、支付或提交订单前等待用户确认',
+                    type: 'risk_gate',
+                  },
+                ],
+              },
+            ],
+          };
         }
-        addTask({
-          intent: 'configure_before_purchase',
-          reason: hasRiskAction
-            ? '页面存在购买、支付或提交类风险动作，自动化必须停在确认前'
-            : '页面包含购买配置字段，可在安全范围内调整配置',
-          risk: hasRiskAction ? 'medium' : 'low',
-          title: '配置一套合适方案，但停在下单前',
-        });
-      }
 
-      if (pageType === 'search') {
-        addTask({
-          intent: 'search_and_summarize',
-          reason: '页面检测到搜索输入或结果区域',
-          risk: 'low',
-          title: '搜索并总结当前结果',
-        });
-        addTask({
-          intent: 'find_official_source',
-          reason: '搜索页可对比结果并识别可信来源',
-          risk: 'low',
-          title: '找到官方网站或可信来源',
-        });
-      }
+        if (pageType === 'search') {
+          return {
+            ambiguityRules: ['搜索词缺失时必须询问用户'],
+            description: '搜索页面',
+            entities: ['query', 'result'],
+            fillGaps: [{ field: 'query', mode: 'ask_user', reason: '搜索词决定查询目标' }],
+            page: 'search',
+            pageType: 'search',
+            riskActions: [],
+            safeActions: ['fill_query', 'submit_search', 'open_result'],
+            site,
+            workflows: [
+              {
+                goal: '输入搜索词并提交搜索',
+                intent: 'search_web',
+                steps: [
+                  { id: 'inspect', title: '读取搜索框和当前页面状态', type: 'inspect' },
+                  { gaps: ['query'], id: 'fill_query', title: '填写搜索词', type: 'fill' },
+                  { id: 'submit_search', title: '提交搜索表单', type: 'click' },
+                  { id: 'verify_results', title: '确认搜索结果已出现', type: 'verify' },
+                ],
+              },
+            ],
+          };
+        }
 
-      if (pageType === 'form') {
-        addTask({
-          intent: 'complete_form_before_submit',
-          reason:
-            missingFieldCount > 0
-              ? `页面还有 ${missingFieldCount} 个未填写字段`
-              : '页面是表单流程，提交前必须确认',
-          risk: confirmBeforeProceed ? 'medium' : 'low',
-          title: '补全表单并停在提交前',
-        });
-      }
+        return undefined;
+      };
 
-      if (pageType === 'dashboard') {
-        addTask({
-          intent: 'review_resource_status',
-          reason: '页面检测到控制台或资源管理信息',
-          risk: 'low',
-          title: '读取当前资源状态并给出下一步建议',
-        });
-      }
+      const skillPack = buildSkillPack();
+      const workflow =
+        skillPack?.workflows?.find((item) => item.intent === requestedIntent) ||
+        skillPack?.workflows?.[0];
+      const plan = workflow
+        ? {
+            confirmationRequired: workflow.steps.some((step) => step.type === 'risk_gate'),
+            goal: workflow.goal,
+            intent: workflow.intent,
+            source: 'skill_pack',
+            steps: workflow.steps.map((step, index) => ({
+              ...step,
+              status:
+                step.type === 'risk_gate'
+                  ? 'blocked'
+                  : index === 0
+                    ? 'current'
+                    : step.gaps?.some(
+                          (gap) => gaps.includes(gap) || gaps.includes(`${gap}_required`),
+                        )
+                      ? 'current'
+                      : 'pending',
+            })),
+          }
+        : undefined;
 
-      if (!loggedIn) {
-        addTask({
-          intent: 'wait_for_login',
-          reason: '当前页面需要用户登录，AI 不会绕过登录或验证码',
-          risk: 'medium',
-          title: '等待你完成登录后继续',
-        });
-      }
-
-      if (hasRiskAction) {
-        addTask({
-          intent: 'review_risky_actions',
-          reason: '页面出现购买、支付、提交、删除或授权类动作',
-          risk: 'high',
-          title: '检查风险动作并标出需要你确认的位置',
-        });
-      }
-
-      return tasks.slice(0, 4);
-    })();
-
-    const targetHighlight = (() => {
-      const currentStep =
+      const currentPlanStep =
         plan?.steps?.find((step) => step.status === 'current') ||
         plan?.steps?.find((step) => step.status === 'blocked');
-      const riskAction = actionCandidates.find(({ action }) => action.risk);
-      const emptyField = fieldCandidates.find(({ field }) => !field.value && field.label);
-      const searchField = fieldCandidates.find(({ element, field }) => {
-        const inputType = element instanceof HTMLInputElement ? element.type : '';
-        const descriptor = `${field.label} ${field.selector}`.toLowerCase();
-        return (
-          element instanceof HTMLTextAreaElement ||
-          element instanceof HTMLSelectElement ||
-          ['search', 'text', ''].includes(inputType) ||
-          /search|query|wd|kw|搜索|查询/.test(descriptor)
-        );
-      });
-      const submitAction = actionCandidates.find(({ action }) =>
-        /搜索|查询|提交|生成推荐|下一步|继续/.test(action.text),
-      );
+      const fillGapByField = new Map((skillPack?.fillGaps || []).map((gap) => [gap.field, gap]));
+      const findFieldForGap = (gap) =>
+        fieldCandidates.find(({ field }) => {
+          const descriptor = `${field.label} ${field.selector}`.toLowerCase();
+          return descriptor.includes(String(gap).toLowerCase());
+        });
+      const clarificationFields =
+        currentPlanStep?.gaps?.length > 0
+          ? currentPlanStep.gaps
+          : skillPack?.fillGaps?.map((gap) => gap.field) || [];
+      const clarifications = clarificationFields
+        .map((fieldName) => {
+          const gap = fillGapByField.get(fieldName);
+          const matchedField = findFieldForGap(fieldName);
+          const options = matchedField?.field.options?.filter(Boolean).map((option, index) => ({
+            id: `${fieldName}_${index + 1}`,
+            label: option,
+            value: option,
+          }));
 
-      if (currentStep?.action?.selector) {
-        const declaredTarget = document.querySelector(currentStep.action.selector);
-        const declaredHighlight = highlightFor(declaredTarget, currentStep.title);
-        if (declaredHighlight) return declaredHighlight;
-      }
+          return {
+            field: fieldName,
+            id: fieldName,
+            ...(options?.length ? { options } : {}),
+            question: gap?.reason
+              ? `${gap.reason}。请提供 ${fieldName}。`
+              : `请提供 ${fieldName}，用于继续执行当前页面任务。`,
+            required: gap?.mode !== 'auto_suggest',
+          };
+        })
+        .slice(0, 5);
 
-      if (!loggedIn) {
-        const loginField = fieldCandidates.find(({ field }) =>
-          /账号|登录|密码|验证码/.test(field.label),
+      const suggestedTasks = (() => {
+        const tasks = [];
+        const addTask = (task) => {
+          if (!task?.title || tasks.some((item) => item.intent === task.intent)) return;
+          tasks.push(task);
+        };
+        const hasRiskAction = actions.some((action) => action.risk);
+        const hasPrice = prices.length > 0;
+        const missingFieldCount = fields.filter((field) => field.label && !field.value).length;
+
+        if (workflow) {
+          addTask({
+            intent: workflow.intent,
+            reason: skillPack?.description
+              ? `当前页面匹配技能包：${skillPack.description}`
+              : '当前页面匹配页面技能包 workflow',
+            risk: workflow.steps.some((step) => step.type === 'risk_gate' || step.risk)
+              ? 'medium'
+              : 'low',
+            title: workflow.goal || workflow.intent,
+          });
+        }
+
+        if (pageType === 'purchase') {
+          if (hasPrice) {
+            addTask({
+              intent: 'explain_current_price',
+              reason: '页面检测到价格区域，可先审阅价格构成',
+              risk: 'low',
+              title: '解释当前配置的价格构成',
+            });
+          }
+          addTask({
+            intent: 'configure_before_purchase',
+            reason: hasRiskAction
+              ? '页面存在购买、支付或提交类风险动作，自动化必须停在确认前'
+              : '页面包含购买配置字段，可在安全范围内调整配置',
+            risk: hasRiskAction ? 'medium' : 'low',
+            title: '配置一套合适方案，但停在下单前',
+          });
+        }
+
+        if (pageType === 'search') {
+          addTask({
+            intent: 'search_and_summarize',
+            reason: '页面检测到搜索输入或结果区域',
+            risk: 'low',
+            title: '搜索并总结当前结果',
+          });
+          addTask({
+            intent: 'find_official_source',
+            reason: '搜索页可对比结果并识别可信来源',
+            risk: 'low',
+            title: '找到官方网站或可信来源',
+          });
+        }
+
+        if (pageType === 'form') {
+          addTask({
+            intent: 'complete_form_before_submit',
+            reason:
+              missingFieldCount > 0
+                ? `页面还有 ${missingFieldCount} 个未填写字段`
+                : '页面是表单流程，提交前必须确认',
+            risk: confirmBeforeProceed ? 'medium' : 'low',
+            title: '补全表单并停在提交前',
+          });
+        }
+
+        if (pageType === 'dashboard') {
+          addTask({
+            intent: 'review_resource_status',
+            reason: '页面检测到控制台或资源管理信息',
+            risk: 'low',
+            title: '读取当前资源状态并给出下一步建议',
+          });
+        }
+
+        if (!loggedIn) {
+          addTask({
+            intent: 'wait_for_login',
+            reason: '当前页面需要用户登录，AI 不会绕过登录或验证码',
+            risk: 'medium',
+            title: '等待你完成登录后继续',
+          });
+        }
+
+        if (hasRiskAction) {
+          addTask({
+            intent: 'review_risky_actions',
+            reason: '页面出现购买、支付、提交、删除或授权类动作',
+            risk: 'high',
+            title: '检查风险动作并标出需要你确认的位置',
+          });
+        }
+
+        return tasks.slice(0, 4);
+      })();
+
+      const targetHighlight = (() => {
+        const currentStep =
+          plan?.steps?.find((step) => step.status === 'current') ||
+          plan?.steps?.find((step) => step.status === 'blocked');
+        const riskAction = actionCandidates.find(({ action }) => action.risk);
+        const emptyField = fieldCandidates.find(({ field }) => !field.value && field.label);
+        const searchField = fieldCandidates.find(({ element, field }) => {
+          const inputType = element instanceof HTMLInputElement ? element.type : '';
+          const descriptor = `${field.label} ${field.selector}`.toLowerCase();
+          return (
+            element instanceof HTMLTextAreaElement ||
+            element instanceof HTMLSelectElement ||
+            ['search', 'text', ''].includes(inputType) ||
+            /search|query|wd|kw|搜索|查询/.test(descriptor)
+          );
+        });
+        const submitAction = actionCandidates.find(({ action }) =>
+          /搜索|查询|提交|生成推荐|下一步|继续/.test(action.text),
         );
-        const loginAction = actionCandidates.find(({ action }) =>
-          /登录|sign in|log in/i.test(action.text),
-        );
+
+        if (currentStep?.action?.selector) {
+          const declaredTarget = document.querySelector(currentStep.action.selector);
+          const declaredHighlight = highlightFor(declaredTarget, currentStep.title);
+          if (declaredHighlight) return declaredHighlight;
+        }
+
+        if (!loggedIn) {
+          const loginField = fieldCandidates.find(({ field }) =>
+            /账号|登录|密码|验证码/.test(field.label),
+          );
+          const loginAction = actionCandidates.find(({ action }) =>
+            /登录|sign in|log in/i.test(action.text),
+          );
+          return highlightFor(
+            loginField?.element || loginAction?.element,
+            loginField?.field.label || loginAction?.action.text || '登录信息',
+          );
+        }
+
+        if (currentStep?.type === 'risk_gate' || confirmBeforeProceed) {
+          return highlightFor(riskAction?.element, riskAction?.action.text || '风险动作');
+        }
+
+        if (currentStep?.type === 'ask' || gaps.includes('missing_field_values')) {
+          return highlightFor(emptyField?.element, emptyField?.field.label || '待补充字段');
+        }
+
+        if (currentStep?.type === 'fill' || pageType === 'search') {
+          return highlightFor(
+            searchField?.element || submitAction?.element,
+            searchField?.field.label || submitAction?.action.text || '搜索输入',
+          );
+        }
+
+        if (currentStep?.type === 'click') {
+          return highlightFor(submitAction?.element, submitAction?.action.text || '下一步操作');
+        }
+
         return highlightFor(
-          loginField?.element || loginAction?.element,
-          loginField?.field.label || loginAction?.action.text || '登录信息',
+          riskAction?.element || actionCandidates[0]?.element || fieldCandidates[0]?.element,
+          riskAction?.action.text ||
+            actionCandidates[0]?.action.text ||
+            fieldCandidates[0]?.field.label ||
+            '当前目标',
         );
-      }
+      })();
 
-      if (currentStep?.type === 'risk_gate' || confirmBeforeProceed) {
-        return highlightFor(riskAction?.element, riskAction?.action.text || '风险动作');
-      }
-
-      if (currentStep?.type === 'ask' || gaps.includes('missing_field_values')) {
-        return highlightFor(emptyField?.element, emptyField?.field.label || '待补充字段');
-      }
-
-      if (currentStep?.type === 'fill' || pageType === 'search') {
-        return highlightFor(
-          searchField?.element || submitAction?.element,
-          searchField?.field.label || submitAction?.action.text || '搜索输入',
-        );
-      }
-
-      if (currentStep?.type === 'click') {
-        return highlightFor(submitAction?.element, submitAction?.action.text || '下一步操作');
-      }
-
-      return highlightFor(
-        riskAction?.element || actionCandidates[0]?.element || fieldCandidates[0]?.element,
-        riskAction?.action.text ||
-          actionCandidates[0]?.action.text ||
-          fieldCandidates[0]?.field.label ||
-          '当前目标',
-      );
-    })();
-
-    return {
-      actions,
-      clarifications,
-      confirmationPoints,
-      confirmBeforeProceed,
-      fields,
-      gaps,
-      loggedIn,
-      needsUserAttention,
-      pageType,
-      prices,
-      selectedOptions,
-      primaryActions: actions.filter((action) => action.risk).slice(0, 10),
-      plan,
-      skillPack,
-      suggestedTasks,
-      targetHighlight,
-      taskState,
-      workflowHints,
-      textSample: bodyText.slice(0, 1000),
-      title: document.title,
-      url: location.href,
-      warnings,
-    };
-  }, externalSkillPacks);
+      return {
+        actions,
+        clarifications,
+        confirmationPoints,
+        confirmBeforeProceed,
+        fields,
+        gaps,
+        loggedIn,
+        needsUserAttention,
+        pageType,
+        prices,
+        selectedOptions,
+        primaryActions: actions.filter((action) => action.risk).slice(0, 10),
+        plan,
+        skillPack,
+        suggestedTasks,
+        targetHighlight,
+        taskState,
+        workflowHints,
+        textSample: bodyText.slice(0, 1000),
+        title: document.title,
+        url: location.href,
+        warnings,
+      };
+    },
+    { externalSkillPacks, requestedIntent },
+  );
 }
 
 async function fillElementWithDomFallback(page, selector, text) {
@@ -2069,18 +2091,20 @@ app.post('/evaluate', sessionMiddleware, async (req, res) => {
 
 app.post('/execute-plan', sessionMiddleware, async (req, res) => {
   try {
-    const { inputs = {}, maxSteps = 4, restart = false, timeout = 10000 } = req.body || {};
+    const { inputs = {}, intent, maxSteps = 4, restart = false, timeout = 10000 } = req.body || {};
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
     const executionEvents = [];
+    const getCurrentPageState = (extra = {}) =>
+      getPageState(page, { intent, screenshot: false, sessionId: req.sessionId, ...extra });
 
-    let pageState = await inspectPageState(page);
+    let pageState = await inspectPageState(page, { intent });
     if (!pageState.loggedIn) {
       updateExecutionState(session, {
         blockedStepId: 'login_required',
         phase: 'paused_for_login',
       });
-      const state = await getPageState(page, { screenshot: false, sessionId: req.sessionId });
+      const state = await getCurrentPageState();
       return res.json({
         ...state,
         executionEvents: [
@@ -2100,7 +2124,7 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
         blockedStepId: 'plan_missing',
         phase: 'paused_for_input',
       });
-      const state = await getPageState(page, { screenshot: false, sessionId: req.sessionId });
+      const state = await getCurrentPageState();
       return res.json({
         ...state,
         executionEvents: [
@@ -2187,7 +2211,7 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
       }
 
       if (step.type === 'verify' && step.action?.expectedText) {
-        pageState = await inspectPageState(page);
+        pageState = await inspectPageState(page, { intent });
         const found = pageState.textSample?.includes(step.action.expectedText);
         executionEvents.push(
           createExecutionEvent({
@@ -2209,7 +2233,7 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
       }
 
       if (step.type === 'inspect' || step.type === 'verify') {
-        pageState = await inspectPageState(page);
+        pageState = await inspectPageState(page, { intent });
         executionEvents.push(
           createExecutionEvent({
             action: step.type,
@@ -2337,7 +2361,7 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
               summary: clicked.riskBlock.reason,
               target: step.action.selector,
             });
-            const state = await getPageState(page, { screenshot: false, sessionId: req.sessionId });
+            const state = await getCurrentPageState();
             return res.json({
               ...withRiskBlock(state, clicked.riskBlock),
               executionEvents: [
@@ -2395,7 +2419,7 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
             summary: submitted.riskBlock.reason,
             target,
           });
-          const state = await getPageState(page, { screenshot: false, sessionId: req.sessionId });
+          const state = await getCurrentPageState();
           return res.json({
             ...withRiskBlock(state, submitted.riskBlock),
             executionEvents: [
@@ -2441,7 +2465,7 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
       );
     }
 
-    const state = await getPageState(page, { screenshot: false, sessionId: req.sessionId });
+    const state = await getCurrentPageState();
     const stopped = executionEvents.find((event) => event.status === 'blocked');
     const completedAllSafeSteps = !stopped && session.executionState?.cursor >= plan.steps.length;
 

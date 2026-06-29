@@ -9,6 +9,7 @@ import type {
   BrowserClarificationPrompt,
   BrowserPageState,
   BrowserState,
+  BrowserSuggestedTask,
   BrowserTaskState,
 } from '../../types';
 
@@ -296,6 +297,8 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
     margin-block-start: 8px;
   `,
   suggestedTaskCard: css`
+    cursor: pointer;
+
     display: grid;
     gap: 5px;
 
@@ -303,7 +306,16 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
     border: 1px solid ${cssVar.colorBorderSecondary};
     border-radius: 10px;
 
+    color: inherit;
+    text-align: start;
+
+    appearance: none;
     background: ${cssVar.colorBgContainer};
+
+    &[aria-pressed='true'] {
+      border-color: ${cssVar.colorPrimary};
+      box-shadow: 0 0 0 2px ${cssVar.colorFillSecondary};
+    }
   `,
   planStatus: css`
     padding-block: 2px;
@@ -636,6 +648,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   const [clarificationInputs, setClarificationInputs] = useState<Record<string, string>>({});
   const [activeClarificationIndex, setActiveClarificationIndex] = useState(0);
   const [selectedClarification, setSelectedClarification] = useState<string>();
+  const [selectedSuggestedTask, setSelectedSuggestedTask] = useState<BrowserSuggestedTask>();
 
   useEffect(() => {
     setLocalState(state);
@@ -644,6 +657,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     setActiveClarificationIndex(0);
     setClarificationText('');
     setSelectedClarification(undefined);
+    setSelectedSuggestedTask(undefined);
   }, [state]);
 
   const currentState = localState;
@@ -792,6 +806,12 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     return inputs;
   };
 
+  const buildExecutePlanParams = () => ({
+    inputs: buildPlanInputs(),
+    ...(selectedSuggestedTask?.intent ? { intent: selectedSuggestedTask.intent } : {}),
+    maxSteps: 4,
+  });
+
   const mergeActiveClarificationInput = (prompt?: BrowserClarificationPrompt) => {
     const answer = selectedClarification || clarificationText || prompt?.defaultValue;
     const inputs: Record<string, string> = { ...clarificationInputs };
@@ -825,7 +845,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
       const executeRes = await fetch('/api/browser/action', {
         body: JSON.stringify({
           action: 'executePlan',
-          params: { inputs: buildPlanInputs(), maxSteps: 4 },
+          params: buildExecutePlanParams(),
           sessionId,
         }),
         cache: 'no-store',
@@ -851,7 +871,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
       const res = await fetch('/api/browser/action', {
         body: JSON.stringify({
           action: 'executePlan',
-          params: { inputs: buildPlanInputs(), maxSteps: 4 },
+          params: buildExecutePlanParams(),
           sessionId,
         }),
         cache: 'no-store',
@@ -878,6 +898,12 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   };
 
   const continueAfterPause = () => continueExecutionAfterInspect();
+
+  const selectSuggestedTask = (task: BrowserSuggestedTask) => {
+    setSelectedSuggestedTask(task);
+    appendLocalEvent(`Selected suggested task: ${task.title}`, 'success');
+    updateTaskState('waiting_user_authorization');
+  };
 
   const saveClarification = (prompt?: BrowserClarificationPrompt) => {
     const { answer, inputs } = mergeActiveClarificationInput(prompt);
@@ -994,14 +1020,20 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
           </div>
           <div className={styles.suggestedTaskGrid}>
             {suggestedTasks.map((task) => (
-              <div className={styles.suggestedTaskCard} key={task.intent}>
+              <button
+                aria-pressed={selectedSuggestedTask?.intent === task.intent}
+                className={styles.suggestedTaskCard}
+                key={task.intent}
+                type="button"
+                onClick={() => selectSuggestedTask(task)}
+              >
                 <div className={styles.taskTitle}>{task.title}</div>
                 <div className={styles.taskText}>{task.reason}</div>
                 <div className={styles.taskPills}>
                   <span className={styles.pill}>{task.risk}</span>
                   <span className={styles.pill}>{task.intent}</span>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -1022,6 +1054,16 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
                 <li key={hint}>{hint}</li>
               ))}
             </ul>
+          )}
+          {selectedSuggestedTask && (
+            <div className={styles.taskCard}>
+              <div className={styles.taskTitle}>已选择推荐任务</div>
+              <div className={styles.taskText}>{selectedSuggestedTask.title}</div>
+              <div className={styles.taskPills}>
+                <span className={styles.pill}>{selectedSuggestedTask.risk}</span>
+                <span className={styles.pill}>{selectedSuggestedTask.intent}</span>
+              </div>
+            </div>
           )}
           {plan && (
             <div aria-label="Browser agent plan" className={styles.planSteps}>
