@@ -14,6 +14,7 @@ const ALLOWED_ACTIONS = new Set([
   'execute-plan',
   'executePlan',
   'inspect',
+  'interrupt',
   'back',
   'forward',
 ]);

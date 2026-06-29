@@ -3,7 +3,7 @@
 import { Flexbox } from '@lobehub/ui';
 import { createStaticStyles } from 'antd-style';
 import type { CSSProperties } from 'react';
-import { memo, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 
 import type {
   BrowserClarificationPrompt,
@@ -678,25 +678,57 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     setLocalState((previous) => (previous ? { ...previous, taskState: nextTaskState } : previous));
   };
 
-  const appendLocalEvent = (summary: string, status: 'blocked' | 'error' | 'start' | 'success') => {
-    setLocalState((previous) => {
-      if (!previous) return previous;
+  const appendLocalEvent = useCallback(
+    (summary: string, status: 'blocked' | 'error' | 'start' | 'success') => {
+      setLocalState((previous) => {
+        if (!previous) return previous;
 
-      return {
-        ...previous,
-        actionEvents: [
-          ...(previous.actionEvents ?? []),
-          {
-            action: 'inspect',
-            id: `local-${Date.now()}`,
-            status,
-            summary,
-            timestamp: Date.now(),
-          },
-        ].slice(-20),
-      };
-    });
-  };
+        return {
+          ...previous,
+          actionEvents: [
+            ...(previous.actionEvents ?? []),
+            {
+              action: 'inspect',
+              id: `local-${Date.now()}`,
+              status,
+              summary,
+              timestamp: Date.now(),
+            },
+          ].slice(-20),
+        };
+      });
+    },
+    [],
+  );
+
+  const interruptAutomation = useCallback(
+    async (inputType: string) => {
+      appendLocalEvent(`Paused because user ${inputType} in the browser.`, 'blocked');
+      updateTaskState('paused_by_user_intervention');
+
+      try {
+        const res = await fetch('/api/browser/action', {
+          body: JSON.stringify({
+            action: 'interrupt',
+            params: {
+              inputType,
+              reason: `Automation paused because the user performed ${inputType} in the browser.`,
+            },
+            sessionId,
+          }),
+          cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          method: 'POST',
+        });
+        const data = await res.json().catch(() => undefined);
+        if (!res.ok) throw new Error(data?.error || `Interrupt failed with HTTP ${res.status}`);
+        setLocalState({ ...data, sessionId });
+      } catch (err) {
+        appendLocalEvent(err instanceof Error ? err.message : String(err), 'error');
+      }
+    },
+    [appendLocalEvent, sessionId],
+  );
 
   useEffect(() => {
     if (!taskState || !controllingStates.has(taskState)) return;
@@ -706,17 +738,13 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
       if (event.data?.type !== 'user-input') return;
       if (event.data?.sessionId !== sessionId) return;
 
-      appendLocalEvent(
-        `Paused because user ${event.data.inputType || 'input'} in the remote viewer.`,
-        'blocked',
-      );
-      updateTaskState('paused_by_user_intervention');
+      void interruptAutomation(event.data.inputType || 'input');
     };
 
     window.addEventListener('message', handleMessage);
 
     return () => window.removeEventListener('message', handleMessage);
-  }, [sessionId, taskState]);
+  }, [interruptAutomation, sessionId, taskState]);
 
   if (!currentState) {
     return (
@@ -893,8 +921,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   const pauseByIntervention = () => {
     if (!isControlling) return;
 
-    appendLocalEvent('Paused because user interacted with the browser viewport.', 'blocked');
-    updateTaskState('paused_by_user_intervention');
+    void interruptAutomation('viewport');
   };
 
   const continueAfterPause = () => continueExecutionAfterInspect();

@@ -466,6 +466,35 @@ describe('BrowserPanel dual mode rendering', () => {
       .mockResolvedValueOnce({
         json: async () => ({
           embeddable: false,
+          executionEvents: [
+            {
+              action: 'interrupt',
+              id: 'user_intervention:1',
+              status: 'blocked',
+              summary: 'Automation paused because the user performed viewport in the browser.',
+              timestamp: 1,
+            },
+          ],
+          executionState: {
+            blockedStepId: 'inspect_current_page',
+            completedStepIds: [],
+            currentStepId: 'inspect_current_page',
+            cursor: 0,
+            phase: 'paused_by_user_intervention',
+            updatedAt: 1,
+          },
+          mode: 'remote',
+          pageState: { pageType: 'dashboard' },
+          taskState: 'paused_by_user_intervention',
+          title: 'Dashboard',
+          url: 'https://example.com/dashboard',
+        }),
+        ok: true,
+        status: 200,
+      })
+      .mockResolvedValueOnce({
+        json: async () => ({
+          embeddable: false,
           mode: 'remote',
           pageState: { pageType: 'dashboard' },
           taskState: 'ai_controlling',
@@ -526,10 +555,26 @@ describe('BrowserPanel dual mode rendering', () => {
     expect(screen.getByText('Task State: paused_by_user_intervention')).toBeInTheDocument();
     expect(screen.getByLabelText('Browser pause card')).toBeInTheDocument();
 
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/browser/action', {
+        body: JSON.stringify({
+          action: 'interrupt',
+          params: {
+            inputType: 'viewport',
+            reason: 'Automation paused because the user performed viewport in the browser.',
+          },
+          sessionId: 'session-pause',
+        }),
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+    });
+
     fireEvent.click(screen.getByText('重新读取并继续'));
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/browser/action', {
+      expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/browser/action', {
         body: JSON.stringify({
           action: 'inspect',
           params: {},
@@ -541,7 +586,7 @@ describe('BrowserPanel dual mode rendering', () => {
       });
     });
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/browser/action', {
+      expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/browser/action', {
         body: JSON.stringify({
           action: 'executePlan',
           params: { inputs: {}, maxSteps: 4 },
@@ -560,6 +605,35 @@ describe('BrowserPanel dual mode rendering', () => {
   });
 
   it('pauses takeover when the remote viewer reports user input from inside the iframe', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({
+        embeddable: false,
+        executionEvents: [
+          {
+            action: 'interrupt',
+            id: 'user_intervention:2',
+            status: 'blocked',
+            summary: 'Automation paused because the user performed click in the browser.',
+            timestamp: 1,
+          },
+        ],
+        executionState: {
+          completedStepIds: [],
+          cursor: 0,
+          phase: 'paused_by_user_intervention',
+          updatedAt: 1,
+        },
+        mode: 'remote',
+        pageState: { pageType: 'dashboard' },
+        taskState: 'paused_by_user_intervention',
+        title: 'Remote Viewer',
+        url: 'https://example.com/remote',
+      }),
+      ok: true,
+      status: 200,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
     render(
       <BrowserPanel
         sessionId="session-message"
@@ -590,7 +664,22 @@ describe('BrowserPanel dual mode rendering', () => {
     await waitFor(() => {
       expect(screen.getByText('Task State: paused_by_user_intervention')).toBeInTheDocument();
     });
-    expect(screen.getByText('Paused because user click in the remote viewer.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Automation paused because the user performed click in the browser.'),
+    ).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith('/api/browser/action', {
+      body: JSON.stringify({
+        action: 'interrupt',
+        params: {
+          inputType: 'click',
+          reason: 'Automation paused because the user performed click in the browser.',
+        },
+        sessionId: 'session-message',
+      }),
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    });
   });
 
   it('collects multiple structured clarification inputs and passes them into plan execution', async () => {

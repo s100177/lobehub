@@ -136,6 +136,24 @@ export const BrowserManifest: BuiltinToolManifest = {
     },
     {
       description:
+        'Pause the current browser automation because the user manually clicked, typed, scrolled, or otherwise intervened in the page. Records an auditable interruption and requires re-inspection before continuing.',
+      name: BrowserApiName.interrupt,
+      parameters: {
+        properties: {
+          inputType: {
+            description: 'Type of user intervention, for example click, wheel, key, or viewport.',
+            type: 'string',
+          },
+          reason: {
+            description: 'Human-readable reason for pausing automation.',
+            type: 'string',
+          },
+        },
+        type: 'object',
+      },
+    },
+    {
+      description:
         'Execute the current page skill-pack plan after user authorization. Runs only safe steps such as inspect, fill, search submit, and verify. Stops before missing information or risky actions such as purchase, payment, submit order, delete, release, or authorization.',
       name: BrowserApiName.executePlan,
       parameters: {

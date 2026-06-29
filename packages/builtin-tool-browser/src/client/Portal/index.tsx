@@ -13,6 +13,7 @@ const BrowserPortal = memo<BuiltinPortalProps>(
       case BrowserApiName.click:
       case BrowserApiName.fill:
       case BrowserApiName.executePlan:
+      case BrowserApiName.interrupt:
       case BrowserApiName.submit:
       case BrowserApiName.scroll:
       case BrowserApiName.screenshot:

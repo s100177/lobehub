@@ -4,6 +4,8 @@ import {
   BrowserIdentifier,
   type BrowserRuntimeService,
   type BrowserState,
+  type ExecutePlanParams,
+  type InterruptParams,
 } from '@lobechat/builtin-tool-browser';
 import type { BuiltinToolContext, BuiltinToolResult } from '@lobechat/types';
 import { BaseExecutor } from '@lobechat/types';
@@ -43,6 +45,7 @@ const createBrowserRuntimeService = (
   executePlan: (args) => callBrowserAction(sessionId, BrowserApiName.executePlan, args, signal),
   fill: (args) => callBrowserAction(sessionId, BrowserApiName.fill, args, signal),
   forward: () => callBrowserAction(sessionId, BrowserApiName.forward, undefined, signal),
+  interrupt: (args) => callBrowserAction(sessionId, BrowserApiName.interrupt, args, signal),
   inspect: () => callBrowserAction(sessionId, BrowserApiName.inspect, undefined, signal),
   navigate: (args) => callBrowserAction(sessionId, BrowserApiName.navigate, args, signal),
   screenshot: () => callBrowserAction(sessionId, BrowserApiName.screenshot, undefined, signal),
@@ -96,9 +99,14 @@ class BrowserExecutor extends BaseExecutor<typeof BrowserApiName> {
   ): Promise<BuiltinToolResult> => this.runtime(ctx).evaluate(params);
 
   executePlan = async (
-    params: { inputs?: Record<string, string>; maxSteps?: number; timeout?: number },
+    params: ExecutePlanParams,
     ctx?: BuiltinToolContext,
   ): Promise<BuiltinToolResult> => this.runtime(ctx).executePlan(params);
+
+  interrupt = async (
+    params: InterruptParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => this.runtime(ctx).interrupt(params);
 
   inspect = async (_params: unknown, ctx?: BuiltinToolContext): Promise<BuiltinToolResult> =>
     this.runtime(ctx).inspect();

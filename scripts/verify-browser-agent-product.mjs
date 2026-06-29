@@ -391,6 +391,74 @@ async function assertRemoteViewerPostsUserInput() {
   }
 }
 
+async function assertServerRecordsUserIntervention() {
+  await request(
+    '/navigate',
+    { mode: 'remote', url: `${pageOrigin}/business-expense` },
+    'verify-agent-interrupt',
+  );
+  await request(
+    '/execute-plan',
+    { inputs: { department: '研发部', reason: '客户现场紧急支持' }, maxSteps: 2 },
+    'verify-agent-interrupt',
+  );
+
+  const interrupted = await request(
+    '/interrupt',
+    { inputType: 'click', reason: 'Manual click during takeover' },
+    'verify-agent-interrupt',
+  );
+  assert(
+    interrupted.taskState === 'paused_by_user_intervention',
+    `Expected interrupted task state, got ${interrupted.taskState}`,
+  );
+  assert(
+    interrupted.executionState?.phase === 'paused_by_user_intervention',
+    `Expected paused_by_user_intervention phase, got ${JSON.stringify(interrupted.executionState)}`,
+  );
+  assert(
+    interrupted.executionEvents?.some(
+      (event) =>
+        event.action === 'interrupt' &&
+        event.status === 'blocked' &&
+        /Manual click during takeover/.test(event.summary),
+    ),
+    `Expected interrupt execution event, got ${JSON.stringify(interrupted.executionEvents)}`,
+  );
+  assert(
+    interrupted.executionTimeline?.some(
+      (event) => event.action === 'interrupt' && /Manual click/.test(event.summary),
+    ),
+    `Expected persisted interrupt timeline, got ${JSON.stringify(interrupted.executionTimeline)}`,
+  );
+
+  const inputInterrupted = await request(
+    '/input',
+    { type: 'click', x: 40, y: 40 },
+    'verify-agent-interrupt',
+  );
+  assert(
+    inputInterrupted.executionState?.phase === 'paused_by_user_intervention' &&
+      inputInterrupted.executionTimeline?.some(
+        (event) => event.action === 'interrupt' && /performed click/.test(event.summary),
+      ),
+    `Expected viewer input to persist interruption audit, got ${JSON.stringify({
+      executionState: inputInterrupted.executionState,
+      executionTimeline: inputInterrupted.executionTimeline,
+    })}`,
+  );
+
+  const inspected = await request('/inspect', {}, 'verify-agent-interrupt');
+  assert(
+    inspected.executionState?.phase === 'paused_by_user_intervention' &&
+      inspected.executionTimeline?.some((event) => event.action === 'interrupt'),
+    `Expected inspect to preserve interruption audit, got ${JSON.stringify({
+      executionState: inspected.executionState,
+      executionTimeline: inspected.executionTimeline,
+    })}`,
+  );
+}
+
 const browserService = spawn(process.execPath, ['index.js'], {
   cwd: createBrowserServiceRuntimeDir(),
   env: { ...process.env, BROWSER_SKILL_PACKS_DIR: skillPacksDir, PORT: String(browserPort) },
@@ -702,6 +770,7 @@ try {
     'verify-agent-viewer',
   );
   await assertRemoteViewerPostsUserInput();
+  await assertServerRecordsUserIntervention();
 
   console.log('Browser agent product verification passed');
 } finally {

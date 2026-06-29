@@ -12,6 +12,7 @@ export const BrowserRenders: Record<string, BuiltinRender> = {
   [BrowserApiName.screenshot]: BrowserCard,
   [BrowserApiName.evaluate]: BrowserCard,
   [BrowserApiName.executePlan]: BrowserCard,
+  [BrowserApiName.interrupt]: BrowserCard,
   [BrowserApiName.back]: BrowserCard,
   [BrowserApiName.forward]: BrowserCard,
 };

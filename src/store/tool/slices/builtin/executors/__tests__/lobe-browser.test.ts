@@ -185,14 +185,19 @@ describe('browser executor', () => {
     const result = await invokeExecutor(
       BrowserIdentifier,
       BrowserApiName.executePlan,
-      { inputs: { query: '复星医药' }, maxSteps: 4 },
+      { inputs: { query: '复星医药' }, intent: 'find_official_source', maxSteps: 4, restart: true },
       { messageId: 'tool-message-id', topicId: 'topic-1', toolCallId: 'call-1' },
     );
 
     expect(fetchMock).toHaveBeenCalledWith('/api/browser/action', {
       body: JSON.stringify({
         action: BrowserApiName.executePlan,
-        params: { inputs: { query: '复星医药' }, maxSteps: 4 },
+        params: {
+          inputs: { query: '复星医药' },
+          intent: 'find_official_source',
+          maxSteps: 4,
+          restart: true,
+        },
         sessionId: 'topic-1',
       }),
       cache: 'no-store',
@@ -214,6 +219,69 @@ describe('browser executor', () => {
         }),
         sessionId: 'topic-1',
         taskState: 'completed',
+      },
+      success: true,
+    });
+  });
+
+  it('proxies interrupt actions when the user manually intervenes', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({
+        executionEvents: [
+          {
+            action: 'interrupt',
+            id: 'user_intervention:1',
+            status: 'blocked',
+            summary: 'Automation paused because the user performed click in the browser.',
+            timestamp: 1,
+          },
+        ],
+        executionState: {
+          blockedStepId: 'select_region',
+          completedStepIds: ['inspect_current_page'],
+          currentStepId: 'select_region',
+          cursor: 1,
+          phase: 'paused_by_user_intervention',
+          updatedAt: 1,
+        },
+        taskState: 'paused_by_user_intervention',
+        title: 'Dashboard',
+        url: 'https://example.com/dashboard',
+      }),
+      ok: true,
+      status: 200,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await invokeExecutor(
+      BrowserIdentifier,
+      BrowserApiName.interrupt,
+      { inputType: 'click', reason: 'Automation paused because the user clicked the page.' },
+      { messageId: 'tool-message-id', topicId: 'topic-1', toolCallId: 'call-1' },
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/browser/action', {
+      body: JSON.stringify({
+        action: BrowserApiName.interrupt,
+        params: {
+          inputType: 'click',
+          reason: 'Automation paused because the user clicked the page.',
+        },
+        sessionId: 'topic-1',
+      }),
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      signal: undefined,
+    });
+    expect(result).toMatchObject({
+      content: expect.stringContaining('Browser automation paused'),
+      state: {
+        executionState: expect.objectContaining({
+          phase: 'paused_by_user_intervention',
+        }),
+        sessionId: 'topic-1',
+        taskState: 'paused_by_user_intervention',
       },
       success: true,
     });

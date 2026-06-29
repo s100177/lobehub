@@ -8,6 +8,7 @@ export const BrowserApiName = {
   executePlan: 'executePlan',
   fill: 'fill',
   forward: 'forward',
+  interrupt: 'interrupt',
   inspect: 'inspect',
   screenshot: 'screenshot',
   scroll: 'scroll',
@@ -46,6 +47,11 @@ export interface ExecutePlanParams {
   timeout?: number;
 }
 
+export interface InterruptParams {
+  inputType?: string;
+  reason?: string;
+}
+
 export interface ScrollParams {
   x?: number;
   y?: number;
@@ -63,6 +69,7 @@ export interface BrowserActionEvent {
     | 'executePlan'
     | 'fill'
     | 'forward'
+    | 'interrupt'
     | 'inspect'
     | 'navigate'
     | 'screenshot'
@@ -84,7 +91,7 @@ export interface BrowserPageField {
 }
 
 export interface BrowserPlanExecutionEvent {
-  action?: 'click' | 'fill' | 'inspect' | 'select' | 'submit' | 'verify';
+  action?: 'click' | 'fill' | 'inspect' | 'interrupt' | 'select' | 'submit' | 'verify';
   id: string;
   status: 'blocked' | 'completed' | 'failed' | 'skipped';
   summary: string;
@@ -101,6 +108,7 @@ export interface BrowserExecutionState {
     | 'acting'
     | 'completed'
     | 'paused_for_input'
+    | 'paused_by_user_intervention'
     | 'paused_for_login'
     | 'risk_blocked'
     | 'waiting_authorization';
@@ -268,6 +276,7 @@ export interface BrowserState {
   embeddable?: boolean;
   executionEvents?: BrowserPlanExecutionEvent[];
   executionState?: BrowserExecutionState;
+  executionTimeline?: BrowserPlanExecutionEvent[];
   fallbackReason?: string;
   iframeUrl?: string;
   mode?: 'iframe' | 'remote';

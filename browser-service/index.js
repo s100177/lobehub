@@ -89,6 +89,7 @@ async function getOrCreateSession(sessionId) {
       actionEvents: [],
       browser,
       context,
+      executionEvents: [],
       executionState: undefined,
       lastInputAt: Date.now(),
       lastUsed: Date.now(),
@@ -129,6 +130,7 @@ function recordAction(session, { action, status = 'success', summary, target }) 
 
 function resetExecutionState(session) {
   session.executionState = undefined;
+  session.executionEvents = [];
 }
 
 function createPlanKey(pageState, plan) {
@@ -165,6 +167,40 @@ function updateExecutionState(session, patch) {
     updatedAt: Date.now(),
   };
   return session.executionState;
+}
+
+function appendExecutionEvent(session, event) {
+  session.executionEvents = [...(session.executionEvents || []), event].slice(-50);
+  return session.executionEvents;
+}
+
+function recordUserIntervention(session, { inputType = 'input', reason } = {}) {
+  const currentStepId = session.executionState?.currentStepId;
+  const blockedStepId =
+    currentStepId || session.executionState?.blockedStepId || 'user_intervention';
+  const summary =
+    reason || `Automation paused because the user performed ${inputType} in the browser.`;
+
+  updateExecutionState(session, {
+    blockedStepId,
+    currentStepId,
+    phase: 'paused_by_user_intervention',
+  });
+
+  const event = createExecutionEvent({
+    action: 'interrupt',
+    id: `user_intervention:${Date.now()}`,
+    status: 'blocked',
+    summary,
+  });
+  appendExecutionEvent(session, event);
+  recordAction(session, {
+    action: 'interrupt',
+    status: 'blocked',
+    summary,
+  });
+
+  return event;
 }
 
 async function getPointerState(page, pointer) {
@@ -207,6 +243,7 @@ async function getPageState(page, options = {}) {
     url: page.url(),
     viewport: VIEWPORT,
     ...(session?.actionEvents?.length ? { actionEvents: session.actionEvents } : {}),
+    ...(session?.executionEvents?.length ? { executionTimeline: session.executionEvents } : {}),
     ...(session?.executionState ? { executionState: session.executionState } : {}),
     ...(pageState ? { pageState } : {}),
     ...(pageState?.plan ? { plan: pageState.plan } : {}),
@@ -2095,6 +2132,10 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
     const executionEvents = [];
+    const finalizeExecutionEvents = (events) => {
+      for (const event of events) appendExecutionEvent(session, event);
+      return events;
+    };
     const getCurrentPageState = (extra = {}) =>
       getPageState(page, { intent, screenshot: false, sessionId: req.sessionId, ...extra });
 
@@ -2104,16 +2145,17 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
         blockedStepId: 'login_required',
         phase: 'paused_for_login',
       });
+      const events = finalizeExecutionEvents([
+        createExecutionEvent({
+          id: 'login_required',
+          status: 'blocked',
+          summary: 'Execution stopped because the page requires user login.',
+        }),
+      ]);
       const state = await getCurrentPageState();
       return res.json({
         ...state,
-        executionEvents: [
-          createExecutionEvent({
-            id: 'login_required',
-            status: 'blocked',
-            summary: 'Execution stopped because the page requires user login.',
-          }),
-        ],
+        executionEvents: events,
         taskState: 'needs_more_info',
       });
     }
@@ -2124,16 +2166,17 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
         blockedStepId: 'plan_missing',
         phase: 'paused_for_input',
       });
+      const events = finalizeExecutionEvents([
+        createExecutionEvent({
+          id: 'plan_missing',
+          status: 'blocked',
+          summary: 'Execution stopped because no page skill-pack plan is available.',
+        }),
+      ]);
       const state = await getCurrentPageState();
       return res.json({
         ...state,
-        executionEvents: [
-          createExecutionEvent({
-            id: 'plan_missing',
-            status: 'blocked',
-            summary: 'Execution stopped because no page skill-pack plan is available.',
-          }),
-        ],
+        executionEvents: events,
         taskState: pageState.taskState || 'failed',
       });
     }
@@ -2361,19 +2404,20 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
               summary: clicked.riskBlock.reason,
               target: step.action.selector,
             });
+            const events = finalizeExecutionEvents([
+              ...executionEvents,
+              createExecutionEvent({
+                action: 'click',
+                id: step.id,
+                status: 'blocked',
+                summary: clicked.riskBlock.reason,
+                target: step.action.selector,
+              }),
+            ]);
             const state = await getCurrentPageState();
             return res.json({
               ...withRiskBlock(state, clicked.riskBlock),
-              executionEvents: [
-                ...executionEvents,
-                createExecutionEvent({
-                  action: 'click',
-                  id: step.id,
-                  status: 'blocked',
-                  summary: clicked.riskBlock.reason,
-                  target: step.action.selector,
-                }),
-              ],
+              executionEvents: events,
               taskState: 'risk_blocked',
             });
           }
@@ -2419,19 +2463,20 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
             summary: submitted.riskBlock.reason,
             target,
           });
+          const events = finalizeExecutionEvents([
+            ...executionEvents,
+            createExecutionEvent({
+              action: 'submit',
+              id: step.id,
+              status: 'blocked',
+              summary: submitted.riskBlock.reason,
+              target,
+            }),
+          ]);
           const state = await getCurrentPageState();
           return res.json({
             ...withRiskBlock(state, submitted.riskBlock),
-            executionEvents: [
-              ...executionEvents,
-              createExecutionEvent({
-                action: 'submit',
-                id: step.id,
-                status: 'blocked',
-                summary: submitted.riskBlock.reason,
-                target,
-              }),
-            ],
+            executionEvents: events,
             taskState: 'risk_blocked',
           });
         }
@@ -2465,6 +2510,7 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
       );
     }
 
+    finalizeExecutionEvents(executionEvents);
     const state = await getCurrentPageState();
     const stopped = executionEvents.find((event) => event.status === 'blocked');
     const completedAllSafeSteps = !stopped && session.executionState?.cursor >= plan.steps.length;
@@ -2492,6 +2538,26 @@ app.post('/inspect', sessionMiddleware, async (req, res) => {
     const { page } = session;
     recordAction(session, { action: 'inspect', summary: `Inspected ${page.url()}` });
     res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/interrupt', sessionMiddleware, async (req, res) => {
+  try {
+    const session = await getOrCreateSession(req.sessionId);
+    const { inputType = 'input', reason } = req.body || {};
+    const event = recordUserIntervention(session, {
+      inputType: typeof inputType === 'string' ? inputType.slice(0, 40) : 'input',
+      reason: typeof reason === 'string' ? reason.slice(0, 240) : undefined,
+    });
+    const state = await getPageState(session.page, { screenshot: false, sessionId: req.sessionId });
+    res.json({
+      ...state,
+      executionEvents: [event],
+      executionState: session.executionState,
+      taskState: 'paused_by_user_intervention',
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2589,7 +2655,7 @@ app.post('/input', sessionMiddleware, async (req, res) => {
     await applyInput(session.page, payload);
     await session.page.waitForTimeout(100);
     if (payload.type && payload.type !== 'mousemove') {
-      recordAction(session, { action: payload.type, summary: `User ${payload.type} in viewer` });
+      recordUserIntervention(session, { inputType: payload.type });
     }
     res.json(
       await getPageState(session.page, {

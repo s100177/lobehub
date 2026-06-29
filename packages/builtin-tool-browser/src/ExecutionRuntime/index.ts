@@ -1,6 +1,11 @@
 import { type BuiltinServerRuntimeOutput } from '@lobechat/types';
 
-import { type BrowserActionEvent, type BrowserState, type ExecutePlanParams } from '../types';
+import {
+  type BrowserActionEvent,
+  type BrowserState,
+  type ExecutePlanParams,
+  type InterruptParams,
+} from '../types';
 
 export interface BrowserRuntimeService {
   back: () => Promise<BrowserState>;
@@ -10,6 +15,7 @@ export interface BrowserRuntimeService {
   fill: (args: { selector: string; text: string; timeout?: number }) => Promise<BrowserState>;
   forward: () => Promise<BrowserState>;
   inspect: () => Promise<BrowserState>;
+  interrupt: (args: InterruptParams) => Promise<BrowserState>;
   navigate: (args: {
     mode?: 'auto' | 'iframe' | 'remote';
     timeout?: number;
@@ -219,6 +225,31 @@ export class BrowserExecutionRuntime {
     } catch (error) {
       return {
         content: `Failed to execute browser plan: ${error instanceof Error ? error.message : String(error)}`,
+        error,
+        success: false,
+      };
+    }
+  }
+
+  async interrupt(args: InterruptParams = {}): Promise<BuiltinServerRuntimeOutput> {
+    try {
+      const state = await this.service.interrupt(args);
+
+      return {
+        content: `Browser automation paused: ${args.reason || args.inputType || 'user intervention'}`,
+        state: this.withEvent(
+          state,
+          this.createEvent(
+            'interrupt',
+            'blocked',
+            args.reason || `Paused because user ${args.inputType || 'input'} intervened`,
+          ),
+        ),
+        success: true,
+      };
+    } catch (error) {
+      return {
+        content: `Failed to pause browser automation: ${error instanceof Error ? error.message : String(error)}`,
         error,
         success: false,
       };

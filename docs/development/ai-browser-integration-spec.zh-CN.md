@@ -71,6 +71,9 @@
 - 缺少 `inputKey` 对应用户输入时，执行暂停并要求用户补充，不猜测敏感字段。
 - `executePlan` 会按 session 记录 `executionState.cursor` 和 `completedStepIds`；暂停后再次执行默认从阻塞步骤继续。
 - 如果业务需要从头重跑 workflow，调用 `executePlan` 时显式传入 `restart: true`。
+- 用户在接管态手动点击、滚动、输入或键盘操作时，运行时必须调用 `interrupt`，把 `executionState.phase` 写为 `paused_by_user_intervention`。
+- `interrupt` 返回单次 `executionEvents`，并把同一事件追加进 session 级 `executionTimeline`，后续 `inspect` 仍应能看到这条审计记录。
+- 从 `paused_by_user_intervention` 恢复执行前，BrowserPanel 必须先调用 `inspect`，再调用 `executePlan`，不能基于旧页面状态继续。
 - clarification 的 `field` 会作为 `executePlan.inputs[field]` 传回运行时，建议与 workflow step 的 `action.inputKey` 保持一致。
 - 一个页面可以同时返回多个 clarification。BrowserPanel 会按队列逐项收集用户回答，展示已回答字段，并在用户确认继续规划后一次性传入 `executePlan.inputs`。
 - 用户选择 `suggestedTasks` 后只会进入授权卡，不会直接执行。授权执行时可把 `suggestedTasks.intent` 作为 `executePlan.intent`，运行时优先选择匹配的 skill-pack workflow。
