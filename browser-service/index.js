@@ -953,6 +953,41 @@ async function inspectPageState(page) {
         }
       : undefined;
 
+    const currentPlanStep =
+      plan?.steps?.find((step) => step.status === 'current') ||
+      plan?.steps?.find((step) => step.status === 'blocked');
+    const fillGapByField = new Map((skillPack?.fillGaps || []).map((gap) => [gap.field, gap]));
+    const findFieldForGap = (gap) =>
+      fieldCandidates.find(({ field }) => {
+        const descriptor = `${field.label} ${field.selector}`.toLowerCase();
+        return descriptor.includes(String(gap).toLowerCase());
+      });
+    const clarificationFields =
+      currentPlanStep?.gaps?.length > 0
+        ? currentPlanStep.gaps
+        : skillPack?.fillGaps?.map((gap) => gap.field) || [];
+    const clarifications = clarificationFields
+      .map((fieldName) => {
+        const gap = fillGapByField.get(fieldName);
+        const matchedField = findFieldForGap(fieldName);
+        const options = matchedField?.field.options?.filter(Boolean).map((option, index) => ({
+          id: `${fieldName}_${index + 1}`,
+          label: option,
+          value: option,
+        }));
+
+        return {
+          field: fieldName,
+          id: fieldName,
+          ...(options?.length ? { options } : {}),
+          question: gap?.reason
+            ? `${gap.reason}。请提供 ${fieldName}。`
+            : `请提供 ${fieldName}，用于继续执行当前页面任务。`,
+          required: gap?.mode !== 'auto_suggest',
+        };
+      })
+      .slice(0, 5);
+
     const targetHighlight = (() => {
       const currentStep =
         plan?.steps?.find((step) => step.status === 'current') ||
@@ -1022,6 +1057,7 @@ async function inspectPageState(page) {
 
     return {
       actions,
+      clarifications,
       confirmationPoints,
       confirmBeforeProceed,
       fields,

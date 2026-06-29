@@ -597,12 +597,16 @@ const deriveClarification = (
   };
 };
 
+const getClarificationInputKey = (prompt?: BrowserClarificationPrompt) =>
+  prompt?.field || prompt?.id || 'query';
+
 const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) => {
   const [localState, setLocalState] = useState<BrowserState | undefined>(state);
   const [isSwitching, setIsSwitching] = useState(false);
   const [iframeStatus, setIframeStatus] = useState<'blocked' | 'loaded' | 'loading'>('loading');
   const [switchError, setSwitchError] = useState<string>();
   const [clarificationText, setClarificationText] = useState('');
+  const [clarificationInputs, setClarificationInputs] = useState<Record<string, string>>({});
   const [selectedClarification, setSelectedClarification] = useState<string>();
 
   useEffect(() => {
@@ -730,6 +734,18 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     pageState?.primaryActions?.[0]?.text ||
     recentEvents.find((event) => event.target)?.target;
 
+  const buildPlanInputs = () => {
+    const inputs: Record<string, string> = { ...clarificationInputs };
+    const answer = selectedClarification || clarificationText;
+    if (answer) {
+      const key = getClarificationInputKey(activeClarification);
+      inputs[key] = answer;
+      if (key !== 'query' && !inputs.query && pageType === 'search') inputs.query = answer;
+    }
+
+    return inputs;
+  };
+
   const continueExecutionAfterInspect = async () => {
     try {
       const inspectRes = await fetch('/api/browser/action', {
@@ -751,7 +767,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
       const executeRes = await fetch('/api/browser/action', {
         body: JSON.stringify({
           action: 'executePlan',
-          params: { maxSteps: 4 },
+          params: { inputs: buildPlanInputs(), maxSteps: 4 },
           sessionId,
         }),
         cache: 'no-store',
@@ -774,14 +790,10 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     updateTaskState('ai_controlling');
 
     try {
-      const inputs: Record<string, string> = {};
-      const answer = selectedClarification || clarificationText;
-      if (answer) inputs.query = answer;
-
       const res = await fetch('/api/browser/action', {
         body: JSON.stringify({
           action: 'executePlan',
-          params: { inputs, maxSteps: 4 },
+          params: { inputs: buildPlanInputs(), maxSteps: 4 },
           sessionId,
         }),
         cache: 'no-store',
@@ -811,6 +823,10 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
 
   const submitClarification = (prompt?: BrowserClarificationPrompt) => {
     const answer = selectedClarification || clarificationText || prompt?.defaultValue;
+    if (answer) {
+      const key = getClarificationInputKey(prompt);
+      setClarificationInputs((previous) => ({ ...previous, [key]: answer }));
+    }
     appendLocalEvent(
       answer ? `User answered clarification: ${answer}` : 'User skipped clarification.',
       'success',

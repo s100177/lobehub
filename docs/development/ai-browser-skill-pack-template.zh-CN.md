@@ -140,6 +140,9 @@ AI 可以直接执行的动作，例如：
 - 由用户选择。
 - 必须用户手动输入。
 
+`fillGaps.field` 会生成 BrowserPanel 里的结构化询问，并作为 `executePlan.inputs[field]`
+传给运行时。生产技能包应让 `fillGaps.field`、step `gaps` 和 `action.inputKey` 使用同一个字段名。
+
 ### 3.9 `workflows`
 
 用户目标对应的标准执行流。

@@ -484,7 +484,7 @@ describe('BrowserPanel dual mode rendering', () => {
       expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/browser/action', {
         body: JSON.stringify({
           action: 'executePlan',
-          params: { maxSteps: 4 },
+          params: { inputs: {}, maxSteps: 4 },
           sessionId: 'session-pause',
         }),
         cache: 'no-store',
@@ -533,7 +533,30 @@ describe('BrowserPanel dual mode rendering', () => {
     expect(screen.getByText('Paused because user click in the remote viewer.')).toBeInTheDocument();
   });
 
-  it('collects structured clarification before returning to authorization', () => {
+  it('collects structured clarification inputs and passes them into plan execution', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({
+        embeddable: false,
+        executionEvents: [
+          {
+            action: 'select',
+            id: 'select_region',
+            status: 'completed',
+            summary: '选择部署地域',
+            target: '#region',
+            timestamp: 1,
+          },
+        ],
+        mode: 'remote',
+        taskState: 'completed',
+        title: 'Cloud Buy',
+        url: 'https://example.com/buy',
+      }),
+      ok: true,
+      status: 200,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
     render(
       <BrowserPanel
         sessionId="session-clarify"
@@ -543,6 +566,7 @@ describe('BrowserPanel dual mode rendering', () => {
           pageState: {
             clarifications: [
               {
+                field: 'region',
                 id: 'region',
                 options: [
                   { id: 'sh', label: '上海', value: 'shanghai' },
@@ -567,6 +591,21 @@ describe('BrowserPanel dual mode rendering', () => {
 
     expect(screen.getByText('Task State: waiting_user_authorization')).toBeInTheDocument();
     expect(screen.getByText('User answered clarification: shanghai')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('帮我操作'));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/browser/action', {
+        body: JSON.stringify({
+          action: 'executePlan',
+          params: { inputs: { region: 'shanghai' }, maxSteps: 4 },
+          sessionId: 'session-clarify',
+        }),
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+    });
   });
 
   it('shows a non-executing risk block card for dangerous browser actions', () => {

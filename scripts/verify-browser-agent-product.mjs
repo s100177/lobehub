@@ -474,6 +474,16 @@ try {
     expense.plan?.source === 'skill_pack' && expense.plan.intent === 'expense_approval',
     `Expected external expense workflow plan, got ${JSON.stringify(expense.plan)}`,
   );
+  assert(
+    expense.pageState?.clarifications?.some(
+      (prompt) =>
+        prompt.field === 'department' &&
+        prompt.options?.some((option) => option.value === '研发部'),
+    ),
+    `Expected expense page to expose department clarification options, got ${JSON.stringify(
+      expense.pageState?.clarifications,
+    )}`,
+  );
   const expenseExecution = await request('/execute-plan', { maxSteps: 4 }, 'verify-agent-expense');
   assert(
     expenseExecution.executionEvents?.some(
