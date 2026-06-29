@@ -951,6 +951,21 @@ async function inspectPageState(page, options = {}) {
                   },
                 ],
               },
+              {
+                constraints: ['不要付款', '不要提交订单', '只核对当前可见配置和价格'],
+                goal: '配置一套合适方案，但停在下单前',
+                intent: 'configure_before_purchase',
+                steps: [
+                  { id: 'inspect', title: '读取当前配置、价格和登录态', type: 'inspect' },
+                  { id: 'read_price', title: '读取并核对费用', type: 'verify' },
+                  {
+                    id: 'risk_gate',
+                    risk: 'purchase',
+                    title: '停在购买、支付或提交订单前等待用户确认',
+                    type: 'risk_gate',
+                  },
+                ],
+              },
             ],
           };
         }
@@ -2205,6 +2220,7 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
 
       return undefined;
     };
+    let blockedRiskBlock;
     const markCompleted = (step, index) => {
       const completedStepIds = [
         ...new Set([...(session.executionState?.completedStepIds || []), step.id]),
@@ -2231,6 +2247,11 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
 
       if (step.type === 'risk_gate' || step.risk) {
         markBlocked(step, 'risk_blocked');
+        blockedRiskBlock = createRiskBlock({
+          action: 'click',
+          risk: step.risk || 'submit',
+          text: step.title,
+        });
         executionEvents.push(
           createExecutionEvent({
             id: step.id,
@@ -2516,7 +2537,7 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
     const completedAllSafeSteps = !stopped && session.executionState?.cursor >= plan.steps.length;
 
     res.json({
-      ...state,
+      ...(blockedRiskBlock ? withRiskBlock(state, blockedRiskBlock) : state),
       executionEvents,
       executionState: session.executionState,
       taskState: stopped

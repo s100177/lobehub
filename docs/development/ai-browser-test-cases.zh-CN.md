@@ -67,6 +67,46 @@ scripts/verify-browser-agent-product.mjs
 
 真实网站只做冒烟，不作为基础回归阻塞项。
 
+### 2.4 L4：Docker 部署 UI E2E
+
+目的：
+
+- 验证生产 Docker 镜像中右侧浏览器面板真实可用。
+- 验证登录后访问 `/browser-e2e` 时，真实 `BrowserPortal` 能连接 browser-service。
+- 验证 `navigate`、`inspect`、`execute-plan`、授权卡、计划卡、proxy iframe、风险拦截卡和审计时间线在部署环境中闭环。
+- 避免只在本地单元测试或服务冒烟里通过，但部署镜像与服务版本不一致。
+
+启用方式：
+
+```bash
+ENABLE_BROWSER_E2E_TEST_PANEL=1 docker compose up -d --no-build lobe browser-service
+```
+
+运行方式：
+
+```bash
+BROWSER_DOCKER_E2E_BASE_URL=http://192.168.1.36:3211 \
+  BROWSER_DOCKER_E2E_DATABASE_URL=postgresql://postgres: \
+  pnpm < password > @127.0.0.1:5435/lobechat \
+  test:browser-docker-ui-e2e
+```
+
+验收点：
+
+- 测试用户可通过真实 `/signin` 登录。
+- `/browser-e2e` 只在 `ENABLE_BROWSER_E2E_TEST_PANEL=1` 时可访问。
+- 页面渲染真实 `BrowserPortal`，不是 mock 组件。
+- browser-service 打开受控 fixture，并通过 `/api/browser/proxy` 进入右侧面板。
+- `inspect` 返回购买页 pageState、推荐任务、计划和风险动作。
+- 用户选择 “配置一套合适方案，但停在下单前” 后点击 “帮我操作”。
+- `execute-plan` 停在 `risk_gate`，页面显示 `Task State: risk_blocked`、风险卡和审计时间线。
+- 不点击 `立即购买`，不产生购买、支付、提交等真实副作用。
+
+部署注意：
+
+- 父目录 `docker-compose.yml` 不在当前 git 仓库内，但本机部署必须让 `browser-service.build.context` 指向 `./lobehub/browser-service`。
+- 如果指向旧的 `./browser-service`，服务缺少 `/execute-plan`，E2E 会停在授权卡或执行失败。
+
 ## 3. 本地测试页设计
 
 ### 3.1 `/kiki-cloud-buy`
@@ -546,3 +586,4 @@ P2 通过标准：
 - L1 本地可控测试全通过。
 - L2 自动化脚本全通过。
 - L3 真实网站冒烟无阻塞问题。
+- L4 Docker 部署 UI E2E 通过。

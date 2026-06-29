@@ -111,6 +111,7 @@
 
 - `scripts/verify-browser-agent-product.mjs` 覆盖本地可控页面、技能包计划、授权后执行、接管视觉、高亮、歧义询问、风险拦截、人工干预 `interrupt`、remote viewer `/input` 中断审计和恢复前 inspect。
 - `scripts/verify-browser-real-smoke.mjs` 覆盖真实站点 remote navigate、inspect、标题 / URL /viewport 和不触发风险动作；可通过 `BROWSER_REAL_SMOKE_URLS` 扩展真实站点列表。
+- `scripts/verify-browser-docker-ui-e2e.mjs` 覆盖 Docker 部署后的真实登录、`/browser-e2e` 测试路由、真实 `BrowserPortal`、browser-service `navigate`/`inspect`/`execute-plan`、授权卡、计划卡、proxy iframe、风险拦截卡和审计时间线。
 - `src/features/Conversation/Messages/AssistantGroup/Tool/BrowserPanel.test.tsx` 覆盖 BrowserPanel 授权卡、暂停卡、clarification、suggestedTasks、审计时间线、remote/iframe 视图和继续前 inspect。
 
 ## 12. 发布门槛
@@ -125,5 +126,14 @@
 
 仍未闭环：
 
-- [ ] Docker 镜像部署后的真实 UI E2E 通过。
+- [x] Docker 镜像部署后的真实 UI E2E 通过。
 - [ ] 指定业务系统真实页面完成一轮人工确认的端到端演示。
+
+Docker UI E2E 证据：
+
+- 部署环境：`ENABLE_BROWSER_E2E_TEST_PANEL=1 docker compose up -d --no-build lobe browser-service`。
+- Lobe 镜像：`ghcr.io/s100177/lobehub:s100177-stable`，本次验证容器镜像 digest 为 `sha256:7f679d15f7a681e38e130a560b8df4e6395f77e679c91ee92c523e9899f63df3`。
+- Browser service 镜像：`lobehub-browser-service`，本次验证容器镜像 digest 为 `sha256:7be4c382ccb1cf5dee3aaf9d5c3f2b926f22777f1d19b4055f35d7cc377689a4`。
+- 验证命令：`BROWSER_DOCKER_E2E_BASE_URL=http://192.168.1.36:3211 BROWSER_DOCKER_E2E_DATABASE_URL=postgresql://postgres:<password>@127.0.0.1:5435/lobechat pnpm test:browser-docker-ui-e2e`。
+- 验证结果：`Browser Docker UI E2E passed at http://192.168.1.36:3211`。
+- 注意：部署用的父目录 `docker-compose.yml` 必须把 `browser-service.build.context` 指向 `./lobehub/browser-service`，否则会启动旧版 browser-service，缺少 `/execute-plan` 路由，右侧 UI 会无法完成风险门验证。
