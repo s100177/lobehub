@@ -98,6 +98,11 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
     color: #fff;
 
     background: ${cssVar.colorPrimary};
+
+    &:disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+    }
   `,
   secondaryButton: css`
     cursor: pointer;
@@ -210,6 +215,12 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
     color: ${cssVar.colorText};
 
     background: ${cssVar.colorBgContainer};
+  `,
+  clarificationAnswerList: css`
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-block-start: 8px;
   `,
   optionRow: css`
     display: flex;
@@ -607,12 +618,16 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   const [switchError, setSwitchError] = useState<string>();
   const [clarificationText, setClarificationText] = useState('');
   const [clarificationInputs, setClarificationInputs] = useState<Record<string, string>>({});
+  const [activeClarificationIndex, setActiveClarificationIndex] = useState(0);
   const [selectedClarification, setSelectedClarification] = useState<string>();
 
   useEffect(() => {
     setLocalState(state);
     setIframeStatus('loading');
     setSwitchError(undefined);
+    setActiveClarificationIndex(0);
+    setClarificationText('');
+    setSelectedClarification(undefined);
   }, [state]);
 
   const currentState = localState;
@@ -711,7 +726,21 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
               : step.status,
     })) ?? [];
   const isControlling = taskState ? controllingStates.has(taskState) : false;
-  const activeClarification = pageState?.clarifications?.[0] ?? deriveClarification(pageState);
+  const fallbackClarification = deriveClarification(pageState);
+  const clarificationPrompts =
+    pageState?.clarifications && pageState.clarifications.length > 0
+      ? pageState.clarifications
+      : fallbackClarification
+        ? [fallbackClarification]
+        : [];
+  const activeClarification =
+    clarificationPrompts[activeClarificationIndex] ?? clarificationPrompts[0];
+  const answeredClarifications = clarificationPrompts.filter(
+    (prompt) => clarificationInputs[getClarificationInputKey(prompt)],
+  );
+  const allRequiredClarificationsAnswered = clarificationPrompts
+    .filter((prompt) => prompt.required !== false)
+    .every((prompt) => Boolean(clarificationInputs[getClarificationInputKey(prompt)]));
   const targetHighlight = pageState?.targetHighlight;
   const targetBoxVisible =
     isIframeMode &&
@@ -744,6 +773,18 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     }
 
     return inputs;
+  };
+
+  const mergeActiveClarificationInput = (prompt?: BrowserClarificationPrompt) => {
+    const answer = selectedClarification || clarificationText || prompt?.defaultValue;
+    const inputs: Record<string, string> = { ...clarificationInputs };
+
+    if (answer && prompt) {
+      const key = getClarificationInputKey(prompt);
+      inputs[key] = answer;
+    }
+
+    return { answer, inputs };
   };
 
   const continueExecutionAfterInspect = async () => {
@@ -821,16 +862,29 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
 
   const continueAfterPause = () => continueExecutionAfterInspect();
 
-  const submitClarification = (prompt?: BrowserClarificationPrompt) => {
-    const answer = selectedClarification || clarificationText || prompt?.defaultValue;
-    if (answer) {
-      const key = getClarificationInputKey(prompt);
-      setClarificationInputs((previous) => ({ ...previous, [key]: answer }));
-    }
+  const saveClarification = (prompt?: BrowserClarificationPrompt) => {
+    const { answer, inputs } = mergeActiveClarificationInput(prompt);
+    if (answer) setClarificationInputs(inputs);
     appendLocalEvent(
       answer ? `User answered clarification: ${answer}` : 'User skipped clarification.',
       'success',
     );
+    setClarificationText('');
+    setSelectedClarification(undefined);
+
+    const nextIndex = clarificationPrompts.findIndex(
+      (candidate, index) =>
+        index > activeClarificationIndex && !inputs[getClarificationInputKey(candidate)],
+    );
+    if (nextIndex >= 0) setActiveClarificationIndex(nextIndex);
+  };
+
+  const submitClarifications = (prompt?: BrowserClarificationPrompt) => {
+    const { answer, inputs } = mergeActiveClarificationInput(prompt);
+    if (answer) {
+      setClarificationInputs(inputs);
+      appendLocalEvent(`User answered clarification: ${answer}`, 'success');
+    }
     setClarificationText('');
     setSelectedClarification(undefined);
     updateTaskState('waiting_user_authorization');
@@ -1008,10 +1062,28 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
           <div className={styles.runtimeHeader}>
             <span>需要你补充信息</span>
             <span className={styles.pill}>
+              {activeClarificationIndex + 1}/{clarificationPrompts.length}
+              {' · '}
               {activeClarification.required ? 'required' : 'optional'}
             </span>
           </div>
           <div className={styles.taskText}>{activeClarification.question}</div>
+          {answeredClarifications.length > 0 && (
+            <div
+              aria-label="Browser clarification answers"
+              className={styles.clarificationAnswerList}
+            >
+              {answeredClarifications.map((prompt) => {
+                const key = getClarificationInputKey(prompt);
+
+                return (
+                  <span className={styles.pill} key={key}>
+                    {key}: {clarificationInputs[key]}
+                  </span>
+                );
+              })}
+            </div>
+          )}
           {activeClarification.options && activeClarification.options.length > 0 && (
             <div className={styles.optionRow}>
               {activeClarification.options.map((option) => (
@@ -1037,7 +1109,17 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
             <button
               className={styles.primaryButton}
               type="button"
-              onClick={() => submitClarification(activeClarification)}
+              onClick={() => saveClarification(activeClarification)}
+            >
+              保存回答
+            </button>
+            <button
+              className={styles.primaryButton}
+              disabled={
+                !allRequiredClarificationsAnswered && !selectedClarification && !clarificationText
+              }
+              type="button"
+              onClick={() => submitClarifications(activeClarification)}
             >
               确认并继续规划
             </button>
@@ -1045,7 +1127,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
               <button
                 className={styles.secondaryButton}
                 type="button"
-                onClick={() => submitClarification(activeClarification)}
+                onClick={() => saveClarification(activeClarification)}
               >
                 跳过
               </button>

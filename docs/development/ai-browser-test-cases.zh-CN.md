@@ -352,6 +352,7 @@ scripts/verify-browser-agent-product.mjs
 - 接管边界只作用于 BrowserViewport，不作用于整个 LobeHub 页面。
 - `asking_clarification` 状态必须保留接管边界，但停止后续自动点击。
 - 结构化询问必须可操作，不能只是纯文本。
+- 多个结构化询问必须逐项收集，已回答字段可见，授权执行时所有字段同时进入 `executePlan.inputs`。
 - 底部输入区在内容滚动时保持可见。
 
 ### 4.1 规范化输入断言

@@ -533,7 +533,7 @@ describe('BrowserPanel dual mode rendering', () => {
     expect(screen.getByText('Paused because user click in the remote viewer.')).toBeInTheDocument();
   });
 
-  it('collects structured clarification inputs and passes them into plan execution', async () => {
+  it('collects multiple structured clarification inputs and passes them into plan execution', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       json: async () => ({
         embeddable: false,
@@ -575,6 +575,16 @@ describe('BrowserPanel dual mode rendering', () => {
                 question: '请选择部署地域',
                 required: true,
               },
+              {
+                field: 'scenario',
+                id: 'scenario',
+                options: [
+                  { id: 'site', label: '个人建站', value: 'personal_site' },
+                  { id: 'dev', label: '开发测试', value: 'dev_test' },
+                ],
+                question: '请选择使用场景',
+                required: true,
+              },
             ],
             pageType: 'purchase',
           },
@@ -587,10 +597,14 @@ describe('BrowserPanel dual mode rendering', () => {
 
     expect(screen.getByLabelText('Browser clarification card')).toBeInTheDocument();
     fireEvent.click(screen.getByText('上海'));
+    fireEvent.click(screen.getByText('保存回答'));
+    fireEvent.click(screen.getByText('个人建站'));
+    fireEvent.click(screen.getByText('保存回答'));
     fireEvent.click(screen.getByText('确认并继续规划'));
 
     expect(screen.getByText('Task State: waiting_user_authorization')).toBeInTheDocument();
     expect(screen.getByText('User answered clarification: shanghai')).toBeInTheDocument();
+    expect(screen.getByText('User answered clarification: personal_site')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('帮我操作'));
 
@@ -598,7 +612,7 @@ describe('BrowserPanel dual mode rendering', () => {
       expect(fetchMock).toHaveBeenCalledWith('/api/browser/action', {
         body: JSON.stringify({
           action: 'executePlan',
-          params: { inputs: { region: 'shanghai' }, maxSteps: 4 },
+          params: { inputs: { region: 'shanghai', scenario: 'personal_site' }, maxSteps: 4 },
           sessionId: 'session-clarify',
         }),
         cache: 'no-store',
