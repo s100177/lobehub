@@ -126,6 +126,7 @@ BROWSER_BUSINESS_DEMO_URL=https://your-business-system.example/path \
 
 ```bash
 BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE=.omx/artifacts/browser-business-demo.json \
+  BROWSER_BUSINESS_EVIDENCE_SUMMARY_FILE=.omx/artifacts/browser-business-demo-summary.json \
   pnpm test:browser-business-demo
 ```
 
@@ -144,6 +145,7 @@ BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE=.omx/artifacts/browser-business-demo.jso
 - 必须提供 `BROWSER_BUSINESS_ASSERTIONS`，脚本会在风险门后执行只读 JS 断言，用于证明提交、购买、支付、删除等副作用没有发生。
 - 如果提供 `BROWSER_BUSINESS_EVIDENCE_FILE`，脚本会写入目标 URL、匹配技能包、计划、执行事件、阻塞风险事件和断言结果，作为真实业务演示证据。
 - 如果提供 `BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE`，脚本只校验证据文件，不启动浏览器；证据必须包含 `skill_pack` 计划、`authorizationGate`、`riskGateStep`、`risk_blocked` 状态、完成步骤、阻塞步骤和全部通过的断言。
+- 如果同时提供 `BROWSER_BUSINESS_EVIDENCE_SUMMARY_FILE`，脚本必须写出机器可读摘要，摘要包含 `passed: true`、目标 URL、技能包 page、计划来源、风险门 id、完成 / 阻断事件数和断言数。
 
 ### 2.1 L1：本地可控测试站点
 

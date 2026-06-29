@@ -8,6 +8,7 @@ const repoRoot = path.resolve(import.meta.dirname, '..');
 const tmpRoot = mkdtempSync(path.resolve(tmpdir(), 'lobe-browser-business-demo-local-'));
 const skillPackDir = path.join(tmpRoot, 'skill-packs');
 const evidenceFile = path.join(tmpRoot, 'browser-business-demo-local.json');
+const evidenceSummaryFile = path.join(tmpRoot, 'browser-business-demo-local-summary.json');
 const expenseSkillPack = path.resolve(
   repoRoot,
   'examples/browser-skill-packs/expense-approval.json',
@@ -131,6 +132,20 @@ function writeDemoEnvFile(file, env) {
   writeFileSync(file, `${lines.join('\n')}\n`);
 }
 
+function assertEvidenceSummary(file, targetUrl) {
+  assert(existsSync(file), `Missing evidence summary: ${file}`);
+
+  const summary = JSON.parse(readFileSync(file, 'utf8'));
+  assert(summary.passed === true, 'Evidence summary must be marked passed');
+  assert(summary.targetUrl === targetUrl, 'Evidence summary targetUrl must match demo URL');
+  assert(summary.page === 'expense_approval_form', 'Evidence summary page must match skill pack');
+  assert(summary.planSource === 'skill_pack', 'Evidence summary planSource must be skill_pack');
+  assert(summary.riskGateStepId === 'risk_gate', 'Evidence summary must record risk gate id');
+  assert(summary.completedEventCount > 0, 'Evidence summary must include completed events');
+  assert(summary.blockedEventCount > 0, 'Evidence summary must include blocked events');
+  assert(summary.assertionCount === 2, 'Evidence summary must include both assertions');
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url || '/', 'http://127.0.0.1');
 
@@ -192,7 +207,9 @@ try {
 
   await runNodeScript(verifier, {
     BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE: evidenceFile,
+    BROWSER_BUSINESS_EVIDENCE_SUMMARY_FILE: evidenceSummaryFile,
   });
+  assertEvidenceSummary(evidenceSummaryFile, targetUrl);
 
   console.log(`Local browser business demo passed for ${targetUrl}`);
 } finally {

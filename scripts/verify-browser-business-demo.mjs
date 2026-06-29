@@ -48,6 +48,9 @@ const evidenceFile = process.env.BROWSER_BUSINESS_EVIDENCE_FILE
 const evidenceValidateFile = process.env.BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE
   ? path.resolve(repoRoot, process.env.BROWSER_BUSINESS_EVIDENCE_VALIDATE_FILE)
   : undefined;
+const evidenceSummaryFile = process.env.BROWSER_BUSINESS_EVIDENCE_SUMMARY_FILE
+  ? path.resolve(repoRoot, process.env.BROWSER_BUSINESS_EVIDENCE_SUMMARY_FILE)
+  : undefined;
 const preflightOnly = process.env.BROWSER_BUSINESS_PREFLIGHT === '1';
 const verifierVersion = 2;
 let browserServiceRuntimeDir;
@@ -281,9 +284,39 @@ function validateEvidenceFile(file) {
     'Every evidence assertion must pass',
   );
 
+  writeEvidenceSummary(data);
+
   console.log(
     `Browser business demo evidence verification passed for ${data.targetUrl} with skill pack ${data.skillPack.page}`,
   );
+  if (evidenceSummaryFile) console.log(`Evidence summary written to ${evidenceSummaryFile}`);
+}
+
+function writeEvidenceSummary(data) {
+  if (!evidenceSummaryFile) return;
+
+  const completedEvents = data.executionEvents.filter((event) => event.status === 'completed');
+  const blockedEvents = data.executionEvents.filter((event) => event.status === 'blocked');
+  const summary = {
+    assertionCount: data.assertionResults.length,
+    authorizationGate: {
+      phase: data.authorizationGate.executionState.phase,
+      taskState: data.authorizationGate.taskState,
+    },
+    blockedEventCount: blockedEvents.length,
+    blockedRiskEventId: data.blockedRiskEvent.id,
+    completedEventCount: completedEvents.length,
+    generatedAt: new Date().toISOString(),
+    page: data.skillPack.page,
+    passed: true,
+    planSource: data.plan.source,
+    riskGateStepId: data.riskGateStep.id,
+    targetUrl: data.targetUrl,
+    verifierVersion,
+  };
+
+  mkdirSync(path.dirname(evidenceSummaryFile), { recursive: true });
+  writeFileSync(evidenceSummaryFile, `${JSON.stringify(summary, null, 2)}\n`);
 }
 
 function waitForProcessExit(child, timeout = 5000) {
