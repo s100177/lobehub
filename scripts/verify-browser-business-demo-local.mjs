@@ -187,6 +187,12 @@ function assertPreflightReport(file, targetUrl) {
   assert(report.assertionCount === 2, 'Preflight report must include assertion count');
 }
 
+function writeMutatedJson(sourceFile, targetFile, mutate) {
+  const payload = JSON.parse(readFileSync(sourceFile, 'utf8'));
+  mutate(payload);
+  writeFileSync(targetFile, `${JSON.stringify(payload, null, 2)}\n`);
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url || '/', 'http://127.0.0.1');
 
@@ -244,6 +250,10 @@ try {
   assert(address && typeof address === 'object', 'Local business demo server did not start');
 
   const targetUrl = `http://127.0.0.1:${address.port}/business-expense.html`;
+  const bundleVerifier = path.resolve(
+    repoRoot,
+    'scripts/verify-browser-business-evidence-bundle.mjs',
+  );
   const evidencePipeline = path.resolve(repoRoot, 'scripts/run-browser-business-demo-evidence.mjs');
 
   const demoEnv = {
@@ -261,6 +271,34 @@ try {
   });
   assertPreflightReport(preflightReportFile, targetUrl);
   assertEvidenceSummary(evidenceSummaryFile, targetUrl);
+
+  const driftedSummaryFile = path.join(tmpRoot, 'browser-business-demo-summary-drifted.json');
+  writeMutatedJson(evidenceSummaryFile, driftedSummaryFile, (summary) => {
+    summary.riskGateStepId = 'unexpected_risk_gate';
+  });
+  await expectNodeScriptFailure(
+    bundleVerifier,
+    {
+      BROWSER_BUSINESS_EVIDENCE_FILE: evidenceFile,
+      BROWSER_BUSINESS_EVIDENCE_SUMMARY_FILE: driftedSummaryFile,
+      BROWSER_BUSINESS_PREFLIGHT_REPORT_FILE: preflightReportFile,
+    },
+    /Summary risk gate must match evidence/,
+  );
+
+  const driftedPreflightFile = path.join(tmpRoot, 'browser-business-demo-preflight-drifted.json');
+  writeMutatedJson(preflightReportFile, driftedPreflightFile, (preflight) => {
+    preflight.targetAccessed = true;
+  });
+  await expectNodeScriptFailure(
+    bundleVerifier,
+    {
+      BROWSER_BUSINESS_EVIDENCE_FILE: evidenceFile,
+      BROWSER_BUSINESS_EVIDENCE_SUMMARY_FILE: evidenceSummaryFile,
+      BROWSER_BUSINESS_PREFLIGHT_REPORT_FILE: driftedPreflightFile,
+    },
+    /Preflight report must prove targetAccessed:false/,
+  );
 
   console.log(`Local browser business demo passed for ${targetUrl}`);
 } finally {
