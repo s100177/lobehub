@@ -48,6 +48,7 @@ examples/browser-skill-packs/expense-approval.json
 - 每个技能包都有 `site`、`page`、`pageType`、`description`。
 - `entities`、`safeActions`、`riskActions`、`ambiguityRules` 必须是字符串数组。
 - 每个 workflow 有 `intent`、`goal`、`constraints` 和非空 steps。
+- 如果 workflow 提供 `layers`，`layers.goal`、`layers.constraints`、`layers.execution` 必须与兼容字段保持一致。
 - step 类型只能是声明式安全类型。
 - 可执行 step 必须声明 `action.selector`。
 - `fill` / `select` 的 `action.inputKey` 与 step `gaps` 必须能在 `fillGaps` 里找到定义。

@@ -101,6 +101,16 @@ examples/browser-skill-packs/expense-approval.json
 - 执行层：可执行 step 必须有声明式 `action.selector`；`fill` / `select` 的输入必须在 `fillGaps` 中声明。
 - 风险层：`risk_gate` 必须绑定 `riskActions` 中的 `riskAction` 和 `confirmationPoints` 中的 `confirmationPoint`。
 
+生产技能包建议额外声明 `workflow.layers`，让三层输入成为机器可审计的显式契约：
+
+- `layers.goal.intent` / `layers.goal.description` 必须与 `workflow.intent` / `workflow.goal` 一致。
+- `layers.constraints.rules` 必须与 `workflow.constraints` 一致。
+- `layers.execution.steps` 必须与 `workflow.steps[].id` 顺序一致。
+- `layers.execution.inputPolicy` 用于声明字段由 AI 自动补齐、询问用户、仅人工填写或执行前确认。
+- `layers.execution.resumePolicy` 推荐使用 `inspect_before_resume`，保证暂停或歧义恢复后不基于旧状态继续。
+
+运行时会把 `workflow.layers` 透传到 `plan.layers`，供 BrowserPanel、审计证据和后续业务 planner 使用；旧字段仍用于兼容现有执行器。
+
 真实业务系统演示用例：
 
 开发回归可先跑仓库内置的本地业务页演示：

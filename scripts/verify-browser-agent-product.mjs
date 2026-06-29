@@ -522,6 +522,15 @@ try {
     `Expected external expense workflow plan, got ${JSON.stringify(expense.plan)}`,
   );
   assert(
+    expense.plan?.layers?.goal?.intent === 'expense_approval' &&
+      expense.plan?.layers?.constraints?.rules?.includes('提交审批前必须等待用户确认') &&
+      expense.plan?.layers?.execution?.resumePolicy === 'inspect_before_resume' &&
+      expense.plan?.layers?.execution?.steps?.includes('risk_gate'),
+    `Expected normalized workflow layers to pass through plan, got ${JSON.stringify(
+      expense.plan?.layers,
+    )}`,
+  );
+  assert(
     expense.pageState?.clarifications?.some(
       (prompt) =>
         prompt.field === 'department' &&

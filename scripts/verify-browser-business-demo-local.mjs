@@ -78,6 +78,7 @@ function prepareMultiRiskSkillPack(baseSkillPack) {
     title: '第二个风险门不应成为演示期望',
     type: 'risk_gate',
   });
+  workflow.layers.execution.steps.push('second_risk_gate');
 
   mkdirSync(multiRiskSkillPackDir, { recursive: true });
   writeFileSync(

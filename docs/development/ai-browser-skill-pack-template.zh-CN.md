@@ -52,6 +52,24 @@
       "intent": "user_goal_id",
       "goal": "目标说明",
       "constraints": ["约束 1", "约束 2"],
+      "layers": {
+        "goal": {
+          "intent": "user_goal_id",
+          "description": "目标说明"
+        },
+        "constraints": {
+          "rules": ["约束 1", "约束 2"],
+          "forbiddenActions": ["risk_action_a"],
+          "riskActions": ["risk_action_a"]
+        },
+        "execution": {
+          "inputPolicy": {
+            "region": "ask_user"
+          },
+          "resumePolicy": "inspect_before_resume",
+          "steps": ["inspect", "select", "confirm"]
+        }
+      },
       "steps": [
         {
           "id": "inspect",
@@ -151,6 +169,18 @@ AI 可以直接执行的动作，例如：
 
 用户目标对应的标准执行流。
 
+每个 workflow 推荐同时提供显式三层结构 `layers`，作为业务系统交给 AI 的规范化输入：
+
+- `layers.goal`：目标层，必须与 `workflow.intent` / `workflow.goal` 保持一致。
+- `layers.constraints.rules`：约束层，必须与 `workflow.constraints` 保持一致，用于表达预算、范围、禁做项和确认边界。
+- `layers.constraints.forbiddenActions`：禁止自动执行的动作，例如购买、支付、删除、提交、授权。
+- `layers.constraints.riskActions`：需要风险确认的动作，通常对应顶层 `riskActions`。
+- `layers.execution.inputPolicy`：执行层，定义字段补齐策略。支持 `auto`、`ask_user`、`manual_only`、`confirm_before`。
+- `layers.execution.resumePolicy`：恢复策略，生产环境建议使用 `inspect_before_resume`。
+- `layers.execution.steps`：执行层步骤 ID，必须与 `workflow.steps[].id` 顺序一致。
+
+`intent`、`goal`、`constraints`、`steps` 仍是运行时兼容字段；`layers` 是显式审计字段。生产技能包应两者同时提供，静态校验会检查它们不能漂移。
+
 每个 step 可以提供声明式 `action`，运行时只会读取这些字段，不执行脚本：
 
 - `selector`：CSS selector，指向要操作或校验的页面元素。
@@ -212,6 +242,7 @@ BROWSER_SKILL_PACK_VERIFY_DIR=/path/to/your/skill-packs pnpm test:browser-skill-
 - 必填字段：`site`、`page`、`pageType`、`description`、`entities`、`safeActions`、`riskActions`、`ambiguityRules`、`workflows`。
 - workflow 必须有 `intent`、`goal` 和非空 `steps`。
 - workflow 必须有 `constraints`，用于表达预算、范围、禁做项和执行边界。
+- 如果 workflow 提供 `layers`，则 `layers.goal` 必须匹配 `intent` / `goal`，`layers.constraints.rules` 必须匹配 `constraints`，`layers.execution.steps` 必须匹配 step id 顺序。
 - step 类型只能是 `ask`、`click`、`fill`、`inspect`、`risk_gate`、`select`、`verify`。
 - `fill`、`select`、`click`、`verify` 必须提供声明式 `action.selector`。
 - `fill` / `select` 的 `action.inputKey` 和 step `gaps` 必须先声明在 `fillGaps` 中。
@@ -246,6 +277,25 @@ BROWSER_SKILL_PACK_VERIFY_DIR=/path/to/your/skill-packs pnpm test:browser-skill-
       "intent": "submit_expense_approval",
       "goal": "提交费用审批",
       "constraints": ["部门缺失时必须询问用户", "提交审批前必须等待用户确认"],
+      "layers": {
+        "goal": {
+          "intent": "submit_expense_approval",
+          "description": "提交费用审批"
+        },
+        "constraints": {
+          "rules": ["部门缺失时必须询问用户", "提交审批前必须等待用户确认"],
+          "forbiddenActions": ["submitForm"],
+          "riskActions": ["submitForm"]
+        },
+        "execution": {
+          "inputPolicy": {
+            "department": "ask_user",
+            "reason": "auto"
+          },
+          "resumePolicy": "inspect_before_resume",
+          "steps": ["inspect", "select_department", "fill_reason", "verify_amount", "confirm"]
+        }
+      },
       "steps": [
         { "id": "inspect", "title": "读取表单状态", "type": "inspect" },
         {

@@ -23,6 +23,10 @@
 - [ ] 技能包包含 `riskActions`。
 - [ ] 技能包包含 `ambiguityRules`。
 - [ ] 技能包包含至少一个 `workflow`。
+- [ ] 生产 workflow 包含 `layers.goal`、`layers.constraints`、`layers.execution`。
+- [ ] `layers.goal` 与 `workflow.intent` / `workflow.goal` 没有漂移。
+- [ ] `layers.constraints.rules` 与 `workflow.constraints` 没有漂移。
+- [ ] `layers.execution.steps` 与 `workflow.steps[].id` 顺序一致。
 - [ ] 技能包能覆盖你最常见的用户目标。
 - [ ] 技能包能区分 “可自动执行” 和 “必须确认”。
 
@@ -31,6 +35,7 @@
 - [ ] 目标层能明确告诉 AI 要做什么。
 - [ ] 约束层能明确预算、范围、禁做项。
 - [ ] 执行层能明确缺信息时如何补齐。
+- [ ] 执行层定义了 `inputPolicy` 和 `resumePolicy`。
 - [ ] 用户开始前能一次性提供足够信息。
 - [ ] 用户也能选择只给目标，让 AI 追问。
 

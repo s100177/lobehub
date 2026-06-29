@@ -388,6 +388,71 @@ function sanitizeSkillStepAction(action) {
   };
 }
 
+function sanitizeWorkflowLayers(layers) {
+  if (!layers || typeof layers !== 'object' || Array.isArray(layers)) return undefined;
+
+  const goal = layers.goal && typeof layers.goal === 'object' ? layers.goal : undefined;
+  const constraints =
+    layers.constraints && typeof layers.constraints === 'object' ? layers.constraints : undefined;
+  const execution =
+    layers.execution && typeof layers.execution === 'object' ? layers.execution : undefined;
+
+  const inputPolicy =
+    execution?.inputPolicy &&
+    typeof execution.inputPolicy === 'object' &&
+    !Array.isArray(execution.inputPolicy)
+      ? Object.fromEntries(
+          Object.entries(execution.inputPolicy)
+            .filter(([field, mode]) => typeof field === 'string' && typeof mode === 'string')
+            .map(([field, mode]) => [field.slice(0, 80), mode.slice(0, 40)])
+            .slice(0, 30),
+        )
+      : undefined;
+
+  return {
+    ...(constraints
+      ? {
+          constraints: {
+            ...(asStringArray(constraints.forbiddenActions, 40)
+              ? { forbiddenActions: asStringArray(constraints.forbiddenActions, 40) }
+              : {}),
+            ...(asStringArray(constraints.riskActions, 40)
+              ? { riskActions: asStringArray(constraints.riskActions, 40) }
+              : {}),
+            ...(asStringArray(constraints.rules, 40)
+              ? { rules: asStringArray(constraints.rules, 40) }
+              : {}),
+          },
+        }
+      : {}),
+    ...(execution
+      ? {
+          execution: {
+            ...(inputPolicy && Object.keys(inputPolicy).length > 0 ? { inputPolicy } : {}),
+            ...(asOptionalString(execution.resumePolicy, 120)
+              ? { resumePolicy: asOptionalString(execution.resumePolicy, 120) }
+              : {}),
+            ...(asStringArray(execution.steps, 80)
+              ? { steps: asStringArray(execution.steps, 80) }
+              : {}),
+          },
+        }
+      : {}),
+    ...(goal
+      ? {
+          goal: {
+            ...(asOptionalString(goal.description, 240)
+              ? { description: asOptionalString(goal.description, 240) }
+              : {}),
+            ...(asOptionalString(goal.intent, 120)
+              ? { intent: asOptionalString(goal.intent, 120) }
+              : {}),
+          },
+        }
+      : {}),
+  };
+}
+
 function sanitizeSkillPack(pack, source = 'external') {
   if (!pack || typeof pack !== 'object') return undefined;
   if (typeof pack.site !== 'string' || typeof pack.page !== 'string') return undefined;
@@ -436,6 +501,9 @@ function sanitizeSkillPack(pack, source = 'external') {
           typeof workflow.intent === 'string' && workflow.intent
             ? workflow.intent.slice(0, 120)
             : `${pack.page}_workflow_${workflowIndex + 1}`,
+        ...(sanitizeWorkflowLayers(workflow.layers)
+          ? { layers: sanitizeWorkflowLayers(workflow.layers) }
+          : {}),
         steps,
       };
     })
@@ -1009,6 +1077,7 @@ async function inspectPageState(page, options = {}) {
             confirmationRequired: workflow.steps.some((step) => step.type === 'risk_gate'),
             goal: workflow.goal,
             intent: workflow.intent,
+            ...(workflow.layers ? { layers: workflow.layers } : {}),
             source: 'skill_pack',
             steps: workflow.steps.map((step, index) => ({
               ...step,

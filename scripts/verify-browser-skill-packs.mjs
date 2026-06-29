@@ -20,6 +20,7 @@ const riskyStepTypes = new Set(['risk_gate']);
 const riskyWords = /购买|下单|订单|支付|付款|删除|释放|销毁|退订|注销|授权|提交|开通|续费/;
 const executableStepTypes = new Set(['click', 'fill', 'select', 'verify']);
 const inputStepTypes = new Set(['fill', 'select']);
+const executionPolicyModes = new Set(['auto', 'ask_user', 'manual_only', 'confirm_before']);
 
 function listJsonFiles(dir) {
   return readdirSync(dir)
@@ -124,6 +125,90 @@ function validateStep(step, context, packContext) {
   }
 }
 
+function validateWorkflowLayers(workflow, workflowLabel) {
+  if (workflow.layers === undefined) return;
+
+  assert(
+    workflow.layers && typeof workflow.layers === 'object' && !Array.isArray(workflow.layers),
+    `${workflowLabel}: layers must be an object`,
+  );
+
+  const { constraints, execution, goal } = workflow.layers;
+  assert(goal && typeof goal === 'object', `${workflowLabel}: layers.goal is required`);
+  assert(
+    typeof goal.intent === 'string' && goal.intent,
+    `${workflowLabel}: layers.goal.intent is required`,
+  );
+  assert(
+    typeof goal.description === 'string' && goal.description,
+    `${workflowLabel}: layers.goal.description is required`,
+  );
+  assert.equal(
+    goal.intent,
+    workflow.intent,
+    `${workflowLabel}: layers.goal.intent must match workflow.intent`,
+  );
+  assert.equal(
+    goal.description,
+    workflow.goal,
+    `${workflowLabel}: layers.goal.description must match workflow.goal`,
+  );
+
+  assert(
+    constraints && typeof constraints === 'object',
+    `${workflowLabel}: layers.constraints is required`,
+  );
+  assertStringArray(constraints, 'rules', `${workflowLabel}: layers.constraints`);
+  assert.deepEqual(
+    constraints.rules,
+    workflow.constraints,
+    `${workflowLabel}: layers.constraints.rules must match workflow.constraints`,
+  );
+  if (constraints.forbiddenActions !== undefined) {
+    assertStringArray(constraints, 'forbiddenActions', `${workflowLabel}: layers.constraints`);
+  }
+  if (constraints.riskActions !== undefined) {
+    assertStringArray(constraints, 'riskActions', `${workflowLabel}: layers.constraints`);
+  }
+
+  assert(
+    execution && typeof execution === 'object',
+    `${workflowLabel}: layers.execution is required`,
+  );
+  if (execution.inputPolicy !== undefined) {
+    assert(
+      execution.inputPolicy &&
+        typeof execution.inputPolicy === 'object' &&
+        !Array.isArray(execution.inputPolicy),
+      `${workflowLabel}: layers.execution.inputPolicy must be an object`,
+    );
+    for (const [field, mode] of Object.entries(execution.inputPolicy)) {
+      assert(
+        typeof field === 'string' && field,
+        `${workflowLabel}: layers.execution.inputPolicy field is required`,
+      );
+      assert(
+        executionPolicyModes.has(mode),
+        `${workflowLabel}: layers.execution.inputPolicy.${field} has unsupported mode ${mode}`,
+      );
+    }
+  }
+  if (execution.resumePolicy !== undefined) {
+    assert(
+      typeof execution.resumePolicy === 'string' && execution.resumePolicy,
+      `${workflowLabel}: layers.execution.resumePolicy must be a string`,
+    );
+  }
+  if (execution.steps !== undefined) {
+    assertStringArray(execution, 'steps', `${workflowLabel}: layers.execution`);
+    assert.deepEqual(
+      execution.steps,
+      workflow.steps.map((step) => step.id),
+      `${workflowLabel}: layers.execution.steps must match workflow step ids`,
+    );
+  }
+}
+
 function validateSkillPackData(pack, label) {
   assert(typeof pack.site === 'string' && pack.site, `${label}: site is required`);
   assert(typeof pack.page === 'string' && pack.page, `${label}: page is required`);
@@ -209,6 +294,7 @@ function validateSkillPackData(pack, label) {
       Array.isArray(workflow.steps) && workflow.steps.length > 0,
       `${workflowLabel}: steps are required`,
     );
+    validateWorkflowLayers(workflow, workflowLabel);
 
     for (const [stepIndex, step] of workflow.steps.entries()) {
       validateStep(step, `${workflowLabel}.steps[${stepIndex}]`, packContext);
@@ -242,6 +328,22 @@ function createValidPack(overrides = {}) {
         constraints: ['提交前必须等待用户确认'],
         goal: '补齐表单并停在提交前',
         intent: 'submit_test_form',
+        layers: {
+          constraints: {
+            forbiddenActions: ['submit_form'],
+            riskActions: ['submit_form'],
+            rules: ['提交前必须等待用户确认'],
+          },
+          execution: {
+            inputPolicy: { department: 'ask_user' },
+            resumePolicy: 'inspect_before_resume',
+            steps: ['inspect', 'select_department', 'risk_gate'],
+          },
+          goal: {
+            description: '补齐表单并停在提交前',
+            intent: 'submit_test_form',
+          },
+        },
         steps: [
           { id: 'inspect', title: '读取页面状态', type: 'inspect' },
           {
@@ -359,6 +461,58 @@ function runSelfTests() {
     }),
     /must be declared in fillGaps/,
     'self-test: undeclared input gap',
+  );
+  expectInvalid(
+    createValidPack({
+      workflows: [
+        {
+          constraints: ['提交前必须确认'],
+          goal: '层级目标漂移',
+          intent: 'layer_drift',
+          layers: {
+            constraints: {
+              rules: ['提交前必须确认'],
+            },
+            execution: {
+              steps: ['inspect'],
+            },
+            goal: {
+              description: '另一个目标',
+              intent: 'layer_drift',
+            },
+          },
+          steps: [{ id: 'inspect', title: '读取页面状态', type: 'inspect' }],
+        },
+      ],
+    }),
+    /layers\.goal\.description must match workflow\.goal/,
+    'self-test: layers goal drift',
+  );
+  expectInvalid(
+    createValidPack({
+      workflows: [
+        {
+          constraints: ['提交前必须确认'],
+          goal: '层级步骤漂移',
+          intent: 'layer_step_drift',
+          layers: {
+            constraints: {
+              rules: ['提交前必须确认'],
+            },
+            execution: {
+              steps: ['inspect', 'missing_step'],
+            },
+            goal: {
+              description: '层级步骤漂移',
+              intent: 'layer_step_drift',
+            },
+          },
+          steps: [{ id: 'inspect', title: '读取页面状态', type: 'inspect' }],
+        },
+      ],
+    }),
+    /layers\.execution\.steps must match workflow step ids/,
+    'self-test: layers execution drift',
   );
 }
 

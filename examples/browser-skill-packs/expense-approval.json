@@ -36,6 +36,25 @@
       "constraints": ["必须先补齐报销部门", "可以填写报销原因", "提交审批前必须等待用户确认"],
       "goal": "补齐费用审批表单并停在提交前",
       "intent": "expense_approval",
+      "layers": {
+        "constraints": {
+          "forbiddenActions": ["submit_expense"],
+          "riskActions": ["submit_expense"],
+          "rules": ["必须先补齐报销部门", "可以填写报销原因", "提交审批前必须等待用户确认"]
+        },
+        "execution": {
+          "inputPolicy": {
+            "department": "ask_user",
+            "reason": "auto"
+          },
+          "resumePolicy": "inspect_before_resume",
+          "steps": ["inspect", "select_department", "fill_reason", "verify_amount", "risk_gate"]
+        },
+        "goal": {
+          "description": "补齐费用审批表单并停在提交前",
+          "intent": "expense_approval"
+        }
+      },
       "steps": [
         {
           "id": "inspect",
@@ -84,6 +103,22 @@
       "constraints": ["只能读取并核对金额", "不得填写字段或提交审批"],
       "goal": "只核对费用审批金额，不填写或提交",
       "intent": "expense_review_only",
+      "layers": {
+        "constraints": {
+          "forbiddenActions": ["fill_reason", "submit_expense"],
+          "riskActions": ["submit_expense"],
+          "rules": ["只能读取并核对金额", "不得填写字段或提交审批"]
+        },
+        "execution": {
+          "inputPolicy": {},
+          "resumePolicy": "inspect_before_resume",
+          "steps": ["inspect_review", "verify_amount_only"]
+        },
+        "goal": {
+          "description": "只核对费用审批金额，不填写或提交",
+          "intent": "expense_review_only"
+        }
+      },
       "steps": [
         {
           "id": "inspect_review",
