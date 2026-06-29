@@ -104,20 +104,26 @@
 
 - [x] 有本地可控测试页。
 - [x] 有 Playwright 验收脚本。
-- [ ] 有真实网站冒烟场景。
+- [x] 有真实网站冒烟场景。
 - [x] 能覆盖授权、接管、高亮、歧义、风险、人工干预。
 
 当前自动化证据：
 
 - `scripts/verify-browser-agent-product.mjs` 覆盖本地可控页面、技能包计划、授权后执行、接管视觉、高亮、歧义询问、风险拦截、人工干预 `interrupt`、remote viewer `/input` 中断审计和恢复前 inspect。
+- `scripts/verify-browser-real-smoke.mjs` 覆盖真实站点 remote navigate、inspect、标题 / URL /viewport 和不触发风险动作；可通过 `BROWSER_REAL_SMOKE_URLS` 扩展真实站点列表。
 - `src/features/Conversation/Messages/AssistantGroup/Tool/BrowserPanel.test.tsx` 覆盖 BrowserPanel 授权卡、暂停卡、clarification、suggestedTasks、审计时间线、remote/iframe 视图和继续前 inspect。
 
 ## 12. 发布门槛
 
 上线前至少满足：
 
-- [ ] 本地可控测试全通过。
-- [ ] 自动化脚本全通过。
-- [ ] 真实网站冒烟无阻塞问题。
-- [ ] 风险动作不会被自动执行。
-- [ ] 用户能随时接管。
+- [x] 本地可控测试全通过。
+- [x] 自动化脚本全通过。
+- [x] 真实网站冒烟无阻塞问题。
+- [x] 风险动作不会被自动执行。
+- [x] 用户能随时接管。
+
+仍未闭环：
+
+- [ ] Docker 镜像部署后的真实 UI E2E 通过。
+- [ ] 指定业务系统真实页面完成一轮人工确认的端到端演示。

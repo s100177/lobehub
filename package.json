@@ -109,6 +109,7 @@
     "stylelint": "stylelint \"src/**/*.{js,jsx,ts,tsx}\" --fix",
     "test": "npm run test-app && npm run test-server",
     "test:browser-agent": "node scripts/verify-browser-agent-product.mjs",
+    "test:browser-real-smoke": "node scripts/verify-browser-real-smoke.mjs",
     "test:e2e": "pnpm --filter @lobechat/e2e-tests test",
     "test:e2e:smoke": "pnpm --filter @lobechat/e2e-tests test:smoke",
     "test:update": "vitest -u",
