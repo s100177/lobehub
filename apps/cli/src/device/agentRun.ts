@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 
 import {
   buildHeteroExecStdinPayload,
@@ -30,6 +31,25 @@ interface SpawnHeteroAgentRunLogger {
   error?: (msg: string) => void;
   info?: (msg: string) => void;
 }
+
+const resolveCliInvocation = (): { args: string[]; command: string } | { error: string } => {
+  const command = process.env.LOBEHUB_CLI_NODE || process.execPath;
+  const entry = process.env.LOBEHUB_CLI_ENTRY || process.argv[1];
+
+  if (!command || !fs.existsSync(command)) {
+    return {
+      error: `LobeHub CLI node executable is unavailable: ${command || '<empty>'}. Restart 'lh connect' from a valid Node installation.`,
+    };
+  }
+
+  if (!entry || !fs.existsSync(entry)) {
+    return {
+      error: `LobeHub CLI entry is unavailable: ${entry || '<empty>'}. Restart 'lh connect' from the current CLI installation.`,
+    };
+  }
+
+  return { args: [...process.execArgv, entry], command };
+};
 
 /**
  * Spawn `lh hetero exec` for a gateway-dispatched agent run. Mirrors the
@@ -66,11 +86,19 @@ export function spawnHeteroAgentRun(
     topicId,
   } = params;
   const workDir = cwd ?? process.cwd();
+  const cliInvocation = resolveCliInvocation();
+
+  if ('error' in cliInvocation) {
+    logger?.error?.(
+      `hetero exec spawn preflight failed (op=${operationId}): ${cliInvocation.error}`,
+    );
+    return Promise.resolve({ reason: cliInvocation.error, status: 'rejected' });
+  }
 
   // Server-ingest mode (--topic + --operation-id): events are batch-POSTed to
   // the server, not rendered. `--input-json -` reads the prompt from stdin.
   const cliArgs = [
-    process.argv[1],
+    ...cliInvocation.args,
     'hetero',
     'exec',
     '--type',
@@ -103,7 +131,7 @@ export function spawnHeteroAgentRun(
       resolve(result);
     };
 
-    const child = spawn(process.execPath, [...process.execArgv, ...cliArgs], {
+    const child = spawn(cliInvocation.command, cliArgs, {
       cwd: workDir,
       env: {
         ...process.env,

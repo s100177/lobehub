@@ -19,11 +19,15 @@ vi.mock('node:os', async (importOriginal) => {
   };
 });
 
-// Mock only `execFileSync` (used by isDaemonProcess to read a process command
-// line); keep the real `spawn` so nothing else changes.
+const { spawnMock } = vi.hoisted(() => ({
+  spawnMock: vi.fn(() => ({ pid: 12345, unref: vi.fn() })),
+}));
+
+// Mock `execFileSync` (used by isDaemonProcess to read a process command line)
+// and `spawn` (used by spawnDaemon so tests do not create real daemons).
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<Record<string, any>>();
-  return { ...actual, execFileSync: vi.fn() };
+  return { ...actual, execFileSync: vi.fn(), spawn: spawnMock };
 });
 
 // eslint-disable-next-line import-x/first
@@ -41,6 +45,7 @@ import {
   removePid,
   removeStatus,
   rotateLogIfNeeded,
+  spawnDaemon,
   stopDaemon,
   writePid,
   writeStatus,
@@ -58,6 +63,7 @@ describe('daemon manager', () => {
   });
 
   afterEach(() => {
+    spawnMock.mockClear();
     fs.rmSync(tmpDir, { force: true, recursive: true });
   });
 
@@ -250,6 +256,31 @@ describe('daemon manager', () => {
 
     it('should handle rotation when no log file exists', () => {
       expect(() => rotateLogIfNeeded()).not.toThrow();
+    });
+  });
+
+  describe('spawnDaemon', () => {
+    it('pins the current node and CLI entry for daemon-dispatched child runs', () => {
+      const pid = spawnDaemon(['connect', '--gateway', 'https://gateway.test']);
+
+      expect(pid).toBe(12345);
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+      const [command, args, options] = spawnMock.mock.calls[0];
+
+      expect(command).toBe(process.execPath);
+      expect(args).toEqual([
+        ...process.execArgv,
+        'connect',
+        '--gateway',
+        'https://gateway.test',
+        '--daemon-child',
+      ]);
+      expect(options.env).toMatchObject({
+        ELECTRON_RUN_AS_NODE: '1',
+        LOBEHUB_CLI_ENTRY: process.argv[1],
+        LOBEHUB_CLI_NODE: process.execPath,
+        LOBEHUB_DAEMON: '1',
+      });
     });
   });
 
