@@ -134,6 +134,53 @@ function recordAction(session, { action, status = 'success', summary, target }) 
   ].slice(-20);
 }
 
+async function adoptPageAsCurrentSessionPage(session, nextPage) {
+  if (!nextPage || nextPage.isClosed()) return false;
+
+  const previousPage = session.page;
+  await nextPage.setViewportSize(VIEWPORT).catch(() => {});
+  await nextPage.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => null);
+  await nextPage.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => null);
+  await nextPage.bringToFront().catch(() => null);
+  session.page = nextPage;
+
+  if (previousPage && previousPage !== nextPage && !previousPage.isClosed()) {
+    await previousPage.close().catch(() => null);
+  }
+
+  recordAction(session, {
+    action: 'popup',
+    summary: `Kept popup navigation inside the right-side browser: ${nextPage.url()}`,
+    target: nextPage.url(),
+  });
+
+  return true;
+}
+
+async function runWithPopupAdoption(session, action) {
+  let popup;
+  const capturePage = (page) => {
+    if (!popup && page !== session.page) popup = page;
+  };
+
+  session.context.on('page', capturePage);
+  try {
+    const result = await action();
+    if (result?.blocked) return result;
+
+    const deadline = Date.now() + 1500;
+    while (!popup && Date.now() < deadline) {
+      await session.page.waitForTimeout(50).catch(() => null);
+    }
+
+    await adoptPageAsCurrentSessionPage(session, popup);
+
+    return result;
+  } finally {
+    session.context.off('page', capturePage);
+  }
+}
+
 function resetExecutionState(session) {
   session.executionState = undefined;
   session.executionEvents = [];
@@ -2192,8 +2239,9 @@ app.post('/click', sessionMiddleware, async (req, res) => {
     if (!selector) return res.status(400).json({ error: 'Missing selector' });
 
     const session = await getOrCreateSession(req.sessionId);
-    const { page } = session;
-    const clicked = await performSafeClick(page, selector, timeout);
+    const clicked = await runWithPopupAdoption(session, () =>
+      performSafeClick(session.page, selector, timeout),
+    );
     resetExecutionState(session);
     if (clicked.blocked) {
       recordAction(session, {
@@ -2204,13 +2252,13 @@ app.post('/click', sessionMiddleware, async (req, res) => {
       });
       return res.json(
         withRiskBlock(
-          await getPageState(page, { screenshot: false, sessionId: req.sessionId }),
+          await getPageState(session.page, { screenshot: false, sessionId: req.sessionId }),
           clicked.riskBlock,
         ),
       );
     }
     recordAction(session, { action: 'click', summary: `Clicked ${selector}`, target: selector });
-    res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
+    res.json(await getPageState(session.page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2238,8 +2286,9 @@ app.post('/submit', sessionMiddleware, async (req, res) => {
     if (!selector) return res.status(400).json({ error: 'Missing selector' });
 
     const session = await getOrCreateSession(req.sessionId);
-    const { page } = session;
-    const submitted = await performSafeSubmit(page, selector, timeout);
+    const submitted = await runWithPopupAdoption(session, () =>
+      performSafeSubmit(session.page, selector, timeout),
+    );
     resetExecutionState(session);
     if (submitted.blocked) {
       recordAction(session, {
@@ -2250,7 +2299,7 @@ app.post('/submit', sessionMiddleware, async (req, res) => {
       });
       return res.json(
         withRiskBlock(
-          await getPageState(page, { screenshot: false, sessionId: req.sessionId }),
+          await getPageState(session.page, { screenshot: false, sessionId: req.sessionId }),
           submitted.riskBlock,
         ),
       );
@@ -2258,7 +2307,7 @@ app.post('/submit', sessionMiddleware, async (req, res) => {
     if (!submitted.ok)
       return res.status(400).json({ error: `Failed to submit form: ${submitted.reason}` });
     recordAction(session, { action: 'submit', summary: `Submitted ${selector}`, target: selector });
-    res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
+    res.json(await getPageState(session.page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2325,14 +2374,19 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
       timeout = 10000,
     } = req.body || {};
     const session = await getOrCreateSession(req.sessionId);
-    const { page } = session;
+    let page = session.page;
     const executionEvents = [];
     const finalizeExecutionEvents = (events) => {
       for (const event of events) appendExecutionEvent(session, event);
       return events;
     };
     const getCurrentPageState = (extra = {}) =>
-      getPageState(page, { intent, screenshot: false, sessionId: req.sessionId, ...extra });
+      getPageState(session.page, {
+        intent,
+        screenshot: false,
+        sessionId: req.sessionId,
+        ...extra,
+      });
 
     let pageState = await inspectPageState(page, { intent });
     if (!pageState.loggedIn) {
@@ -2711,7 +2765,10 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
 
       if (step.type === 'click') {
         if (step.action?.selector) {
-          const clicked = await performSafeClick(page, step.action.selector, timeout);
+          const clicked = await runWithPopupAdoption(session, () =>
+            performSafeClick(session.page, step.action.selector, timeout),
+          );
+          page = session.page;
           if (clicked.blocked) {
             markBlocked(step, 'risk_blocked');
             recordAction(session, {
@@ -2770,7 +2827,10 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
           break;
         }
 
-        const submitted = await performSafeSubmit(page, target, timeout);
+        const submitted = await runWithPopupAdoption(session, () =>
+          performSafeSubmit(session.page, target, timeout),
+        );
+        page = session.page;
         if (submitted.blocked) {
           markBlocked(step, 'risk_blocked');
           recordAction(session, {
@@ -2990,7 +3050,7 @@ app.post('/input', sessionMiddleware, async (req, res) => {
       session.lastPointer = { x: payload.x, y: payload.y };
     }
     session.lastInputAt = Date.now();
-    await applyInput(session.page, payload);
+    await runWithPopupAdoption(session, () => applyInput(session.page, payload));
     await session.page.waitForTimeout(100);
     if (payload.type && payload.type !== 'mousemove') {
       recordUserIntervention(session, { inputType: payload.type });

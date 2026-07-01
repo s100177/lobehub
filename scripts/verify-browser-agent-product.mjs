@@ -147,6 +147,21 @@ const pages = {
       <button id="search" type="submit">搜索</button>
     </form>`,
   ),
+  '/popup-destination': html(
+    '体育新闻',
+    `<h1 id="headline">体育新闻详情</h1>
+    <p>这个页面模拟新闻站点通过 target=_blank 或 window.open 打开的详情页。</p>`,
+  ),
+  '/popup-link': html(
+    '新闻首页',
+    `<h1>新闻首页</h1>
+    <section>
+      <a id="sports-link" href="/popup-destination" target="_blank">体育新闻</a>
+      <button id="window-open" onclick="window.open('/popup-destination', '_blank')">
+        打开体育新闻
+      </button>
+    </section>`,
+  ),
   '/business-expense': html(
     '费用审批',
     `<h1>费用审批</h1>
@@ -451,6 +466,57 @@ async function assertServerRecordsUserIntervention() {
       executionEvents: resumed.executionEvents,
       executionState: resumed.executionState,
     })}`,
+  );
+}
+
+async function assertPopupNavigationStaysInRemoteSession() {
+  const clicked = await request(
+    '/navigate',
+    { mode: 'remote', url: `${pageOrigin}/popup-link` },
+    'verify-agent-popup-click',
+  );
+  assert(clicked.mode === 'remote', `Expected popup fixture remote mode, got ${clicked.mode}`);
+  const clickResult = await request(
+    '/click',
+    { selector: '#sports-link' },
+    'verify-agent-popup-click',
+  );
+  assert(
+    clickResult.url === `${pageOrigin}/popup-destination`,
+    `Expected selector popup to stay in remote session, got ${clickResult.url}`,
+  );
+  assert(
+    clickResult.title === '体育新闻',
+    `Expected selector popup destination title, got ${clickResult.title}`,
+  );
+
+  await request(
+    '/navigate',
+    { mode: 'remote', url: `${pageOrigin}/popup-link` },
+    'verify-agent-popup-input',
+  );
+  const locator = await request(
+    '/evaluate',
+    {
+      code: `(() => {
+        const rect = document.querySelector('#sports-link').getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      })()`,
+    },
+    'verify-agent-popup-input',
+  );
+  const inputResult = await request(
+    '/input',
+    { type: 'click', x: locator.result.x, y: locator.result.y },
+    'verify-agent-popup-input',
+  );
+  assert(
+    inputResult.url === `${pageOrigin}/popup-destination`,
+    `Expected user popup click to stay in remote session, got ${inputResult.url}`,
+  );
+  assert(
+    inputResult.title === '体育新闻',
+    `Expected user popup destination title, got ${inputResult.title}`,
   );
 }
 
@@ -937,6 +1003,7 @@ try {
   );
   await assertRemoteViewerPostsUserInput();
   await assertServerRecordsUserIntervention();
+  await assertPopupNavigationStaysInRemoteSession();
 
   console.log('Browser agent product verification passed');
 } finally {

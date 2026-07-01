@@ -10,6 +10,7 @@
 - 安全边界内自动执行。
 - 风险动作暂停确认。
 - 人工干预后暂停并恢复。
+- 链接、弹窗和新窗口仍留在右侧浏览器工作区，不逃逸到系统浏览器。
 
 核心原则：
 
@@ -68,6 +69,9 @@
 - 技能包只声明页面实体、风险边界和 workflow；不包含可执行脚本。
 - workflow step 可以声明 `action.selector`、`action.inputKey`、`action.value`、`action.expectedText`。
 - 运行时只按声明式 action 执行安全的 `fill`、`select`、`click`、`verify`；风险词命中的点击会被阻塞。
+- 右侧浏览器面板是封闭导航域：页面内 `target="_blank"` 链接和 `window.open` 不应打开系统默认浏览器。
+- direct iframe 模式禁止 popup 逃逸；需要打开外部系统浏览器时，只能通过用户显式点击工具卡或面板里的 `Open` 动作。
+- remote 模式会把 Playwright 捕获到的新 page 接管为当前 session page，后续截图、SSE、点击、填写和 `evaluate` 都继续作用于右侧浏览器里的新页面。
 - 缺少 `inputKey` 对应用户输入时，执行暂停并要求用户补充，不猜测敏感字段。
 - `executePlan` 必须显式传入 `authorized: true` 才会推进页面操作；未传或为 `false` 时，服务端返回 `waiting_user_authorization`，并记录 `authorization_required` 阻断事件。
 - `executePlan` 会按 session 记录 `executionState.cursor` 和 `completedStepIds`；暂停后再次执行默认从阻塞步骤继续。
