@@ -64,6 +64,10 @@ const resolveLocalDeviceId = async (agentId?: string): Promise<string | undefine
 
 type Setter = StoreSetter<ChatStore>;
 
+const GATEWAY_STATUS_POLL_INITIAL_DELAY_MS = 1500;
+const GATEWAY_STATUS_POLL_INTERVAL_MS = 2000;
+const GATEWAY_STATUS_POLL_MAX_DURATION_MS = 120_000;
+
 // ─── Types ───
 
 export interface GatewayConnection {
@@ -380,7 +384,7 @@ export class GatewayActionImpl {
     } = params;
 
     const agentGatewayUrl =
-      window.global_serverConfigStore!.getState().serverConfig.agentGatewayUrl!;
+      window.global_serverConfigStore?.getState()?.serverConfig?.agentGatewayUrl;
 
     const isCreateNewTopic = !context.topicId;
     const taskId = context.viewedTask?.type === 'detail' ? context.viewedTask.taskId : undefined;
@@ -578,14 +582,31 @@ export class GatewayActionImpl {
       }),
     });
 
-    this.#get().connectToGateway({
-      gatewayUrl: agentGatewayUrl,
-      onEvent: eventHandler,
-      onSessionComplete: ({ succeeded, terminalReceived }) => {
+    let didFinalize = false;
+
+    const finalizeGatewayRun = async (params: {
+      source: 'gateway' | 'poll';
+      succeeded: boolean;
+      terminalReceived: boolean;
+    }) => {
+      if (didFinalize) return;
+      didFinalize = true;
+      stopCompletionMonitor?.();
+
+      if (params.source === 'poll') {
+        this.disconnectFromGateway(result.operationId);
+      }
+
+      try {
+        const messages = await messageService.getMessages(execContext);
+        this.#get().replaceMessages(messages, { context: execContext });
+      } catch (err) {
+        console.error('[Gateway] failed to refresh messages after operation completion:', err);
+      } finally {
         // The gateway event handler already completed the op via the shared run
         // lifecycle on `agent_runtime_end` / `error`. Only complete here as the
         // terminal-missing fallback so the op never sticks `running`.
-        if (!terminalReceived) this.#get().completeOperation(gatewayOpId);
+        if (!params.terminalReceived) this.#get().completeOperation(gatewayOpId);
         if (result.topicId) {
           this.#get().internal_updateTopicLoading(result.topicId, false);
           // A clean completion the user isn't watching is owned by
@@ -608,11 +629,32 @@ export class GatewayActionImpl {
             .catch(() => {});
         }
         onComplete?.();
-      },
-      operationId: result.operationId,
-      token: result.token || '',
-      topicId: result.topicId,
+      }
+    };
+
+    const stopCompletionMonitor = this.monitorServerOperationCompletion({
+      localOperationId: gatewayOpId,
+      onTerminal: ({ succeeded }) =>
+        finalizeGatewayRun({ source: 'poll', succeeded, terminalReceived: false }),
+      serverOperationId: result.operationId,
     });
+
+    if (agentGatewayUrl) {
+      this.#get().connectToGateway({
+        gatewayUrl: agentGatewayUrl,
+        onEvent: eventHandler,
+        onSessionComplete: ({ succeeded, terminalReceived }) => {
+          void finalizeGatewayRun({ source: 'gateway', succeeded, terminalReceived });
+        },
+        operationId: result.operationId,
+        token: result.token || '',
+        topicId: result.topicId,
+      });
+    } else {
+      console.warn(
+        '[Gateway] agentGatewayUrl is not configured; using operation-status polling fallback',
+      );
+    }
 
     return result;
   };
@@ -763,6 +805,68 @@ export class GatewayActionImpl {
       false,
       'gateway/cleanup',
     );
+  };
+
+  private monitorServerOperationCompletion = (params: {
+    localOperationId: string;
+    onTerminal: (params: { succeeded: boolean }) => void | Promise<void>;
+    serverOperationId: string;
+  }): (() => void) => {
+    const { localOperationId, onTerminal, serverOperationId } = params;
+    const startedAt = Date.now();
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const stop = () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+
+    const schedule = (delay: number) => {
+      timer = setTimeout(() => {
+        void tick();
+      }, delay);
+      (timer as { unref?: () => void }).unref?.();
+    };
+
+    const tick = async () => {
+      if (stopped) return;
+
+      const localOperation = this.#get().operations?.[localOperationId];
+      if (!localOperation || localOperation.status !== 'running') {
+        stop();
+        return;
+      }
+
+      try {
+        const status = await aiAgentService.getOperationStatus({ operationId: serverOperationId });
+        const serverStatus = status?.currentState?.status;
+
+        if (status?.isCompleted || serverStatus === 'done') {
+          stop();
+          await onTerminal({ succeeded: true });
+          return;
+        }
+
+        if (status?.hasError || serverStatus === 'error' || serverStatus === 'interrupted') {
+          stop();
+          await onTerminal({ succeeded: false });
+          return;
+        }
+      } catch (err) {
+        console.warn('[Gateway] operation-status polling failed:', err);
+      }
+
+      if (Date.now() - startedAt >= GATEWAY_STATUS_POLL_MAX_DURATION_MS) {
+        stop();
+        return;
+      }
+
+      schedule(GATEWAY_STATUS_POLL_INTERVAL_MS);
+    };
+
+    schedule(GATEWAY_STATUS_POLL_INITIAL_DELAY_MS);
+    return stop;
   };
 }
 

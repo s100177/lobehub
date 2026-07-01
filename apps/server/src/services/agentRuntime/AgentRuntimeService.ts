@@ -1368,8 +1368,62 @@ export class AgentRuntimeService {
 
       // Operation may have expired or does not exist, return null
       if (!currentState || !operationMetadata) {
-        log('Operation %s not found (may have expired)', operationId);
-        return null;
+        let persisted: Awaited<ReturnType<AgentOperationModel['findById']>> | null = null;
+        try {
+          persisted = await new AgentOperationModel(
+            this.serverDB,
+            this.userId,
+            this.workspaceId,
+          ).findById(operationId);
+        } catch (error) {
+          log('Operation %s persisted status lookup failed: %O', operationId, error);
+        }
+
+        if (!persisted) {
+          log('Operation %s not found (may have expired)', operationId);
+          return null;
+        }
+
+        const status = persisted.status;
+        const startedAt = persisted.startedAt ? new Date(persisted.startedAt).getTime() : 0;
+        const completedAt = persisted.completedAt ? new Date(persisted.completedAt).getTime() : 0;
+        const now = Date.now();
+
+        return {
+          currentState: {
+            cost: persisted.cost ?? undefined,
+            error: persisted.error ?? undefined,
+            interruption: persisted.interruption ?? undefined,
+            lastModified:
+              persisted.completedAt?.toISOString() ??
+              persisted.startedAt?.toISOString() ??
+              persisted.createdAt.toISOString(),
+            maxSteps: persisted.maxSteps ?? undefined,
+            status,
+            stepCount: persisted.stepCount ?? 0,
+            usage: persisted.usage ?? undefined,
+          },
+          hasError: status === 'error',
+          isActive: status === 'running' || isParkedStatus(status),
+          isCompleted: status === 'done',
+          metadata: {
+            agentId: persisted.agentId ?? undefined,
+            appContext: persisted.appContext ?? undefined,
+            completedAt: persisted.completedAt?.toISOString(),
+            completionReason: persisted.completionReason ?? undefined,
+            createdAt: persisted.createdAt.toISOString(),
+            topicId: persisted.topicId ?? undefined,
+          },
+          needsHumanInput: status === 'waiting_for_human',
+          operationId,
+          stats: {
+            lastActiveTime: completedAt ? now - completedAt : startedAt ? now - startedAt : 0,
+            totalCost: persisted.totalCost ? Number(persisted.totalCost) : 0,
+            totalMessages: 0,
+            totalSteps: persisted.stepCount ?? 0,
+            uptime: startedAt ? (completedAt || now) - startedAt : 0,
+          },
+        };
       }
 
       // Get execution history (if needed)

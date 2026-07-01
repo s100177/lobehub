@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as ConstVersion from '@/const/version';
 import { aiAgentService } from '@/services/aiAgent';
+import { messageService } from '@/services/message';
 
 import type { GatewayConnection } from '../transports/gateway/gateway';
 import { GatewayActionImpl } from '../transports/gateway/gateway';
@@ -11,6 +12,7 @@ import { GatewayActionImpl } from '../transports/gateway/gateway';
 vi.mock('@/services/aiAgent', () => ({
   aiAgentService: {
     execAgentTask: vi.fn(),
+    getOperationStatus: vi.fn(),
     interruptTask: vi.fn(),
     refreshGatewayToken: vi.fn(),
   },
@@ -860,6 +862,98 @@ describe('GatewayActionImpl', () => {
         operationId: 'server-op-xyz',
         topicId: 'topic-1',
       });
+    });
+
+    it('falls back to polling operation status when agentGatewayUrl is not configured', async () => {
+      vi.useFakeTimers();
+
+      const state: Record<string, any> = {
+        activeTopicId: 'topic-1',
+        gatewayConnections: {},
+        operations: {},
+        topicDataMap: {},
+      };
+      const completeOperation = vi.fn((operationId: string) => {
+        state.operations[operationId].status = 'completed';
+      });
+      const replaceMessages = vi.fn();
+      const internalUpdateTopicLoading = vi.fn();
+      const startOperation = vi.fn(() => {
+        state.operations['gw-op-local'] = {
+          id: 'gw-op-local',
+          metadata: { startTime: Date.now() },
+          status: 'running',
+          type: 'execServerAgentRuntime',
+        };
+        return { operationId: 'gw-op-local' };
+      });
+      const get = vi.fn(() => ({
+        ...state,
+        associateMessageWithOperation: vi.fn(),
+        completeOperation,
+        disconnectFromGateway: vi.fn(),
+        internal_dispatchTopic: vi.fn(),
+        internal_updateTopicLoading: internalUpdateTopicLoading,
+        onOperationCancel: vi.fn(),
+        replaceMessages,
+        startOperation,
+      })) as any;
+      const set = vi.fn((updater: any) => {
+        if (typeof updater === 'function') Object.assign(state, updater(state));
+        else Object.assign(state, updater);
+      });
+
+      (globalThis as any).window = {
+        global_serverConfigStore: {
+          getState: () => ({ serverConfig: {} }),
+        },
+      };
+
+      vi.mocked(aiAgentService.execAgentTask).mockResolvedValue({
+        agentId: 'agent-1',
+        assistantMessageId: 'ast-1',
+        autoStarted: true,
+        createdAt: new Date().toISOString(),
+        message: 'ok',
+        operationId: 'server-op-1',
+        status: 'created',
+        success: true,
+        timestamp: new Date().toISOString(),
+        token: '',
+        topicId: 'topic-1',
+        userMessageId: 'usr-1',
+      });
+      vi.mocked(aiAgentService.getOperationStatus).mockResolvedValue({
+        currentState: { status: 'done' },
+        hasError: false,
+        isActive: false,
+        isCompleted: true,
+        operationId: 'server-op-1',
+      });
+      vi.mocked(messageService.getMessages).mockResolvedValue([{ id: 'ast-1' }] as any);
+
+      const action = new GatewayActionImpl(set as any, get, undefined);
+
+      await action.executeGatewayAgent({
+        context: { agentId: 'agent-1', scope: 'main', threadId: null, topicId: 'topic-1' },
+        message: 'Hello',
+      });
+
+      await vi.advanceTimersByTimeAsync(1500);
+
+      expect(aiAgentService.getOperationStatus).toHaveBeenCalledWith({
+        operationId: 'server-op-1',
+      });
+      expect(messageService.getMessages).toHaveBeenCalledWith(
+        expect.objectContaining({ topicId: 'topic-1' }),
+      );
+      expect(replaceMessages).toHaveBeenCalledWith([{ id: 'ast-1' }], {
+        context: expect.objectContaining({ topicId: 'topic-1' }),
+      });
+      expect(completeOperation).toHaveBeenCalledWith('gw-op-local');
+      expect(internalUpdateTopicLoading).toHaveBeenCalledWith('topic-1', false);
+
+      vi.useRealTimers();
     });
 
     // When the desktop runs against 本机 (effective runtime mode 'local'), the

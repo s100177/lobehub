@@ -74,6 +74,23 @@ export interface InterruptTaskParams {
   topicId?: string;
 }
 
+export interface GetOperationStatusParams {
+  historyLimit?: number;
+  includeHistory?: boolean;
+  operationId: string;
+}
+
+export interface AgentOperationStatus {
+  currentState?: {
+    error?: any;
+    status?: string;
+  };
+  hasError?: boolean;
+  isActive?: boolean;
+  isCompleted?: boolean;
+  operationId: string;
+}
+
 /**
  * Parameters for createClientTaskThread
  * Creates a Thread for client-side task execution (desktop only, single agent mode)
@@ -157,6 +174,14 @@ class AiAgentService {
    */
   async getSubAgentTaskStatus(params: GetSubAgentTaskStatusParams) {
     return await lambdaClient.aiAgent.getSubAgentTaskStatus.query(params);
+  }
+
+  /**
+   * Get server-side operation status. Used as a recovery path when the Gateway
+   * WebSocket terminal event is unavailable or missed by the browser.
+   */
+  async getOperationStatus(params: GetOperationStatusParams): Promise<AgentOperationStatus | null> {
+    return await lambdaClient.aiAgent.getOperationStatus.query(params);
   }
 
   /**
