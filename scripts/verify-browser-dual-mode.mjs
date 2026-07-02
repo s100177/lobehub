@@ -10,6 +10,7 @@ const browserPort = Number.parseInt(process.env.BROWSER_VERIFY_PORT || '3310', 1
 const pagePort = Number.parseInt(process.env.BROWSER_VERIFY_PAGE_PORT || '4311', 10);
 const browserOrigin = `http://127.0.0.1:${browserPort}`;
 const pageOrigin = `http://127.0.0.1:${pagePort}`;
+const publicLikePageOrigin = `http://0.0.0.0:${pagePort}`;
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const inRepoServiceDir = resolve(repoRoot, 'browser-service');
 const deployedServiceDir = resolve(repoRoot, '..', 'browser-service');
@@ -23,6 +24,11 @@ const testPageServer = http.createServer((req, res) => {
   if (req.url === '/blocked') {
     res.setHeader('X-Frame-Options', 'DENY');
     res.end('<!doctype html><title>Blocked</title><h1>Blocked</h1>');
+    return;
+  }
+
+  if (req.url === '/blank-destination') {
+    res.end('<!doctype html><title>Blank Destination</title><h1>Blank Destination</h1>');
     return;
   }
 
@@ -57,6 +63,7 @@ const testPageServer = http.createServer((req, res) => {
       }
     </style>
     <h1 id="ok">Iframe OK</h1>
+    <a id="blank-link" href="/blank-destination" target="_blank">Open Blank Link</a>
     <button id="btn" onclick="document.body.dataset.clicked='1'">Click</button>
     <section>
       <label><input id="agree" type="checkbox" checked /> 已阅读协议</label>
@@ -68,7 +75,7 @@ const testPageServer = http.createServer((req, res) => {
 function listen(server, port) {
   return new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(port, '127.0.0.1', () => resolve());
+    server.listen(port, '0.0.0.0', () => resolve());
   });
 }
 
@@ -245,6 +252,44 @@ try {
   assert(
     blocked.fallbackReason?.includes('X-Frame-Options'),
     `Expected X-Frame-Options fallback reason, got ${blocked.fallbackReason}`,
+  );
+
+  const publicAuto = await request(
+    '/navigate',
+    { mode: 'auto', url: `${publicLikePageOrigin}/` },
+    'verify-public-auto',
+  );
+  assert(
+    publicAuto.mode === 'remote',
+    `Expected public-like auto URL to use remote, got ${publicAuto.mode}`,
+  );
+  assert(
+    publicAuto.fallbackReason?.includes('public web navigation'),
+    `Expected public-web remote reason, got ${publicAuto.fallbackReason}`,
+  );
+
+  const blankLinkPoint = await request(
+    '/evaluate',
+    {
+      code: `(() => {
+        const rect = document.querySelector('#blank-link').getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      })()`,
+    },
+    'verify-public-auto',
+  );
+  const blankClick = await request(
+    '/input',
+    { type: 'click', x: blankLinkPoint.result.x, y: blankLinkPoint.result.y },
+    'verify-public-auto',
+  );
+  assert(
+    blankClick.url === `${publicLikePageOrigin}/blank-destination`,
+    `Expected target=_blank click to stay inside remote session, got ${blankClick.url}`,
+  );
+  assert(
+    blankClick.title === 'Blank Destination',
+    `Expected blank destination title, got ${blankClick.title}`,
   );
 
   const remote = await request(

@@ -409,6 +409,26 @@ function normalizeHttpUrl(input) {
   return url.toString();
 }
 
+function isLocalOrPrivateHostname(hostname) {
+  const normalized = hostname.toLowerCase();
+
+  if (normalized === 'localhost' || normalized.endsWith('.localhost')) return true;
+  if (normalized === 'host.docker.internal') return true;
+
+  const ipv4 = normalized.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (!ipv4) return false;
+
+  const [, aRaw, bRaw] = ipv4;
+  const a = Number(aRaw);
+  const b = Number(bRaw);
+
+  return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
+
+function shouldAutoUseIframe(url) {
+  return isLocalOrPrivateHostname(new URL(url).hostname);
+}
+
 function getFrameBlockReason(headers) {
   const xFrameOptions = headers.get('x-frame-options')?.toLowerCase();
   if (xFrameOptions) {
@@ -1556,6 +1576,37 @@ async function clickElementWithDomFallback(page, selector) {
   }, selector);
 }
 
+async function getBlankLinkTargetBySelector(page, selector) {
+  return await page.evaluate((selector) => {
+    const element = document.querySelector(selector);
+    const link = element?.closest?.('a[href]');
+    if (!(link instanceof HTMLAnchorElement)) return undefined;
+    if (link.target?.toLowerCase() !== '_blank') return undefined;
+    return link.href || undefined;
+  }, selector);
+}
+
+async function getBlankLinkTargetByPoint(page, x, y) {
+  return await page.evaluate(
+    ({ x, y }) => {
+      const element = document.elementFromPoint(x, y);
+      const link = element?.closest?.('a[href]');
+      if (!(link instanceof HTMLAnchorElement)) return undefined;
+      if (link.target?.toLowerCase() !== '_blank') return undefined;
+      return link.href || undefined;
+    },
+    { x, y },
+  );
+}
+
+async function navigateBlankLinkInCurrentPage(page, href) {
+  if (!href) return false;
+
+  await page.goto(href, { timeout: 30000, waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => null);
+  return true;
+}
+
 async function submitElementForm(page, selector) {
   return await page.evaluate((selector) => {
     const element = document.querySelector(selector);
@@ -1608,6 +1659,11 @@ async function performSafeClick(page, selector, timeout = 5000) {
         }),
       };
     }
+  }
+
+  const blankLinkTarget = await getBlankLinkTargetBySelector(page, selector).catch(() => undefined);
+  if (await navigateBlankLinkInCurrentPage(page, blankLinkTarget)) {
+    return { navigatedBlankLink: true, ok: true, target: blankLinkTarget };
   }
 
   try {
@@ -2195,7 +2251,14 @@ app.post('/navigate', sessionMiddleware, async (req, res) => {
       const embed =
         mode === 'iframe'
           ? { embeddable: true, finalUrl: normalizedUrl }
-          : await detectEmbeddable(normalizedUrl);
+          : shouldAutoUseIframe(normalizedUrl)
+            ? await detectEmbeddable(normalizedUrl)
+            : {
+                embeddable: false,
+                fallbackReason:
+                  'Remote mode selected for public web navigation to keep links inside the right-side browser',
+                finalUrl: normalizedUrl,
+              };
 
       if (embed.embeddable) {
         return res.json(
@@ -3050,7 +3113,24 @@ app.post('/input', sessionMiddleware, async (req, res) => {
       session.lastPointer = { x: payload.x, y: payload.y };
     }
     session.lastInputAt = Date.now();
-    await runWithPopupAdoption(session, () => applyInput(session.page, payload));
+    if (payload.type === 'click') {
+      const blankLinkTarget = await getBlankLinkTargetByPoint(
+        session.page,
+        payload.x,
+        payload.y,
+      ).catch(() => undefined);
+      if (await navigateBlankLinkInCurrentPage(session.page, blankLinkTarget)) {
+        recordAction(session, {
+          action: 'popup',
+          summary: `Kept target=_blank navigation inside the right-side browser: ${blankLinkTarget}`,
+          target: blankLinkTarget,
+        });
+      } else {
+        await runWithPopupAdoption(session, () => applyInput(session.page, payload));
+      }
+    } else {
+      await runWithPopupAdoption(session, () => applyInput(session.page, payload));
+    }
     await session.page.waitForTimeout(100);
     if (payload.type && payload.type !== 'mousemove') {
       recordUserIntervention(session, { inputType: payload.type });

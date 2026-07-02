@@ -13,7 +13,7 @@ export const BrowserManifest: BuiltinToolManifest = {
         properties: {
           mode: {
             description:
-              'Browser display/control mode. Use auto by default. Use remote when you need to click, fill, submit, or evaluate the page. Use iframe when the user only needs to view/interact with an embeddable page directly.',
+              'Browser display/control mode. Use auto by default; public websites open in remote mode so links and popups stay inside the right-side browser. Use remote when you need to click, fill, submit, or evaluate the page. Use iframe only for trusted local or explicitly embeddable pages.',
             enum: ['auto', 'iframe', 'remote'],
             type: 'string',
           },
