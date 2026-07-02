@@ -7,6 +7,74 @@ import { memo, useCallback, useEffect, useState } from 'react';
 
 import type { BrowserPageState, BrowserState, BrowserTaskState } from '../../types';
 
+const guardedIframeDocuments = new WeakSet<Document>();
+
+export const installIframeSamePanelNavigationGuard = (iframe: HTMLIFrameElement) => {
+  try {
+    const iframeWindow = iframe.contentWindow;
+    const iframeDocument = iframe.contentDocument || iframeWindow?.document;
+    if (!iframeWindow || !iframeDocument) return false;
+    if (guardedIframeDocuments.has(iframeDocument)) return true;
+
+    guardedIframeDocuments.add(iframeDocument);
+
+    const navigateInsideIframe = (href: string | URL | undefined | null) => {
+      if (!href) return null;
+
+      const targetUrl = new URL(String(href), iframeWindow.location.href || iframeDocument.baseURI);
+      iframeWindow.location.href = targetUrl.toString();
+      return iframeWindow;
+    };
+
+    const normalizeLinks = () => {
+      for (const link of iframeDocument.querySelectorAll('a[href][target="_blank"]')) {
+        link.setAttribute('target', '_self');
+        link.setAttribute('data-lobe-original-target', '_blank');
+      }
+    };
+
+    normalizeLinks();
+
+    const observer = new iframeWindow.MutationObserver(normalizeLinks);
+    observer.observe(iframeDocument.documentElement, {
+      childList: true,
+      subtree: true,
+    });
+
+    iframeDocument.addEventListener(
+      'click',
+      (event) => {
+        if (event.defaultPrevented || event.button !== 0) return;
+
+        const target = event.target;
+        const link =
+          target && 'closest' in target && typeof target.closest === 'function'
+            ? target.closest('a[href]')
+            : undefined;
+        if (!link || link.tagName.toLowerCase() !== 'a') return;
+
+        const opensNewContext =
+          link.getAttribute('target')?.toLowerCase() === '_blank' ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.shiftKey ||
+          event.altKey;
+        if (!opensNewContext) return;
+
+        event.preventDefault();
+        navigateInsideIframe(link.getAttribute('href') || link.href);
+      },
+      true,
+    );
+
+    iframeWindow.open = ((url?: string | URL) => navigateInsideIframe(url)) as typeof window.open;
+
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const styles = createStaticStyles(({ css, cssVar }) => ({
   actionButton: css`
     cursor: pointer;
@@ -408,6 +476,9 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
                     isControlling ? '&takeover=1' : ''
                   }`
             }
+            onLoad={(event) => {
+              if (isIframeMode) installIframeSamePanelNavigationGuard(event.currentTarget);
+            }}
           />
         </div>
       ) : (

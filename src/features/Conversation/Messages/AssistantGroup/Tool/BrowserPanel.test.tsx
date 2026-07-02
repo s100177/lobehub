@@ -6,7 +6,9 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import BrowserPanel from '../../../../../../packages/builtin-tool-browser/src/client/Portal/BrowserPanel';
+import BrowserPanel, {
+  installIframeSamePanelNavigationGuard,
+} from '../../../../../../packages/builtin-tool-browser/src/client/Portal/BrowserPanel';
 
 vi.mock('@lobehub/ui', () => ({
   Flexbox: ({ children, className }: { children?: ReactNode; className?: string }) => (
@@ -71,6 +73,55 @@ describe('BrowserPanel clean browser rendering', () => {
     const iframe = screen.getByTitle('Sina');
     expect(iframe).toHaveAttribute('sandbox');
     expect(iframe.getAttribute('sandbox')).not.toContain('allow-popups');
+  });
+
+  it('keeps target blank links inside same-origin iframe pages', () => {
+    const documentStub = document.implementation.createHTMLDocument('Business');
+    documentStub.body.innerHTML = '<a id="policy" href="/policy" target="_blank">Policy</a>';
+    const iframeWindow = {
+      location: { href: 'http://localhost/business' },
+      MutationObserver: window.MutationObserver,
+    };
+    const iframe = {
+      contentDocument: documentStub,
+      contentWindow: iframeWindow,
+    } as unknown as HTMLIFrameElement;
+
+    expect(installIframeSamePanelNavigationGuard(iframe)).toBe(true);
+    expect(documentStub.getElementById('policy')?.getAttribute('target')).toBe('_self');
+    expect(documentStub.getElementById('policy')?.getAttribute('data-lobe-original-target')).toBe(
+      '_blank',
+    );
+
+    const link = documentStub.getElementById('policy')!;
+    const clickEvent = new MouseEvent('click', {
+      bubbles: true,
+      button: 0,
+      cancelable: true,
+      ctrlKey: true,
+    });
+    link.dispatchEvent(clickEvent);
+
+    expect(clickEvent.defaultPrevented).toBe(true);
+    expect(iframeWindow.location.href).toBe('http://localhost/policy');
+  });
+
+  it('keeps window.open calls inside same-origin iframe pages', () => {
+    const iframeWindow = {
+      location: { href: 'http://localhost/business' },
+      MutationObserver: window.MutationObserver,
+    };
+    const iframe = {
+      contentDocument: document.implementation.createHTMLDocument('Business'),
+      contentWindow: iframeWindow,
+    } as unknown as HTMLIFrameElement;
+
+    expect(installIframeSamePanelNavigationGuard(iframe)).toBe(true);
+
+    const openedWindow = (iframeWindow as unknown as Window).open('/details');
+
+    expect(openedWindow).toBe(iframeWindow);
+    expect(iframeWindow.location.href).toBe('http://localhost/details');
   });
 
   it('renders the remote viewer when remote mode is selected', () => {

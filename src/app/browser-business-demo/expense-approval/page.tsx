@@ -62,6 +62,17 @@ const Page = () => {
           <p style={{ color: '#475569', fontSize: 16, lineHeight: 1.7, margin: 0 }}>
             报销金额 ¥128.00。请补齐部门并在提交审批前停下。
           </p>
+          <a
+            href="/browser-business-demo/expense-approval?view=policy"
+            target="_blank"
+            style={{
+              color: '#1d4ed8',
+              fontWeight: 800,
+              width: 'max-content',
+            }}
+          >
+            新标签打开报销制度
+          </a>
         </header>
 
         <form

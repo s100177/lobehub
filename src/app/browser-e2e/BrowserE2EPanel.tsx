@@ -13,7 +13,10 @@ const BrowserE2EPanel = () => {
   const fixtureUrl = useMemo(() => {
     if (typeof window === 'undefined') return '';
 
-    return `${window.location.origin}/browser-e2e/fixture`;
+    const params = new URLSearchParams(window.location.search);
+    const path = params.get('path') || '/browser-e2e/fixture';
+
+    return new URL(path, window.location.origin).toString();
   }, []);
 
   useEffect(() => {
@@ -40,8 +43,14 @@ const BrowserE2EPanel = () => {
     };
 
     const navigate = async () => {
-      await callBrowserAction('navigate', { mode: 'remote', timeout: 30_000, url: fixtureUrl });
-      const inspected = await callBrowserAction('inspect');
+      const params = new URLSearchParams(window.location.search);
+      const mode = params.get('mode') === 'iframe' ? 'iframe' : 'remote';
+      const navigated = await callBrowserAction('navigate', {
+        mode,
+        timeout: 30_000,
+        url: fixtureUrl,
+      });
+      const inspected = mode === 'remote' ? await callBrowserAction('inspect') : navigated;
 
       setState({ ...inspected, sessionId });
     };
