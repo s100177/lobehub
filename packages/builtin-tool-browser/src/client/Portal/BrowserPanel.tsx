@@ -399,7 +399,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
             // The browser panel needs same-origin scripts for interactive iframe pages; remote mode is still used for blocked sites.
             // Do not allow popups to escape the sandbox; external browsing must use the explicit Open action.
             // eslint-disable-next-line @eslint-react/dom/no-unsafe-iframe-sandbox
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"
             title={title ?? 'Browser'}
             src={
               isIframeMode

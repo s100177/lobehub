@@ -57,6 +57,22 @@ describe('BrowserPanel clean browser rendering', () => {
     );
   });
 
+  it('keeps iframe pages sandboxed from opening system browser popups', () => {
+    const state: BrowserState = {
+      embeddable: true,
+      iframeUrl: 'https://sina.com.cn/',
+      mode: 'iframe',
+      title: 'Sina',
+      url: 'https://sina.com.cn/',
+    };
+
+    render(<BrowserPanel sessionId="session-sandbox" state={state} />);
+
+    const iframe = screen.getByTitle('Sina');
+    expect(iframe).toHaveAttribute('sandbox');
+    expect(iframe.getAttribute('sandbox')).not.toContain('allow-popups');
+  });
+
   it('renders the remote viewer when remote mode is selected', () => {
     const state: BrowserState = {
       embeddable: false,
