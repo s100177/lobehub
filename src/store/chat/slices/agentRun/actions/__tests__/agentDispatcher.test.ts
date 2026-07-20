@@ -165,6 +165,67 @@ describe('selectRuntimeType', () => {
     });
   });
 
+  describe('executionTarget routing for normal chat agents', () => {
+    it('routes explicit device target to gateway even without a heterogeneous provider', () => {
+      expect(
+        selectRuntimeType(
+          {
+            boundDeviceId: 'remote-device-id',
+            executionTarget: 'device',
+            isGatewayMode: false,
+          },
+          { isDesktop: false },
+        ),
+      ).toBe('gateway');
+    });
+
+    it('routes explicit sandbox and auto targets to gateway for normal agents', () => {
+      expect(
+        selectRuntimeType(
+          {
+            executionTarget: 'sandbox',
+            isGatewayMode: false,
+          },
+          { isDesktop: false },
+        ),
+      ).toBe('gateway');
+      expect(
+        selectRuntimeType(
+          {
+            executionTarget: 'auto',
+            isGatewayMode: false,
+          },
+          { isDesktop: false },
+        ),
+      ).toBe('gateway');
+    });
+
+    it('keeps normal desktop local target on the client runtime', () => {
+      expect(
+        selectRuntimeType(
+          {
+            executionTarget: 'local',
+            isGatewayMode: false,
+          },
+          { isDesktop: true },
+        ),
+      ).toBe('client');
+    });
+
+    it('routes synced local desktop binding to gateway on web', () => {
+      expect(
+        selectRuntimeType(
+          {
+            boundDeviceId: 'desktop-device-id',
+            executionTarget: 'local',
+            isGatewayMode: false,
+          },
+          { isDesktop: false },
+        ),
+      ).toBe('gateway');
+    });
+  });
+
   describe('parentRuntime override', () => {
     it('parentRuntime wins over every other signal', () => {
       expect(

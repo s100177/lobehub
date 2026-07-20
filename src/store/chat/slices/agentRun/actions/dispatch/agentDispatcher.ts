@@ -115,6 +115,13 @@ export const selectRuntimeType = (
     );
     return target === 'local' ? 'hetero' : 'gateway';
   }
+  const executionTarget = resolveExecutionTarget(
+    { boundDeviceId: ctx.boundDeviceId, executionTarget: ctx.executionTarget },
+    { clientExecutionAvailable: isDesktop },
+  );
+  if (executionTarget === 'device' || executionTarget === 'sandbox' || executionTarget === 'auto') {
+    return 'gateway';
+  }
   if (ctx.isGatewayMode) return 'gateway';
   return 'client';
 };
