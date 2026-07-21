@@ -4,6 +4,8 @@ import {
   ActionIcon,
   Block,
   Button,
+  type DropdownItem,
+  DropdownMenu,
   Flexbox,
   Icon,
   Select,
@@ -18,6 +20,7 @@ import { createStaticStyles, cssVar } from 'antd-style';
 import {
   ChevronRight,
   ChevronUp,
+  MoreHorizontal,
   Plus,
   RotateCcw,
   ShieldCheck,
@@ -36,12 +39,16 @@ import { useAgentStore } from '@/store/agent';
 import { agentByIdSelectors, agentSelectors } from '@/store/agent/selectors';
 import { useTaskStore } from '@/store/task';
 import { taskDetailSelectors } from '@/store/task/selectors';
-import { useUserStore } from '@/store/user';
-import { labPreferSelectors } from '@/store/user/selectors';
 
 const SAVE_DEBOUNCE_MS = 600;
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
+  collapsedRequirement: css`
+    /* full requirement, wrapping to as many lines as it needs — readable at a glance.
+       Inset past the trigger icon so it reads flat under the title, not as a clickable row. */
+    padding-inline: 32px 8px;
+    line-height: 1.5;
+  `,
   list: css`
     width: 100%;
   `,
@@ -76,7 +83,6 @@ const TaskVerifyConfig = memo(() => {
   const { t } = useTranslation('chat');
   const { message } = App.useApp();
   const { allowed: canEditTask } = usePermission('create_content');
-  const enableTaskVerify = useUserStore(labPreferSelectors.enableTaskVerify);
 
   const taskId = useTaskStore(taskDetailSelectors.activeTaskId);
   const verify = useTaskStore(taskDetailSelectors.activeTaskVerifyConfig);
@@ -342,8 +348,6 @@ const TaskVerifyConfig = memo(() => {
   );
 
   if (!taskId) return null;
-  // Gated behind the Labs "task verify" experimental toggle (off by default).
-  if (!enableTaskVerify) return null;
   // The whole section is an editor surface; hide it when the user can't edit.
   if (!canEditTask) return null;
 
@@ -352,7 +356,17 @@ const TaskVerifyConfig = memo(() => {
 
   // ---- Collapsed trigger (default): a "+" row; reveals the editor on click ----
   if (!expanded) {
-    return (
+    // A task may have verify configured via the natural-language requirement only
+    // (config.verify.requirement) without ever materializing structured criteria.
+    // Treat that as "configured" too, so the panel never reads as "never set".
+    const requirementPreview = requirement.trim();
+    const isConfigured = savedCount > 0 || requirementPreview.length > 0;
+    // When the gate is a requirement sentence (no structured criteria), render the
+    // requirement as flat body text BELOW the trigger — it's readable content, not
+    // a clickable target. Only the compact title row stays clickable-to-expand, so
+    // hovering the requirement doesn't light up a big clickable block.
+    const showRequirement = savedCount === 0 && requirementPreview.length > 0;
+    const trigger = (
       <Block
         clickable
         horizontal
@@ -366,7 +380,7 @@ const TaskVerifyConfig = memo(() => {
       >
         <Icon
           color={cssVar.colorTextDescription}
-          icon={savedCount > 0 ? ShieldCheck : Plus}
+          icon={isConfigured ? ShieldCheck : Plus}
           size={16}
         />
         <Text color={cssVar.colorTextSecondary} fontSize={13} weight={500}>
@@ -374,12 +388,21 @@ const TaskVerifyConfig = memo(() => {
         </Text>
         {savedCount > 0 ? (
           <Tag>{t('verifyConfig.criteriaCount', { count: savedCount })}</Tag>
-        ) : (
+        ) : showRequirement ? null : (
           <Text className={styles.subtitle} fontSize={12}>
             {t('verifyConfig.collapsedHint')}
           </Text>
         )}
       </Block>
+    );
+    if (!showRequirement) return trigger;
+    return (
+      <Flexbox gap={2}>
+        {trigger}
+        <Text className={styles.collapsedRequirement} fontSize={14}>
+          {requirementPreview}
+        </Text>
+      </Flexbox>
     );
   }
 
@@ -397,6 +420,23 @@ const TaskVerifyConfig = memo(() => {
 
   // ---- A. empty ----
   if (!hasConfig) {
+    // Secondary "add criteria" paths (manual / from template) collapse into a
+    // single overflow menu so the empty state keeps one clear focus: the
+    // requirement textarea. Both live in the header, not as body buttons.
+    const addMenuItems: DropdownItem[] = [
+      {
+        icon: <Icon icon={Plus} />,
+        key: 'manual-add',
+        label: t('verifyConfig.manualAdd'),
+        onClick: handleManualAdd,
+      },
+      {
+        icon: <Icon icon={ChevronRight} />,
+        key: 'from-template',
+        label: t('verifyConfig.fromTemplate'),
+        onClick: () => setShowTemplatePicker((v) => !v),
+      },
+    ];
     return (
       <Block className={styles.section} variant={'outlined'}>
         <Flexbox gap={12}>
@@ -405,31 +445,46 @@ const TaskVerifyConfig = memo(() => {
               <Icon icon={ShieldCheck} size={18} />
               <Text weight={600}>{t('verifyConfig.empty.title')}</Text>
             </Flexbox>
-            <ActionIcon icon={ChevronUp} size={'small'} onClick={() => setExpanded(false)} />
+            {/* Actions live top-right, de-emphasized, so they never outweigh the
+                requirement input that is the empty state's primary focus. */}
+            <Flexbox horizontal align={'center'} gap={4}>
+              <Button
+                disabled={!requirement.trim()}
+                icon={Sparkles}
+                size={'small'}
+                onClick={handleGenerate}
+              >
+                {t('verifyConfig.generate')}
+              </Button>
+              <DropdownMenu items={addMenuItems} placement={'bottomRight'}>
+                <ActionIcon icon={MoreHorizontal} size={'small'} />
+              </DropdownMenu>
+              <ActionIcon icon={ChevronUp} size={'small'} onClick={() => setExpanded(false)} />
+            </Flexbox>
           </Flexbox>
-          <Text className={styles.subtitle}>{t('verifyConfig.empty.subtitle')}</Text>
+          <Text className={styles.subtitle}>
+            {requirement.trim()
+              ? t('verifyConfig.empty.materializeHint')
+              : t('verifyConfig.empty.subtitle')}
+          </Text>
           <TextArea
             autoSize={{ maxRows: 4, minRows: 2 }}
             placeholder={t('verifyConfig.requirementPlaceholder')}
             value={requirement}
             onChange={(e) => handleRequirementChange(e.target.value)}
+            onBlur={() => {
+              const trimmed = requirement.trim();
+              // A no-op blur (focus the field, click away) must NOT enable a gate:
+              // an empty requirement with no criteria would persist
+              // { enabled: true, requirement: null }, which the server reads as a
+              // holistic "verify everything" gate while the collapsed UI still
+              // looks unconfigured. Skip entirely when nothing is configured;
+              // otherwise tie `enabled` to whether a real requirement exists, so
+              // clearing the field disables the requirement-only gate.
+              if (!trimmed && !verify?.requirement && savedCount === 0) return;
+              commit(drafts, { enabled: trimmed.length > 0, requirement });
+            }}
           />
-          <Flexbox horizontal align={'center'} gap={8}>
-            <Button
-              disabled={!requirement.trim()}
-              icon={Sparkles}
-              type={'primary'}
-              onClick={handleGenerate}
-            >
-              {t('verifyConfig.generate')}
-            </Button>
-            <Button size={'small'} type={'text'} onClick={handleManualAdd}>
-              {t('verifyConfig.manualAdd')}
-            </Button>
-            <Button size={'small'} type={'text'} onClick={() => setShowTemplatePicker((v) => !v)}>
-              {t('verifyConfig.fromTemplate')}
-            </Button>
-          </Flexbox>
           {showTemplatePicker ? (
             <Select
               options={rubricOptions}

@@ -3,6 +3,7 @@ import { Avatar } from '@lobehub/ui';
 import { SkillsIcon } from '@lobehub/ui/icons';
 import {
   BellIcon,
+  Blocks,
   Brain,
   BrainCircuit,
   ChartColumnBigIcon,
@@ -100,6 +101,11 @@ export const useCategory = () => {
         key: SettingsTabs.Appearance,
         label: t('tab.appearance'),
       },
+      {
+        icon: MonitorSmartphoneIcon,
+        key: SettingsTabs.Devices,
+        label: t('tab.devices'),
+      },
       !mobile && {
         icon: KeyboardIcon,
         key: SettingsTabs.Hotkey,
@@ -152,14 +158,14 @@ export const useCategory = () => {
         label: t('tab.serviceModel'),
       },
       {
-        icon: MonitorSmartphoneIcon,
-        key: SettingsTabs.Devices,
-        label: t('tab.devices'),
-      },
-      {
         icon: SkillsIcon,
         key: SettingsTabs.Skill,
         label: t('tab.skill'),
+      },
+      {
+        icon: Blocks,
+        key: SettingsTabs.Connector,
+        label: t('tab.connector'),
       },
       {
         icon: BrainCircuit,

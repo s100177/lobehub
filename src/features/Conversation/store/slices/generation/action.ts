@@ -31,6 +31,7 @@ import {
 import { getElectronStoreState } from '@/store/electron';
 
 import { type Store as ConversationStore } from '../../action';
+import { MAX_HETERO_AUTO_RETRIES } from './heteroRetryConfig';
 
 const buildRetryInitialContext = (editorData: Record<string, any> | null | undefined) => {
   const normalizedEditorData = editorData ?? undefined;
@@ -224,10 +225,42 @@ export interface GenerationAction {
   delAndResendThreadMessage: (messageId: string) => Promise<void>;
 
   /**
+   * Start (or reuse) the long-lived `autoRetryPending` operation for a turn so
+   * the input/turn stays in its loading state during the auto-retry countdown.
+   * Idempotent: reuses an existing still-running wait op for the scope.
+   */
+  internal_beginHeteroOverloadWait: (scopeId: string) => void;
+
+  /**
+   * End the `autoRetryPending` operation for a turn (the countdown handed off to
+   * a real retry attempt, or the sequence ended).
+   */
+  internal_endHeteroOverloadWait: (scopeId: string) => void;
+
+  /**
+   * Whether the turn's `autoRetryPending` operation was cancelled out from under
+   * us (e.g. the global Stop button) — the scheduled retry must then abort.
+   */
+  isHeteroOverloadWaitAborted: (scopeId: string) => boolean;
+
+  /**
+   * Pin the heterogeneous "overloaded" auto-retry counter past the cap so
+   * scheduling stops and the guide falls back to manual retry (used by the
+   * user's "cancel auto-retry" action).
+   */
+  markHeteroOverloadRetryExhausted: (scopeId: string) => void;
+
+  /**
    * Open thread creator
    * @deprecated Temporary bridge to ChatStore
    */
   openThreadCreator: (messageId: string) => void;
+
+  /**
+   * Increment the heterogeneous "overloaded" auto-retry counter for a turn,
+   * keyed by its parent user message id.
+   */
+  recordHeteroOverloadRetry: (scopeId: string) => void;
 
   /**
    * Regenerate an assistant message
@@ -249,6 +282,12 @@ export interface GenerationAction {
    * Resend a thread message
    */
   resendThreadMessage: (messageId: string) => Promise<void>;
+
+  /**
+   * Clear the heterogeneous "overloaded" auto-retry counter for a turn so a
+   * fresh auto-retry budget is granted (used when a human retries manually).
+   */
+  resetHeteroOverloadRetry: (scopeId: string) => void;
 
   /**
    * Stop current generation
@@ -349,6 +388,9 @@ export const generationSlice: StateCreator<
       executionTarget: agentConfig?.agencyConfig?.executionTarget,
       heterogeneousProvider: agentConfig?.agencyConfig?.heterogeneousProvider,
       isGatewayMode: chatStore.isGatewayModeEnabled(context.agentId),
+      isWorkspaceAgent: agentByIdSelectors.isWorkspaceAgentById(context.agentId)(
+        getAgentStoreState(),
+      ),
     });
 
     // Hetero CLIs (CC / Codex) have no "continue a cut-off response" primitive
@@ -420,13 +462,30 @@ export const generationSlice: StateCreator<
       type: 'regenerate',
     });
 
-    // IMPORTANT: Delete first, then regenerate
-    // If we regenerate first, it switches to a new branch, causing the original
-    // message to no longer appear in displayMessages. Then deleteMessage cannot
-    // find the message and fails silently.
-    await chatStore.deleteMessage(messageId, { operationId });
-    await get().regenerateUserMessage(userId);
-    chatStore.completeOperation(operationId);
+    try {
+      // IMPORTANT: Delete first, then regenerate
+      // If we regenerate first, it switches to a new branch, causing the original
+      // message to no longer appear in displayMessages. Then deleteMessage cannot
+      // find the message and fails silently.
+      await chatStore.deleteMessage(messageId, { operationId });
+
+      // NOTE: intentionally do NOT bail on Stop here. The old assistant message is
+      // already deleted above; returning early would leave the turn deleted with
+      // nothing regenerated — destructive data loss. Stop pressed in this
+      // sub-second window is best-effort; complete the retry atomically and honor
+      // the next Stop (on the fresh run) normally.
+      await get().regenerateUserMessage(userId);
+      chatStore.completeOperation(operationId);
+    } catch (error) {
+      // Settle the wrapper op on failure. `regenerate` now drives input-loading +
+      // queue-blocking, so a never-settled op would wedge the input in loading
+      // forever and queue every future send behind it.
+      chatStore.failOperation(operationId, {
+        message: error instanceof Error ? error.message : String(error),
+        type: 'RegenerateError',
+      });
+      throw error;
+    }
   },
 
   delAndResendThreadMessage: async (messageId: string) => {
@@ -439,10 +498,28 @@ export const generationSlice: StateCreator<
       type: 'regenerate',
     });
 
-    // Resend then delete
-    await get().resendThreadMessage(messageId);
-    await chatStore.deleteMessage(messageId, { operationId });
-    chatStore.completeOperation(operationId);
+    try {
+      // Resend then delete
+      await get().resendThreadMessage(messageId);
+
+      // Honor a Stop pressed during the resend: the whitelisted outer op gets
+      // cancelled by stopGenerating, so skip the follow-up delete and leave the
+      // original message intact rather than mutating state after Stop. The
+      // cancelled op is no longer `running`, so it stops driving loading — no
+      // need to settle it here.
+      const outerOp = operationSelectors.getOperationById(operationId)(useChatStore.getState());
+      if (outerOp && outerOp.status !== 'running') return;
+
+      await chatStore.deleteMessage(messageId, { operationId });
+      chatStore.completeOperation(operationId);
+    } catch (error) {
+      // Settle the wrapper op on failure — see delAndRegenerateMessage.
+      chatStore.failOperation(operationId, {
+        message: error instanceof Error ? error.message : String(error),
+        type: 'RegenerateError',
+      });
+      throw error;
+    }
   },
 
   openThreadCreator: (messageId: string) => {
@@ -453,6 +530,84 @@ export const generationSlice: StateCreator<
   reInvokeToolMessage: async (messageId: string) => {
     const chatStore = useChatStore.getState();
     await chatStore.reInvokeToolMessage(messageId);
+  },
+
+  internal_beginHeteroOverloadWait: (scopeId: string) => {
+    const chatStore = useChatStore.getState();
+    const existingId = get().heteroOverloadWaitOpIds[scopeId];
+    // Reuse an existing wait op that's still running (effect re-runs / remounts).
+    if (existingId && chatStore.operations[existingId]?.status === 'running') return;
+
+    const { context } = get();
+    const { operationId } = chatStore.startOperation({
+      context: {
+        agentId: context.agentId,
+        messageId: scopeId,
+        threadId: context.threadId ?? undefined,
+        topicId: context.topicId ?? undefined,
+      },
+      label: 'Auto-retry pending',
+      type: 'autoRetryPending',
+    });
+    set(
+      { heteroOverloadWaitOpIds: { ...get().heteroOverloadWaitOpIds, [scopeId]: operationId } },
+      false,
+      'internal_beginHeteroOverloadWait',
+    );
+  },
+
+  internal_endHeteroOverloadWait: (scopeId: string) => {
+    const opId = get().heteroOverloadWaitOpIds[scopeId];
+    if (!opId) return;
+    const chatStore = useChatStore.getState();
+    // Only complete a still-running op; if it was already cancelled (Stop), leave
+    // its terminal state intact.
+    if (chatStore.operations[opId]?.status === 'running') chatStore.completeOperation(opId);
+    const next = { ...get().heteroOverloadWaitOpIds };
+    delete next[scopeId];
+    set({ heteroOverloadWaitOpIds: next }, false, 'internal_endHeteroOverloadWait');
+  },
+
+  isHeteroOverloadWaitAborted: (scopeId: string) => {
+    const opId = get().heteroOverloadWaitOpIds[scopeId];
+    // A missing id means the wait was already torn down (cancel/Stop cleanup
+    // can race the timer near the deadline) — treat that as aborted so a stale
+    // queued retry doesn't run after the user asked to stop.
+    if (!opId) return true;
+    const op = useChatStore.getState().operations[opId];
+    return !op || op.status !== 'running';
+  },
+
+  markHeteroOverloadRetryExhausted: (scopeId: string) => {
+    set(
+      {
+        heteroOverloadRetryAttempts: {
+          ...get().heteroOverloadRetryAttempts,
+          [scopeId]: MAX_HETERO_AUTO_RETRIES,
+        },
+      },
+      false,
+      'markHeteroOverloadRetryExhausted',
+    );
+  },
+
+  recordHeteroOverloadRetry: (scopeId: string) => {
+    const current = get().heteroOverloadRetryAttempts;
+    set(
+      {
+        heteroOverloadRetryAttempts: { ...current, [scopeId]: (current[scopeId] ?? 0) + 1 },
+      },
+      false,
+      'recordHeteroOverloadRetry',
+    );
+  },
+
+  resetHeteroOverloadRetry: (scopeId: string) => {
+    const current = get().heteroOverloadRetryAttempts;
+    if (!(scopeId in current)) return;
+    const next = { ...current };
+    delete next[scopeId];
+    set({ heteroOverloadRetryAttempts: next }, false, 'resetHeteroOverloadRetry');
   },
 
   regenerateAssistantMessage: async (messageId: string) => {
@@ -484,28 +639,48 @@ export const generationSlice: StateCreator<
     const currentIndex = displayMessages.findIndex((c) => c.id === messageId);
     const item = displayMessages[currentIndex];
     if (!item) return;
-    const initialContext = mergeAgentRuntimeInitialContexts(
-      await resolveActiveTopicDocumentInitialContext(context),
-      buildRetryInitialContext(item.editorData),
-    );
-
-    // Get context messages up to and including the target message
-    const contextMessages = displayMessages.slice(0, currentIndex + 1);
-    if (contextMessages.length <= 0) return;
-
-    // ===== Hook: onBeforeRegenerate =====
-    if (hooks.onBeforeRegenerate) {
-      const shouldProceed = await hooks.onBeforeRegenerate(messageId);
-      if (shouldProceed === false) return;
-    }
-
-    // Create regenerate operation with context
+    // Start the interim regenerate op BEFORE the async preflight below
+    // (document-context resolve + onBeforeRegenerate hook). In page / bound-
+    // document contexts those reads are real round trips, so creating the op
+    // afterwards would leave the input/Stop state dead during exactly the
+    // pre-generation window the INPUT_LOADING_OPERATION_TYPES whitelist covers.
+    // Complete it if any preflight guard bails out before generation starts.
     const { operationId } = chatStore.startOperation({
       context: { ...context, messageId },
       type: 'regenerate',
     });
 
     try {
+      const initialContext = mergeAgentRuntimeInitialContexts(
+        await resolveActiveTopicDocumentInitialContext(context),
+        buildRetryInitialContext(item.editorData),
+      );
+
+      // Get context messages up to and including the target message
+      const contextMessages = displayMessages.slice(0, currentIndex + 1);
+      if (contextMessages.length <= 0) {
+        chatStore.completeOperation(operationId);
+        return;
+      }
+
+      // ===== Hook: onBeforeRegenerate =====
+      if (hooks.onBeforeRegenerate) {
+        const shouldProceed = await hooks.onBeforeRegenerate(messageId);
+        if (shouldProceed === false) {
+          chatStore.completeOperation(operationId);
+          return;
+        }
+      }
+
+      // If the user hit Stop during the preflight awaits above, stopGenerating has
+      // already cancelled this interim op (cancelOperation flips its status but
+      // keeps the record). Bail out before switching branches or starting a run —
+      // otherwise the Stop is swallowed and a new assistant turn starts anyway. No
+      // child runtime exists yet, so cancelOperation had nothing to propagate to;
+      // this is the only place that can honour the Stop.
+      const preflightOp = operationSelectors.getOperationById(operationId)(useChatStore.getState());
+      if (preflightOp && preflightOp.status !== 'running') return;
+
       // Calculate next branch index by counting children of this user message
       // We need to count how many assistant messages have this user message as parent
       const { dbMessages } = get();
@@ -518,6 +693,15 @@ export const generationSlice: StateCreator<
         operationId,
       });
 
+      // Re-check after switchMessageBranch: it is another await round-trip, so a
+      // Stop pressed during it lands *after* the preflight guard above. Bail
+      // before starting the runtime so the Stop isn't swallowed. The branch is
+      // already switched, which is harmless — no assistant turn has started yet.
+      const postSwitchOp = operationSelectors.getOperationById(operationId)(
+        useChatStore.getState(),
+      );
+      if (postSwitchOp && postSwitchOp.status !== 'running') return;
+
       const agentConfig = agentSelectors.getAgentConfigById(context.agentId)(getAgentStoreState());
       const heterogeneousProvider = agentConfig?.agencyConfig?.heterogeneousProvider;
       const runtimeType = selectRuntimeType({
@@ -525,6 +709,9 @@ export const generationSlice: StateCreator<
         executionTarget: agentConfig?.agencyConfig?.executionTarget,
         heterogeneousProvider,
         isGatewayMode: chatStore.isGatewayModeEnabled(context.agentId),
+        isWorkspaceAgent: agentByIdSelectors.isWorkspaceAgentById(context.agentId)(
+          getAgentStoreState(),
+        ),
       });
 
       // ── Gateway mode: trigger server-side regeneration ──

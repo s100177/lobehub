@@ -1,7 +1,8 @@
 'use client';
 
 import { ModelIcon } from '@lobehub/icons';
-import { ActionIcon, Flexbox, Segmented, Text } from '@lobehub/ui';
+import { ActionIcon, Flexbox, Text } from '@lobehub/ui';
+import { Tabs } from '@lobehub/ui/base-ui';
 import { Divider, Switch } from 'antd';
 import { Images } from 'lucide-react';
 import { memo, useEffect, useRef } from 'react';
@@ -19,6 +20,7 @@ import {
   ConfigAction,
   GenerationMediaModeSegment,
   GenerationPromptInput,
+  GenerationVisibilitySelector,
   InlineImageReference,
 } from '@/routes/(main)/(create)/features/GenerationInput';
 import {
@@ -34,7 +36,11 @@ import {
 import ImageModelItem from '@/routes/(main)/(create)/image/features/ConfigPanel/components/ModelSelect/ImageModelItem';
 import { aiProviderSelectors, useAiInfraStore } from '@/store/aiInfra';
 import { useImageStore } from '@/store/image';
-import { createImageSelectors, imageGenerationConfigSelectors } from '@/store/image/selectors';
+import {
+  createImageSelectors,
+  generationTopicSelectors,
+  imageGenerationConfigSelectors,
+} from '@/store/image/selectors';
 import {
   useDimensionControl,
   useGenerationConfigParam,
@@ -83,22 +89,27 @@ const PromptExtendItem = memo(() => {
   const { value, setValue, enumValues } = useGenerationConfigParam('promptExtend');
 
   if (enumValues && enumValues.length > 0) {
-    const options = enumValues.map((item) => ({ label: item, value: item }));
+    const options = enumValues.map((item) => ({
+      disabled: !canCreate,
+      key: item,
+      label: item,
+    }));
 
     return (
       <Flexbox gap={6}>
         <Text weight={500}>{t('config.promptExtend.label')}</Text>
-        <Segmented
-          block
-          disabled={!canCreate}
-          options={options}
+        <Tabs
+          activeKey={value as string}
+          items={options}
           style={{ width: '100%' }}
-          value={value as string}
-          variant="filled"
-          onChange={(next) => {
+          styles={{
+            list: { display: 'flex', width: '100%' },
+            tab: { flex: 1 },
+          }}
+          onChange={(key) => {
             if (!canCreate) return;
 
-            setValue(String(next) as any);
+            setValue(key as any);
           }}
         />
       </Flexbox>
@@ -139,6 +150,16 @@ const PromptInput = ({ showTitle = false }: PromptInputProps) => {
   const isCreating = useImageStore(createImageSelectors.isCreating);
   const createImage = useImageStore((s) => s.createImage);
   const setModelAndProviderOnSelect = useImageStore((s) => s.setModelAndProviderOnSelect);
+  const activeGenerationTopicId = useImageStore(generationTopicSelectors.activeGenerationTopicId);
+  const activeGenerationTopic = useImageStore((s) =>
+    activeGenerationTopicId
+      ? generationTopicSelectors.getGenerationTopicById(activeGenerationTopicId)(s)
+      : undefined,
+  );
+  const newGenerationTopicVisibility = useImageStore(
+    generationTopicSelectors.newGenerationTopicVisibility,
+  );
+  const setNewGenerationTopicVisibility = useImageStore((s) => s.setNewGenerationTopicVisibility);
   const currentModel = useImageStore(imageGenerationConfigSelectors.model);
   const currentProvider = useImageStore(imageGenerationConfigSelectors.provider);
   const isInit = useImageStore((s) => s.isInit);
@@ -209,6 +230,14 @@ const PromptInput = ({ showTitle = false }: PromptInputProps) => {
 
   const showInlineRef = canDropImage;
   const hasRefImages = imagePreviewUrls.length > 0;
+  const displayVisibility = activeGenerationTopic
+    ? activeGenerationTopic.visibility === 'private'
+      ? 'private'
+      : 'public'
+    : newGenerationTopicVisibility;
+  const visibilityLockedReason = activeGenerationTopicId
+    ? t('topic.visibility.existingLocked')
+    : undefined;
 
   return (
     <Flexbox gap={32} width={'100%'}>
@@ -242,6 +271,11 @@ const PromptInput = ({ showTitle = false }: PromptInputProps) => {
             style={canCreate ? undefined : { opacity: 0.5, pointerEvents: 'none' }}
           >
             <GenerationMediaModeSegment mode={'image'} />
+            <GenerationVisibilitySelector
+              disabledReason={visibilityLockedReason}
+              visibility={displayVisibility}
+              onChange={setNewGenerationTopicVisibility}
+            />
             <ModelSwitchPanel
               ModelItemComponent={ImageModelItem}
               enabledList={enabledImageModelList}

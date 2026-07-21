@@ -1,3 +1,4 @@
+import type { VerifyRunStatus } from '@lobechat/types';
 import { and, eq, gte, isNotNull, sql } from 'drizzle-orm';
 
 import { today } from '@/utils/time';
@@ -12,15 +13,12 @@ import { agentOperations } from '../schemas/agentOperations';
 import type { LobeChatDatabase } from '../type';
 import { buildWorkspaceWhere } from '../utils/workspace';
 
-/** Verify rollup states, mirrors the `verify_status` enum column. */
-export type VerifyStatus =
-  | 'unverified'
-  | 'planned'
-  | 'verifying'
-  | 'passed'
-  | 'failed'
-  | 'repairing'
-  | 'delivered';
+/**
+ * Verify rollup states. Aliases the single `VerifyRunStatus` source of truth in
+ * `@lobechat/types` (which also backs the `verify_status` column enum and
+ * `verify_runs.status`) so the three never drift.
+ */
+export type VerifyStatus = VerifyRunStatus;
 
 export interface RecordOperationStartParams {
   agentId?: string | null;
@@ -59,14 +57,15 @@ export interface RecordOperationCompletionParams {
   error?: AgentOperationError | null;
   interruption?: AgentOperationInterruption | null;
   llmCalls?: number | null;
+  /** Backfill the executed model when it's only known at completion (e.g. a
+   * heterogeneous run learns its real model from the CLI mid-stream). Omit to
+   * keep the value seeded at `recordStart`. */
+  model?: string | null;
   processingTimeMs?: number | null;
+  /** Backfill the executed provider — see {@link RecordOperationCompletionParams.model}. */
+  provider?: string | null;
   status:
-    | 'running'
-    | 'waiting_for_human'
-    | 'waiting_for_async_tool'
-    | 'done'
-    | 'error'
-    | 'interrupted';
+    'running' | 'waiting_for_human' | 'waiting_for_async_tool' | 'done' | 'error' | 'interrupted';
   stepCount?: number | null;
   toolCalls?: number | null;
   totalCost?: number | null;
@@ -148,6 +147,8 @@ export class AgentOperationModel {
       updates.totalOutputTokens = params.totalOutputTokens;
     if (params.llmCalls !== undefined) updates.llmCalls = params.llmCalls;
     if (params.toolCalls !== undefined) updates.toolCalls = params.toolCalls;
+    if (params.model !== undefined) updates.model = params.model;
+    if (params.provider !== undefined) updates.provider = params.provider;
     if (params.cost !== undefined) updates.cost = params.cost;
     if (params.usage !== undefined) updates.usage = params.usage;
     if (params.error !== undefined) updates.error = params.error;

@@ -41,6 +41,8 @@ const log = debug('lobe-server:verify-executor');
 export interface VerifierAgentRunner {
   (args: {
     checkItem: VerifyCheckItem;
+    /** Evidence the builder captured for this item — input to the verifier's judgment. */
+    evidence?: JudgeEvidence[];
     goal: string;
     operationId: string;
   }): Promise<{ verifierOperationId: string } | null>;
@@ -60,6 +62,12 @@ export interface ExecuteVerifyParams {
 
 const verdictToStatus = (verdict: VerifyVerdict): VerifyCheckResultStatus =>
   verdict === 'passed' ? 'passed' : 'failed';
+const terminalResultStatuses = new Set<VerifyCheckResultStatus>([
+  'passed',
+  'failed',
+  'errored',
+  'skipped',
+]);
 
 /** Group a run's evidence rows by the plan item they back, for judge injection. */
 type EvidenceByItem = Map<string, JudgeEvidence[]>;
@@ -150,7 +158,9 @@ export class VerifyExecutorService {
     await Promise.all([
       this.runProgramItems(verifyRunId, programItems),
       this.runLlmItems(params, verifyRunId, llmItems, evidenceByItem),
-      ...agentItems.map((item) => this.runAgentItem(params, verifyRunId, item)),
+      ...agentItems.map((item) =>
+        this.runAgentItem(params, verifyRunId, item, evidenceByItem.get(item.id) ?? []),
+      ),
     ]);
 
     await this.statusService.recompute(params.operationId);
@@ -162,7 +172,14 @@ export class VerifyExecutorService {
     const byItem: EvidenceByItem = new Map();
     for (const row of rows) {
       const list = byItem.get(row.checkItemId) ?? [];
-      list.push({ content: row.content, description: row.description, type: row.type });
+      // Keep `fileId` so the agent verifier can attach the actual artifact (the
+      // LLM judge ignores it and renders text only).
+      list.push({
+        content: row.content,
+        description: row.description,
+        fileId: row.fileId,
+        type: row.type,
+      });
       byItem.set(row.checkItemId, list);
     }
     return byItem;
@@ -235,6 +252,7 @@ export class VerifyExecutorService {
     params: ExecuteVerifyParams,
     verifyRunId: string,
     item: VerifyCheckItem,
+    evidence: JudgeEvidence[],
   ): Promise<void> {
     if (!params.runVerifierAgent) {
       await this.resultModel.updateByCheckItem(verifyRunId, item.id, {
@@ -247,21 +265,57 @@ export class VerifyExecutorService {
     try {
       const spawned = await params.runVerifierAgent({
         checkItem: item,
+        evidence,
         goal: params.goal,
         operationId: params.operationId,
       });
+
+      if (!spawned?.verifierOperationId) {
+        // The runner resolved without an operation id — the spawn never
+        // persisted an operation. Log the returned shape at error level (this
+        // path lands in production runtime logs, unlike the debug-only `log`).
+        console.error(
+          '[verify] agent verifier returned no operation id for item %s: %O',
+          item.id,
+          spawned,
+        );
+        await this.resultModel.updateByCheckItem(verifyRunId, item.id, {
+          completedAt: new Date(),
+          // Infra failure, not a delivery verdict: the verifier never started, so
+          // there is nothing to judge. `errored` (no verdict) keeps this out of
+          // the delivery gate and the auto-repair set.
+          status: 'errored',
+          toulmin: { limitation: 'Agent verifier failed to start (no operation id returned).' },
+        });
+        return;
+      }
+
+      const current = (await this.resultModel.listByRun(verifyRunId)).find(
+        (result) => result.checkItemId === item.id,
+      );
+      if (current && terminalResultStatuses.has(current.status)) return;
+
       await this.resultModel.updateByCheckItem(verifyRunId, item.id, {
         startedAt: new Date(),
         status: 'running',
-        verifierOperationId: spawned?.verifierOperationId ?? null,
+        verifierOperationId: spawned.verifierOperationId,
       });
     } catch (error) {
-      log('agent verifier spawn failed for item %s: %O', item.id, error);
+      // Surface the real cause: the spawn throws during agent startup (before
+      // the verifier operation is persisted), and this catch previously only
+      // emitted a debug-level line + a generic limitation — so in production the
+      // actual error was invisible and the check just read "failed to start".
+      // Log at error level (reaches runtime logs) and thread the message into
+      // the verdict limitation so it is queryable from verify_check_results.
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error('[verify] agent verifier spawn failed for item %s: %O', item.id, error);
       await this.resultModel.updateByCheckItem(verifyRunId, item.id, {
         completedAt: new Date(),
-        status: 'failed',
-        toulmin: { limitation: 'Agent verifier failed to start.' },
-        verdict: 'uncertain',
+        // Infra failure (spawn threw before the verifier op was persisted), not a
+        // delivery verdict — mark `errored` so it neither gates delivery nor seeds
+        // a repair round.
+        status: 'errored',
+        toulmin: { limitation: `Agent verifier failed to start: ${detail}` },
       });
     }
   }

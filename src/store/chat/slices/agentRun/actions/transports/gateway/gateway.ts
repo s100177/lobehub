@@ -4,10 +4,20 @@ import {
   type AgentStreamEvent,
   type ConnectionStatus,
 } from '@lobechat/agent-gateway-client';
-import type { ConversationContext, ExecAgentResult, MessageMetadata } from '@lobechat/types';
+import type {
+  ChatTopicMetadata,
+  ConversationContext,
+  ExecAgentResult,
+  MessageMetadata,
+  RuntimeMentionedAgent,
+} from '@lobechat/types';
 
 import { isDesktop } from '@/const/version';
-import { aiAgentService, type ResumeApprovalParam } from '@/services/aiAgent';
+import {
+  aiAgentService,
+  type ResumeApprovalParam,
+  type ResumeToolResultParam,
+} from '@/services/aiAgent';
 import { gatewayConnectionService } from '@/services/electron/gatewayConnection';
 import { messageService } from '@/services/message';
 import { topicService } from '@/services/topic';
@@ -16,13 +26,16 @@ import { chatConfigByIdSelectors } from '@/store/agent/selectors';
 import { consumePendingTopicRepos, getPendingTopicRepos } from '@/store/chat/pendingTopicRepos';
 import { topicSelectors } from '@/store/chat/selectors';
 import type { ChatStore } from '@/store/chat/store';
+import { messageMapKey } from '@/store/chat/utils/messageMapKey';
 import type { StoreSetter } from '@/store/types';
 import { useUserStore } from '@/store/user';
-import { settingsSelectors } from '@/store/user/selectors';
+import { settingsSelectors, toolInterventionSelectors } from '@/store/user/selectors';
 
 import { buildRunLifecycle } from '../../lifecycle/buildRunLifecycle';
 import type { RunScope } from '../../lifecycle/types';
 import { createGatewayEventHandler, isCompletedRuntimeEnd } from './gatewayEventHandler';
+import { createGatewayEventRouter } from './gatewayEventRouter';
+import { createGatewayMemberStreamHandler } from './gatewayMemberStreamHandler';
 
 /**
  * When the agent runs against the local machine, resolve this desktop's
@@ -107,8 +120,19 @@ export interface ConnectGatewayParams {
    * cleanup. When false (terminal-missing: `session_complete` / `auth_failed` /
    * token-refresh failure arrived with no terminal agent event), the callback must
    * itself complete the op as the explicit fallback so it never sticks `running`.
+   *
+   * `authFailed` is true when the close was driven by the gateway rejecting auth
+   * (`auth_failed`, or a failed `auth_expired` token refresh) — an authoritative
+   * "this op no longer exists on the server" signal. Reconnect callers use it to
+   * distinguish a genuinely-dead op (clear the persisted marker) from a bare
+   * `resume_complete` terminal status, which can fire for a still-running op the
+   * gateway DO has no live session for (e.g. heterogeneous CC) and must NOT clear.
    */
-  onSessionComplete?: (info: { succeeded: boolean; terminalReceived: boolean }) => void;
+  onSessionComplete?: (info: {
+    authFailed: boolean;
+    succeeded: boolean;
+    terminalReceived: boolean;
+  }) => void;
   /**
    * The operation ID returned by execAgent
    */
@@ -191,18 +215,26 @@ export class GatewayActionImpl {
     let receivedTerminalEvent = false;
     let terminalSucceeded = false;
     let sessionCompleted = false;
-    const fireSessionComplete = () => {
+    const fireSessionComplete = (opts?: { authFailed?: boolean }) => {
       if (sessionCompleted) return;
       sessionCompleted = true;
       onSessionComplete?.({
+        authFailed: opts?.authFailed ?? false,
         succeeded: terminalSucceeded,
         terminalReceived: receivedTerminalEvent,
       });
     };
 
-    // Forward agent events to caller, and track terminal events
+    // Forward agent events to caller, and track terminal events.
+    //
+    // Only THIS op's terminal counts. On a multiplexed connection the
+    // supervisor's WS also carries forwarded member terminals; a member
+    // finishing must not mark the supervisor run complete or stomp its unread
+    // status. Match on the event's operationId (absent ⇒ legacy single-op WS,
+    // treat as this op's to preserve prior behavior).
     client.on('agent_event', (event) => {
-      if (event.type === 'agent_runtime_end' || event.type === 'error') {
+      const isOwnOp = !event.operationId || event.operationId === operationId;
+      if (isOwnOp && (event.type === 'agent_runtime_end' || event.type === 'error')) {
         receivedTerminalEvent = true;
       }
       // Only a clean completion counts as success — a cancel ('interrupted') or
@@ -210,6 +242,7 @@ export class GatewayActionImpl {
       // branch so onSessionComplete clears the run back to 'active' instead of
       // leaving the topic persisted as an unread completion.
       if (
+        isOwnOp &&
         event.type === 'agent_runtime_end' &&
         isCompletedRuntimeEnd((event.data as { reason?: string } | undefined)?.reason)
       ) {
@@ -244,7 +277,7 @@ export class GatewayActionImpl {
     client.on('auth_failed', (reason) => {
       console.error(`[Gateway] Auth failed for operation ${operationId}: ${reason}`);
       this.internal_cleanupGatewayConnection(operationId);
-      fireSessionComplete();
+      fireSessionComplete({ authFailed: true });
     });
 
     // Handle expired-but-recoverable auth: the JWT is past `exp` but the op
@@ -264,7 +297,9 @@ export class GatewayActionImpl {
         console.error(`[Gateway] Token refresh failed for operation ${operationId}:`, error);
         client.disconnect();
         this.internal_cleanupGatewayConnection(operationId);
-        fireSessionComplete();
+        // A rejected refresh means the gateway no longer accepts this op's token
+        // — treat it like auth_failed so reconnect callers clear the stale marker.
+        fireSessionComplete({ authFailed: true });
       }
     });
 
@@ -345,6 +380,8 @@ export class GatewayActionImpl {
     metadata?: Pick<MessageMetadata, 'trigger'>;
     /** Called when the gateway session completes (agent finished running) */
     onComplete?: () => void;
+    /** Temporary sidebar topic inserted by sendMessage before the server creates the real topic. */
+    optimisticTopic?: { id: string; metadata?: ChatTopicMetadata; title: string };
     /** Parent message ID for regeneration/continue (skip user message creation, branch from this message) */
     parentMessageId?: string;
     /**
@@ -364,6 +401,30 @@ export class GatewayActionImpl {
      */
     resumeApproval?: ResumeApprovalParam;
     /**
+     * Resume a paused op waiting on a human-intervention tool (e.g. lobe-agent
+     * `askUserQuestion`). Forwarded to `aiAgentService.execAgentTask` so the new
+     * server-side op writes the human answer as the tool result and resumes from
+     * `phase: 'tool_result'` WITHOUT re-executing the tool.
+     */
+    resumeToolResult?: ResumeToolResultParam;
+    /**
+     * Tool identifiers the user @-mentioned in this message. Forwarded to the
+     * server as `selectedToolIds` so the server runtime enables them for this
+     * run (mirrors the client runtime's mention → callable-tool wiring). Lets a
+     * user invoke a tool that isn't pinned to the agent (e.g. a custom MCP
+     * connector picked from the @ list).
+     */
+    selectedToolIds?: string[];
+    /**
+     * Agents the user @-mentioned in this message (multi-mention). Forwarded to
+     * the server so the supervisor run enables the callAgent tool and injects the
+     * mentioned-agents delegation context — mirrors the client runtime's
+     * `initialContext.mentionedAgents` + injected callAgent manifest. Without
+     * this the gateway supervisor never sees the mention and answers itself
+     * instead of delegating.
+     */
+    mentionedAgents?: RuntimeMentionedAgent[];
+    /**
      * Temporary message IDs created during the initial sendMessage phase.
      * These are associated with the new gateway operation so the UI doesn't
      * show a blank loading state while waiting for the first `step_start`
@@ -377,9 +438,13 @@ export class GatewayActionImpl {
       message,
       metadata,
       onComplete,
+      optimisticTopic,
       parentMessageId,
       parentOperationId,
       resumeApproval,
+      resumeToolResult,
+      selectedToolIds,
+      mentionedAgents,
       tempMessageIds,
     } = params;
 
@@ -397,7 +462,11 @@ export class GatewayActionImpl {
       isCreateNewTopic && context.agentId ? getPendingTopicRepos(context.agentId) : [];
     const initialTopicMetadata =
       pendingRepos.length > 0
-        ? { repos: pendingRepos, workingDirectory: pendingRepos[0] }
+        ? {
+            repos: pendingRepos,
+            workingDirectory: pendingRepos[0],
+            workingDirectoryConfig: { path: pendingRepos[0], repoType: 'github' as const },
+          }
         : undefined;
 
     // Honour user-initiated cancel during phase-1 init: while we await the
@@ -412,6 +481,10 @@ export class GatewayActionImpl {
       : undefined;
 
     const localDeviceId = await resolveLocalDeviceId(context.agentId);
+    const userInterventionConfig = {
+      approvalMode: toolInterventionSelectors.approvalMode(useUserStore.getState()),
+      allowList: toolInterventionSelectors.allowList(useUserStore.getState()),
+    };
 
     const result = await aiAgentService.execAgentTask(
       {
@@ -429,6 +502,11 @@ export class GatewayActionImpl {
           }),
           groupId: context.groupId,
           ...(initialTopicMetadata && { initialTopicMetadata }),
+          // Forward the group orchestration role so the server can stamp it onto
+          // the assistant message metadata. Without this the gateway-created
+          // supervisor turn loses its role on the step_start snapshot / refetch
+          // and renders as a generic assistant.
+          orchestrationRole: context.orchestrationRole,
           scope: context.scope,
           taskId,
           threadId: context.threadId,
@@ -436,10 +514,14 @@ export class GatewayActionImpl {
         },
         deviceId: localDeviceId,
         fileIds,
+        mentionedAgents,
         parentMessageId,
         prompt: message,
         resumeApproval,
+        resumeToolResult,
+        selectedToolIds,
         trigger: metadata?.trigger,
+        userInterventionConfig,
       },
       { signal: abortSignal },
     );
@@ -457,6 +539,20 @@ export class GatewayActionImpl {
     if (isCreateNewTopic && result.topicId) {
       // Topic created successfully — now safe to clear the pending repo selection.
       if (context.agentId) consumePendingTopicRepos(context.agentId);
+      if (optimisticTopic) {
+        const topicMetadata = optimisticTopic.metadata ?? initialTopicMetadata;
+        this.#get().internal_replaceTopicId({
+          agentId: context.agentId,
+          groupId: context.groupId,
+          nextId: result.topicId,
+          previousId: optimisticTopic.id,
+          value: {
+            ...(topicMetadata ? { metadata: topicMetadata } : {}),
+            ...(context.groupId ? {} : { sessionId: context.agentId }),
+            title: optimisticTopic.title,
+          },
+        });
+      }
       try {
         const newContext = { ...context, topicId: result.topicId };
         const messages = await messageService.getMessages(newContext);
@@ -488,9 +584,9 @@ export class GatewayActionImpl {
 
     // Use the server-created topicId for the execution context
     const execContext = { ...context, topicId: result.topicId };
+    this.#get().moveQueuedMessages(messageMapKey(context), messageMapKey(execContext));
 
     if (result.topicId) {
-      this.#get().internal_updateTopicLoading(result.topicId, true);
       void this.#get().updateTopicStatus?.({
         agentId: context.agentId,
         groupId: context.groupId,
@@ -608,7 +704,6 @@ export class GatewayActionImpl {
         // terminal-missing fallback so the op never sticks `running`.
         if (!params.terminalReceived) this.#get().completeOperation(gatewayOpId);
         if (result.topicId) {
-          this.#get().internal_updateTopicLoading(result.topicId, false);
           // A clean completion the user isn't watching is owned by
           // `markTopicUnread` (status: 'unread'); skip the 'active' write so
           // the two never race over the status field. Every other case (viewing,
@@ -797,6 +892,8 @@ export class GatewayActionImpl {
             topicId,
           });
         }
+        // Clear the persisted marker useGatewayReconnect keys off so a dead op
+        // doesn't get reconnected on every reload / task-drawer open.
         topicService.updateTopicMetadata(topicId, { runningOperation: null }).catch(() => {});
       }
     };
@@ -825,6 +922,41 @@ export class GatewayActionImpl {
         '[Gateway] agentGatewayUrl is not configured; resuming with operation-status polling',
       );
     }
+  };
+
+  /**
+   * Build the `createMemberHandler` factory for a run's event router, with a
+   * single memoized group-tree hydration shared across all of that run's member
+   * handlers. The first member to stream triggers one `getMessages` +
+   * `replaceMessages` so the canonical council structure (the `agentCouncil` tool
+   * message + every member row) lands — which is what makes the members render as
+   * parallel columns rather than a stack — and concurrent members reuse the same
+   * promise instead of each re-replacing the bucket and clobbering live content.
+   */
+  private buildMemberHandlerFactory = (
+    context: ConversationContext,
+    parentOperationId: string,
+  ): ((memberOperationId: string) => (event: AgentStreamEvent) => void) => {
+    let hydration: Promise<void> | undefined;
+    const ensureGroupHydrated = () => {
+      if (!hydration) {
+        hydration = messageService
+          .getMessages(context)
+          .then((messages) => {
+            this.#get().replaceMessages(messages, { context });
+          })
+          .catch(() => {});
+      }
+      return hydration;
+    };
+
+    return (memberOperationId: string) =>
+      createGatewayMemberStreamHandler(this.#get, {
+        context,
+        ensureGroupHydrated,
+        memberOperationId,
+        parentOperationId,
+      });
   };
 
   private internal_cleanupGatewayConnection = (operationId: string): void => {

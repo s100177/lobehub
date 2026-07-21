@@ -20,6 +20,7 @@ import { memoryExecutor } from '@lobechat/builtin-tool-memory/executor';
 import { taskExecutor } from '@lobechat/builtin-tool-task/client/executor';
 
 import type { BuiltinToolContext, BuiltinToolResult, IBuiltinToolExecutor } from '../types';
+import { claudeCodeExecutor, codexExecutor } from './heteroCli';
 import { activatorExecutor } from './lobe-activator';
 import { agentDocumentsExecutor } from './lobe-agent-documents';
 import { browserExecutor } from './lobe-browser';
@@ -139,6 +140,10 @@ export const registerBuiltinToolExecutors = (): void => {
   if (executorsRegistered) return;
 
   registerExecutors([
+    // Hook-only executors for heterogeneous CLI agents (Claude Code / Codex) —
+    // observe their shell tool results via `onAfterCall` (never invoked).
+    claudeCodeExecutor,
+    codexExecutor,
     agentBuilderExecutor,
     agentDocumentsExecutor,
     agentManagementExecutor,

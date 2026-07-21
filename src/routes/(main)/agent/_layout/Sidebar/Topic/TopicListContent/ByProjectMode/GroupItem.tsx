@@ -1,3 +1,4 @@
+import { AGENT_CHAT_URL } from '@lobechat/const';
 import { AccordionItem, ActionIcon, Center, Flexbox, Icon, Text, Tooltip } from '@lobehub/ui';
 import { createStaticStyles, cssVar, cx, keyframes } from 'antd-style';
 import {
@@ -14,10 +15,10 @@ import { useParams } from 'react-router';
 
 import { useActiveWorkspaceSlug } from '@/business/client/hooks/useActiveWorkspaceSlug';
 import RingLoadingIcon from '@/components/RingLoading';
-import { SESSION_CHAT_URL } from '@/const/url';
 import { isDesktop } from '@/const/version';
 import { useCommitWorkingDirectory } from '@/features/ChatInput/ControlBar/useCommitWorkingDirectory';
 import { resolveExecutionTarget } from '@/helpers/executionTarget';
+import { useIsGatewayModeEnabled } from '@/helpers/gatewayMode';
 import { useQueryRoute } from '@/hooks/useQueryRoute';
 import { usePathname } from '@/libs/router/navigation';
 import { useAgentStore } from '@/store/agent';
@@ -231,6 +232,9 @@ const GroupItem = memo<GroupItemComponentProps>(
     const isHeterogeneous = useAgentStore((s) =>
       currentAgentId ? agentByIdSelectors.isAgentHeterogeneousById(currentAgentId)(s) : false,
     );
+    const isWorkspaceAgent = useAgentStore((s) =>
+      currentAgentId ? agentByIdSelectors.isWorkspaceAgentById(currentAgentId)(s) : false,
+    );
     const { commitAgentDefault } = useCommitWorkingDirectory(currentAgentId ?? '');
 
     const handleAddTopic = useCallback(async () => {
@@ -241,11 +245,7 @@ const GroupItem = memo<GroupItemComponentProps>(
       await commitAgentDefault(workingDirectory);
       useChatStore.getState().switchTopic(null, { skipRefreshMessage: true });
       router.push(
-        buildPrefixedAgentRoutePath(
-          SESSION_CHAT_URL(targetAgentId),
-          agentRoute,
-          activeWorkspaceSlug,
-        ),
+        buildPrefixedAgentRoutePath(AGENT_CHAT_URL(targetAgentId), agentRoute, activeWorkspaceSlug),
       );
     }, [
       workingDirectory,
@@ -259,9 +259,12 @@ const GroupItem = memo<GroupItemComponentProps>(
 
     // Web can add a topic in a directory too when the agent targets a bound
     // device — the write goes to `workingDirByDevice`, no Electron dependency.
+    const deviceRoutingAvailable = useIsGatewayModeEnabled(currentAgentId);
     const effectiveTarget = resolveExecutionTarget(agencyConfig, {
-      isHetero: isHeterogeneous,
       clientExecutionAvailable: isDesktop,
+      deviceRoutingAvailable,
+      isHetero: isHeterogeneous,
+      workspaceScoped: isWorkspaceAgent,
     });
     const isDeviceMode = effectiveTarget === 'device' && !!agencyConfig?.boundDeviceId;
     const canAddTopic = (isDesktop || isDeviceMode) && !!workingDirectory;

@@ -27,10 +27,18 @@ export interface GeneratePlanParams {
   enableAiGeneration?: boolean;
   /** The user's task / instruction text the run must satisfy. */
   goal: string;
+  /**
+   * When the run opted into verify but produced no decomposed criteria, synthesize
+   * a single agent-type holistic check (the coarse "one broad agent verify"
+   * default) instead of leaving an empty plan (→ verify no-op).
+   */
+  holisticFallback?: boolean;
   maxAiCriteria?: number;
   /** Required only when `enableAiGeneration` is true. */
   modelConfig?: { model: string; provider: string };
   operationId: string;
+  /** One-sentence acceptance the holistic check verifies against (falls back to `goal`). */
+  requirement?: string;
   /** Ad-hoc criteria mounted on the agent (`agencyConfig.verifyCriteriaIds`). */
   verifyCriteriaIds?: string[];
   /** Reusable rubric mounted on the agent (`agencyConfig.verifyRubricId`). */
@@ -57,6 +65,30 @@ export interface CriterionDraft {
   verifierType?: VerifyCheckItem['verifierType'];
 }
 
+/**
+ * Synthesize a single `agent`-type holistic check from the task's acceptance
+ * requirement (or its goal). The agent verifier investigates the whole
+ * deliverable and submits one verdict — the coarse "one broad agent verify"
+ * default for tasks that opted into verify without decomposing into criteria
+ * No `requiredEvidence` hard gate: the agent self-captures, so the
+ * structural gate never marks it uncertain for "missing evidence".
+ */
+const buildHolisticAgentItem = (requirement?: string, goal?: string): VerifyCheckItem => {
+  const acceptance = requirement?.trim() || goal?.trim() || 'The deliverable fulfills the task.';
+  return {
+    description: acceptance,
+    id: randomUUID(),
+    index: 0,
+    // Delegate the fail decision to the task bridge (pass→completed / fail→brief)
+    // rather than the operation-level auto-repair loop.
+    onFail: 'manual',
+    required: true,
+    title: 'Task delivery acceptance',
+    verifierConfig: {},
+    verifierType: 'agent',
+  };
+};
+
 const criterionToCheckItem = (
   criterion: VerifyCriterionItem,
   index: number,
@@ -82,14 +114,33 @@ export class VerifyPlanGeneratorService {
   private readonly rubricModel: VerifyRubricModel;
   private readonly runModel: VerifyRunModel;
   private readonly documentModel: DocumentModel;
+  /**
+   * Visibility of the agent that triggered this plan (only set when invoked
+   * from a tool runtime). Threaded into every instruction-document create so
+   * private-agent verify criteria stay in the caller's private Pages bucket
+   * instead of leaking to the workspace.
+   */
+  private readonly callerAgentVisibility?: 'private' | 'public' | null;
 
-  constructor(db: LobeChatDatabase, userId: string, workspaceId?: string) {
+  constructor(
+    db: LobeChatDatabase,
+    userId: string,
+    workspaceId?: string,
+    callerAgentVisibility?: 'private' | 'public' | null,
+  ) {
     this.db = db;
     this.userId = userId;
+    this.callerAgentVisibility = callerAgentVisibility;
     this.criterionModel = new VerifyCriterionModel(db, userId, workspaceId);
     this.rubricModel = new VerifyRubricModel(db, userId, workspaceId);
     this.runModel = new VerifyRunModel(db, userId, workspaceId);
-    this.documentModel = new DocumentModel(db, userId, workspaceId);
+    this.documentModel = new DocumentModel(db, userId, workspaceId, callerAgentVisibility);
+  }
+
+  private get inheritedVisibility(): { visibility: 'private' | 'public' } | Record<string, never> {
+    return this.callerAgentVisibility === 'private' || this.callerAgentVisibility === 'public'
+      ? { visibility: this.callerAgentVisibility }
+      : {};
   }
 
   /**
@@ -130,6 +181,7 @@ export class VerifyPlanGeneratorService {
           title: draft.title,
           totalCharCount: draft.instruction.length,
           totalLineCount: draft.instruction.split('\n').length,
+          ...this.inheritedVisibility,
         });
         documentId = doc.id;
       }
@@ -254,6 +306,7 @@ export class VerifyPlanGeneratorService {
           title: draft.title,
           totalCharCount: draft.instruction.length,
           totalLineCount: draft.instruction.split('\n').length,
+          ...this.inheritedVisibility,
         });
         documentId = doc.id;
       }
@@ -318,6 +371,14 @@ export class VerifyPlanGeneratorService {
       }
     }
 
+    // 4. Holistic fallback: opted into verify but nothing decomposed into
+    //    criteria — synthesize one agent-type check over the whole deliverable
+    //    so verify actually runs (instead of an empty plan → no-op).
+    if (items.length === 0 && params.holisticFallback) {
+      items.push(buildHolisticAgentItem(params.requirement, params.goal));
+      log('synthesized holistic agent check for op %s', params.operationId);
+    }
+
     const run = await this.runModel.ensureForOperation(params.operationId, { goal: params.goal });
     await this.runModel.setPlan(run.id, items);
     log('generated draft plan for op %s with %d items', params.operationId, items.length);
@@ -380,6 +441,7 @@ export class VerifyPlanGeneratorService {
             title: c.title,
             totalCharCount: c.instruction.length,
             totalLineCount: c.instruction.split('\n').length,
+            ...this.inheritedVisibility,
           });
           documentId = doc.id;
         }
