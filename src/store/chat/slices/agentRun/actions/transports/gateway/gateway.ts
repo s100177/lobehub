@@ -675,7 +675,6 @@ export class GatewayActionImpl {
 
     const agentGatewayUrl =
       window.global_serverConfigStore?.getState()?.serverConfig?.agentGatewayUrl;
-    if (!agentGatewayUrl) return;
 
     // Skip reconnect if the gateway action already established (or is establishing)
     // a fresh connection for this operation. This prevents a race on new-topic creation
@@ -696,15 +695,17 @@ export class GatewayActionImpl {
       ?.runningOperation?.operationId;
     if (topicCurrentOpId && topicCurrentOpId !== operationId) return;
 
-    // Get a fresh JWT token (original expired after 5 min)
-    const { token } = await aiAgentService.refreshGatewayToken(topicId);
+    let token = '';
+    if (agentGatewayUrl) {
+      // Get a fresh JWT token (original expired after 5 min).
+      ({ token } = await aiAgentService.refreshGatewayToken(topicId));
 
-    // Re-check after the async token refresh: a newer executeGatewayAgent call may have
-    // taken over for this topic while we were waiting. If so, bail to avoid a duplicate stream.
-    // (disconnectFromGateway on the stale op is a no-op here because we haven't connected yet.)
-    const topicOpIdAfterRefresh = topicSelectors.getTopicById(topicId)(this.#get())?.metadata
-      ?.runningOperation?.operationId;
-    if (topicOpIdAfterRefresh && topicOpIdAfterRefresh !== operationId) return;
+      // Re-check after the async token refresh: a newer executeGatewayAgent call may have
+      // taken over for this topic while we were waiting. If so, bail to avoid a duplicate stream.
+      const topicOpIdAfterRefresh = topicSelectors.getTopicById(topicId)(this.#get())?.metadata
+        ?.runningOperation?.operationId;
+      if (topicOpIdAfterRefresh && topicOpIdAfterRefresh !== operationId) return;
+    }
 
     const agentId = this.#get().activeAgentId;
     const context = {
@@ -768,19 +769,28 @@ export class GatewayActionImpl {
       }),
     });
 
-    this.#get().connectToGateway({
-      gatewayUrl: agentGatewayUrl,
-      onEvent: eventHandler,
-      onSessionComplete: ({ succeeded, terminalReceived }) => {
-        // See executeGatewayAgent's onSessionComplete: the handler owns op
-        // completion via the run lifecycle; complete here only as the
-        // terminal-missing fallback.
-        if (!terminalReceived) this.#get().completeOperation(gatewayOpId);
+    let didFinalize = false;
+    const finalizeReconnectedRun = async (params: {
+      source: 'gateway' | 'poll';
+      succeeded: boolean;
+      terminalReceived: boolean;
+    }) => {
+      if (didFinalize) return;
+      didFinalize = true;
+      stopCompletionMonitor?.();
+
+      if (params.source === 'poll') this.disconnectFromGateway(operationId);
+
+      try {
+        const messages = await messageService.getMessages(context);
+        this.#get().replaceMessages(messages, { context });
+      } catch (err) {
+        console.error('[Gateway] failed to refresh messages after reconnected operation:', err);
+      } finally {
+        if (!params.terminalReceived) this.#get().completeOperation(gatewayOpId);
         this.#get().internal_updateTopicLoading(topicId, false);
-        // See executeGatewayAgent's onSessionComplete: a clean background
-        // completion is left to markTopicUnread (status: 'unread').
         const viewing = this.#get().activeTopicId === topicId;
-        if (viewing || !succeeded) {
+        if (viewing || !params.succeeded) {
           void this.#get().updateTopicStatus?.({
             agentId: context.agentId,
             status: 'active',
@@ -788,12 +798,33 @@ export class GatewayActionImpl {
           });
         }
         topicService.updateTopicMetadata(topicId, { runningOperation: null }).catch(() => {});
-      },
-      operationId,
-      resumeOnConnect: true,
-      token,
-      topicId,
+      }
+    };
+
+    const stopCompletionMonitor = this.monitorServerOperationCompletion({
+      localOperationId: gatewayOpId,
+      onTerminal: ({ succeeded }) =>
+        finalizeReconnectedRun({ source: 'poll', succeeded, terminalReceived: false }),
+      serverOperationId: operationId,
     });
+
+    if (agentGatewayUrl) {
+      this.#get().connectToGateway({
+        gatewayUrl: agentGatewayUrl,
+        onEvent: eventHandler,
+        onSessionComplete: ({ succeeded, terminalReceived }) => {
+          void finalizeReconnectedRun({ source: 'gateway', succeeded, terminalReceived });
+        },
+        operationId,
+        resumeOnConnect: true,
+        token,
+        topicId,
+      });
+    } else {
+      console.warn(
+        '[Gateway] agentGatewayUrl is not configured; resuming with operation-status polling',
+      );
+    }
   };
 
   private internal_cleanupGatewayConnection = (operationId: string): void => {

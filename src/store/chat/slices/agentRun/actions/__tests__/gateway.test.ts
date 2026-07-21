@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ConstVersion from '@/const/version';
 import { aiAgentService } from '@/services/aiAgent';
 import { messageService } from '@/services/message';
+import { topicService } from '@/services/topic';
 
 import type { GatewayConnection } from '../transports/gateway/gateway';
 import { GatewayActionImpl } from '../transports/gateway/gateway';
@@ -142,6 +143,7 @@ describe('GatewayActionImpl', () => {
   beforeEach(() => {
     mockAgentStore.state = { activeAgentId: undefined, agentMap: {} };
     mockUserDefaultConfig.disableGatewayMode = undefined;
+    vi.mocked(topicService.updateTopicMetadata).mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -1096,6 +1098,88 @@ describe('GatewayActionImpl', () => {
 
     afterEach(() => {
       delete (globalThis as any).window;
+    });
+
+    it('polls and refreshes messages after reload when no Gateway URL is configured', async () => {
+      vi.useFakeTimers();
+
+      const state: Record<string, any> = {
+        activeAgentId: 'agent-1',
+        activeTopicId: 'topic-1',
+        gatewayConnections: {},
+        messagesMap: {
+          'agent-1_topic-1': [{ createdAt: new Date().toISOString(), id: 'ast-1' }],
+        },
+        operations: {},
+        topicDataMap: {},
+      };
+      const completeOperation = vi.fn((operationId: string) => {
+        state.operations[operationId].status = 'completed';
+      });
+      const replaceMessages = vi.fn();
+      const internalUpdateTopicLoading = vi.fn();
+      const connectToGateway = vi.fn();
+      const startOperation = vi.fn(() => {
+        state.operations['gw-op-reconnect'] = {
+          id: 'gw-op-reconnect',
+          status: 'running',
+          type: 'execServerAgentRuntime',
+        };
+        return { operationId: 'gw-op-reconnect' };
+      });
+      const get = vi.fn(() => ({
+        ...state,
+        associateMessageWithOperation: vi.fn(),
+        completeOperation,
+        connectToGateway,
+        disconnectFromGateway: vi.fn(),
+        internal_updateTopicLoading: internalUpdateTopicLoading,
+        onOperationCancel: vi.fn(),
+        replaceMessages,
+        startOperation,
+        updateTopicStatus: vi.fn(),
+      })) as any;
+      const set = vi.fn();
+
+      (globalThis as any).window = {
+        global_serverConfigStore: { getState: () => ({ serverConfig: {} }) },
+      };
+      vi.mocked(aiAgentService.getOperationStatus).mockResolvedValue({
+        currentState: { status: 'done' },
+        hasError: false,
+        isActive: false,
+        isCompleted: true,
+        operationId: 'server-op-1',
+      });
+      vi.mocked(messageService.getMessages).mockResolvedValue([
+        { content: '后台任务完成', id: 'ast-1' },
+      ] as any);
+
+      const action = new GatewayActionImpl(set as any, get, undefined);
+
+      await action.reconnectToGatewayOperation({
+        assistantMessageId: 'ast-1',
+        operationId: 'server-op-1',
+        topicId: 'topic-1',
+      });
+      await vi.advanceTimersByTimeAsync(1500);
+
+      expect(aiAgentService.refreshGatewayToken).not.toHaveBeenCalled();
+      expect(connectToGateway).not.toHaveBeenCalled();
+      expect(aiAgentService.getOperationStatus).toHaveBeenCalledWith({
+        operationId: 'server-op-1',
+      });
+      expect(messageService.getMessages).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: 'agent-1', topicId: 'topic-1' }),
+      );
+      expect(replaceMessages).toHaveBeenCalledWith(
+        [{ content: '后台任务完成', id: 'ast-1' }],
+        { context: expect.objectContaining({ agentId: 'agent-1', topicId: 'topic-1' }) },
+      );
+      expect(completeOperation).toHaveBeenCalledWith('gw-op-reconnect');
+      expect(internalUpdateTopicLoading).toHaveBeenCalledWith('topic-1', false);
+
+      vi.useRealTimers();
     });
 
     // After a DB rehydrate (e.g. quit + relaunch), `createdAt` can arrive as an
