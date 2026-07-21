@@ -13,7 +13,7 @@ export const BROWSER_BRIDGE_VERSION = 1;
 export const BROWSER_BRIDGE_DOCUMENT_ATTRIBUTE = 'data-lobe-browser-bridge';
 
 export type BrowserBridgeAction =
-  'back' | 'click' | 'fill' | 'forward' | 'inspect' | 'scroll' | 'submit';
+  'back' | 'click' | 'fill' | 'forward' | 'hover' | 'inspect' | 'scroll' | 'submit';
 
 export interface BrowserBridgeCommand {
   action: BrowserBridgeAction;
@@ -77,7 +77,7 @@ export type BrowserBridgeMessage =
     }
   | {
       clientId: string;
-      inputType: 'click' | 'input';
+      inputType: 'click' | 'input' | 'keydown' | 'pointer' | 'wheel';
       source: typeof BROWSER_BRIDGE_SOURCE;
       type: 'user-intervention';
       version: typeof BROWSER_BRIDGE_VERSION;
@@ -212,7 +212,13 @@ const showActionHighlight = (element: Element, action: BrowserBridgeAction) => {
     zIndex: '2147483647',
   });
   label.textContent =
-    action === 'fill' ? 'AI 正在输入' : action === 'submit' ? 'AI 准备提交' : 'AI 正在点击';
+    action === 'fill'
+      ? 'AI 正在输入'
+      : action === 'hover'
+        ? 'AI 正在悬停'
+        : action === 'submit'
+          ? 'AI 准备提交'
+          : 'AI 正在点击';
   Object.assign(label.style, {
     background: '#1d4ed8',
     borderRadius: '4px',
@@ -360,6 +366,13 @@ const runCommand = async (command: BrowserBridgeCommand): Promise<BrowserState> 
     setNativeValue(element, String(params.text ?? ''));
     return inspect();
   }
+  if (action === 'hover') {
+    element.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
+    element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    element.dispatchEvent(new PointerEvent('pointerenter'));
+    element.dispatchEvent(new MouseEvent('mouseenter'));
+    return inspect();
+  }
 
   const risk = detectRisk(element);
   if (risk) {
@@ -405,6 +418,7 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
 
   let commandInProgress = false;
   let automationActive = false;
+  let interventionReported = false;
   let activeCommandId: string | undefined;
   let hasConnected = false;
   let hostClientId: string | undefined;
@@ -419,7 +433,7 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
   );
   const sendReady = () =>
     send({
-      capabilities: ['click', 'fill', 'submit', 'scroll', 'inspect', 'back', 'forward'],
+      capabilities: ['click', 'fill', 'hover', 'submit', 'scroll', 'inspect', 'back', 'forward'],
       title: document.title,
       type: 'ready',
       url: window.location.href,
@@ -477,12 +491,14 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
     ) {
       hostClientId = undefined;
       automationActive = false;
+      interventionReported = false;
       startReadyAnnouncements();
       return;
     }
     if (event.data?.source === BROWSER_HOST_SOURCE && event.data?.type === 'control-state') {
       if (event.data.clientId !== hostClientId) return;
       automationActive = event.data.active === true;
+      if (automationActive) interventionReported = false;
       return;
     }
     if (event.data?.source === BROWSER_HOST_SOURCE && event.data?.type === 'connected') {
@@ -490,6 +506,7 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
       hasConnected = true;
       hostClientId = event.data.clientId;
       automationActive = event.data.controlling === true;
+      interventionReported = false;
       if (readyTimer) window.clearInterval(readyTimer);
       readyTimer = undefined;
       flushPendingOpenTabs();
@@ -569,30 +586,56 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
     }
   };
 
-  const onUserClick = () => {
-    if (automationActive && !commandInProgress && hostClientId)
-      send({ clientId: hostClientId, inputType: 'click', type: 'user-intervention' });
+  const reportUserIntervention = (
+    inputType: 'click' | 'input' | 'keydown' | 'pointer' | 'wheel',
+  ) => {
+    if (!automationActive || interventionReported || commandInProgress || !hostClientId) return;
+    interventionReported = true;
+    automationActive = false;
+    send({ clientId: hostClientId, inputType, type: 'user-intervention' });
   };
+  const onUserClick = () => reportUserIntervention('click');
+  const onUserInput = () => reportUserIntervention('input');
+  const onUserKeyDown = () => reportUserIntervention('keydown');
+  const onUserPointerDown = () => reportUserIntervention('pointer');
+  const onUserWheel = () => reportUserIntervention('wheel');
   const keepLinkInsideFrame = (event: MouseEvent) => {
-    if (event.defaultPrevented || event.button !== 0) return;
+    const isPrimaryClick = event.type === 'click' && event.button === 0;
+    const isMiddleClick = event.type === 'auxclick' && event.button === 1;
+    if (event.defaultPrevented || (!isPrimaryClick && !isMiddleClick)) return;
     const target = event.target;
     const link = target instanceof Element ? target.closest('a[href]') : null;
     if (!(link instanceof HTMLAnchorElement)) return;
 
+    const crossesOrigin =
+      new URL(link.href, window.location.href).origin !== window.location.origin;
     const opensNewContext =
       link.target.toLowerCase() === '_blank' ||
+      crossesOrigin ||
+      isMiddleClick ||
       event.ctrlKey ||
       event.metaKey ||
-      event.shiftKey ||
-      event.altKey;
+      event.shiftKey;
     if (!opensNewContext) return;
 
     event.preventDefault();
     sendOrQueueOpenTab(link.href, link.textContent?.trim() || undefined);
   };
-  const onUserInput = () => {
-    if (automationActive && !commandInProgress && hostClientId)
-      send({ clientId: hostClientId, inputType: 'input', type: 'user-intervention' });
+  const reportNavigationStart = (event: MouseEvent) => {
+    if (!hostClientId || event.defaultPrevented || event.button !== 0) return;
+    if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    const target = event.target;
+    const link = target instanceof Element ? target.closest('a[href]') : null;
+    if (!(link instanceof HTMLAnchorElement) || link.target.toLowerCase() === '_blank') return;
+    if (new URL(link.href, window.location.href).origin !== window.location.origin) return;
+    if (link.href === window.location.href) return;
+    send({
+      clientId: hostClientId,
+      phase: 'start',
+      title: document.title,
+      type: 'navigation-state',
+      url: link.href,
+    });
   };
 
   window.addEventListener('message', onMessage);
@@ -615,8 +658,13 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
     sendNavigationState();
   }) as History['replaceState'];
   document.addEventListener('click', keepLinkInsideFrame, true);
+  document.addEventListener('auxclick', keepLinkInsideFrame, true);
   document.addEventListener('click', onUserClick, true);
   document.addEventListener('input', onUserInput, true);
+  document.addEventListener('keydown', onUserKeyDown, true);
+  document.addEventListener('pointerdown', onUserPointerDown, true);
+  document.addEventListener('wheel', onUserWheel, true);
+  document.addEventListener('click', reportNavigationStart);
   window.addEventListener('hashchange', sendNavigationState);
   window.addEventListener('popstate', sendNavigationState);
   startReadyAnnouncements();
@@ -630,8 +678,13 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
     for (const pending of pendingOpenTabs) window.clearTimeout(pending.timeoutId);
     pendingOpenTabs.length = 0;
     document.removeEventListener('click', keepLinkInsideFrame, true);
+    document.removeEventListener('auxclick', keepLinkInsideFrame, true);
     document.removeEventListener('click', onUserClick, true);
     document.removeEventListener('input', onUserInput, true);
+    document.removeEventListener('keydown', onUserKeyDown, true);
+    document.removeEventListener('pointerdown', onUserPointerDown, true);
+    document.removeEventListener('wheel', onUserWheel, true);
+    document.removeEventListener('click', reportNavigationStart);
     window.removeEventListener('hashchange', sendNavigationState);
     window.removeEventListener('popstate', sendNavigationState);
     document.documentElement.removeAttribute(BROWSER_BRIDGE_DOCUMENT_ATTRIBUTE);

@@ -253,13 +253,17 @@ describe('installBrowserBridge', () => {
     );
     postMessage.mockClear();
 
+    document
+      .getElementById('go')!
+      .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
     document.getElementById('go')!.click();
     document.getElementById('name')!.dispatchEvent(new Event('input', { bubbles: true }));
-    expect(postMessage).toHaveBeenCalledTimes(2);
+    document.dispatchEvent(new WheelEvent('wheel', { bubbles: true }));
+    expect(postMessage).toHaveBeenCalledTimes(1);
     expect(postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         clientId: 'client-1',
-        inputType: 'click',
+        inputType: 'pointer',
         type: 'user-intervention',
       }),
       'https://chat.example',
@@ -269,6 +273,38 @@ describe('installBrowserBridge', () => {
     postMessage.mockClear();
     document.getElementById('go')!.click();
     expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['wheel', () => document.dispatchEvent(new WheelEvent('wheel', { bubbles: true }))],
+    ['keydown', () => document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }))],
+  ])('reports %s as a single user takeover while AI controls the iframe', (inputType, act) => {
+    const postMessage = vi.fn();
+    Object.defineProperty(window, 'parent', { configurable: true, value: { postMessage } });
+    const cleanup = installBrowserBridge({ allowedParentOrigin: 'https://chat.example' });
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          clientId: 'client-1',
+          controlling: true,
+          source: BROWSER_HOST_SOURCE,
+          type: 'connected',
+        },
+        origin: 'https://chat.example',
+        source: window.parent,
+      }),
+    );
+    postMessage.mockClear();
+
+    act();
+    act();
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ clientId: 'client-1', inputType, type: 'user-intervention' }),
+      'https://chat.example',
+    );
+    cleanup();
   });
 
   it('requests a right-panel tab for native new-window links without swallowing click handlers', () => {
@@ -302,6 +338,104 @@ describe('installBrowserBridge', () => {
       'https://chat.example',
     );
     expect(window.location.hash).not.toBe('#details');
+    cleanup();
+  });
+
+  it('routes middle-click to a panel tab but leaves alt-click to the page', () => {
+    document.body.innerHTML = '<a id="details" href="#details">Details</a>';
+    const postMessage = vi.fn();
+    Object.defineProperty(window, 'parent', { configurable: true, value: { postMessage } });
+    const cleanup = installBrowserBridge({ allowedParentOrigin: 'https://chat.example' });
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { clientId: 'client-1', source: BROWSER_HOST_SOURCE, type: 'connected' },
+        origin: 'https://chat.example',
+        source: window.parent,
+      }),
+    );
+    postMessage.mockClear();
+    const link = document.getElementById('details')!;
+
+    const middleClick = new MouseEvent('auxclick', { bubbles: true, button: 1, cancelable: true });
+    link.dispatchEvent(middleClick);
+    expect(middleClick.defaultPrevented).toBe(true);
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'open-tab', url: expect.stringMatching(/#details$/) }),
+      'https://chat.example',
+    );
+
+    postMessage.mockClear();
+    const altClick = new MouseEvent('click', {
+      altKey: true,
+      bubbles: true,
+      button: 0,
+      cancelable: true,
+    });
+    link.dispatchEvent(altClick);
+    expect(altClick.defaultPrevented).toBe(false);
+    expect(postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'open-tab' }),
+      expect.anything(),
+    );
+    cleanup();
+  });
+
+  it('reports immediate loading feedback for a normal same-frame link', () => {
+    document.body.innerHTML = '<a id="details" href="?view=details">Details</a>';
+    const postMessage = vi.fn();
+    Object.defineProperty(window, 'parent', { configurable: true, value: { postMessage } });
+    const cleanup = installBrowserBridge({ allowedParentOrigin: 'https://chat.example' });
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { clientId: 'client-1', source: BROWSER_HOST_SOURCE, type: 'connected' },
+        origin: 'https://chat.example',
+        source: window.parent,
+      }),
+    );
+    postMessage.mockClear();
+
+    document
+      .getElementById('details')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0, cancelable: true }));
+
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: 'client-1',
+        phase: 'start',
+        type: 'navigation-state',
+        url: expect.stringContaining('?view=details'),
+      }),
+      'https://chat.example',
+    );
+    cleanup();
+  });
+
+  it('keeps a cross-origin normal link inside the browser workspace', () => {
+    document.body.innerHTML = '<a id="external" href="https://external.example/page">External</a>';
+    const postMessage = vi.fn();
+    Object.defineProperty(window, 'parent', { configurable: true, value: { postMessage } });
+    const cleanup = installBrowserBridge({ allowedParentOrigin: 'https://chat.example' });
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { clientId: 'client-1', source: BROWSER_HOST_SOURCE, type: 'connected' },
+        origin: 'https://chat.example',
+        source: window.parent,
+      }),
+    );
+    postMessage.mockClear();
+    const click = new MouseEvent('click', { bubbles: true, button: 0, cancelable: true });
+
+    document.getElementById('external')!.dispatchEvent(click);
+
+    expect(click.defaultPrevented).toBe(true);
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'External',
+        type: 'open-tab',
+        url: 'https://external.example/page',
+      }),
+      'https://chat.example',
+    );
     cleanup();
   });
 
@@ -533,6 +667,78 @@ describe('installBrowserBridge', () => {
 
     await vi.waitFor(() => expect((inputs[1] as HTMLInputElement).value).toBe('复星医药'));
     expect((inputs[0] as HTMLInputElement).value).toBe('');
+    cleanup();
+  });
+
+  it('hovers the visible DOM element and returns newly revealed actions', async () => {
+    document.body.innerHTML = '<button id="menu">Menu</button><div id="items"></div>';
+    const menu = document.getElementById('menu')!;
+    vi.spyOn(menu, 'getBoundingClientRect').mockReturnValue({
+      bottom: 20,
+      height: 20,
+      left: 0,
+      right: 100,
+      top: 0,
+      width: 100,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    menu.addEventListener('mouseenter', () => {
+      document.getElementById('items')!.innerHTML =
+        '<button id="revealed">Revealed action</button>';
+      vi.spyOn(document.getElementById('revealed')!, 'getBoundingClientRect').mockReturnValue({
+        bottom: 50,
+        height: 20,
+        left: 0,
+        right: 100,
+        top: 30,
+        width: 100,
+        x: 0,
+        y: 30,
+        toJSON: () => ({}),
+      });
+    });
+    const postMessage = vi.fn();
+    Object.defineProperty(window, 'parent', { configurable: true, value: { postMessage } });
+    const cleanup = installBrowserBridge({ allowedParentOrigin: 'https://chat.example' });
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { clientId: 'client-1', source: BROWSER_HOST_SOURCE, type: 'connected' },
+        origin: 'https://chat.example',
+        source: window.parent,
+      }),
+    );
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          clientId: 'client-1',
+          command: { action: 'hover', epoch: 1, id: 'hover-menu', params: { selector: '#menu' } },
+          sessionId: 'topic-1',
+          source: BROWSER_HOST_SOURCE,
+          type: 'command',
+        },
+        origin: 'https://chat.example',
+        source: window.parent,
+      }),
+    );
+
+    await vi.waitFor(() =>
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          commandId: 'hover-menu',
+          result: expect.objectContaining({
+            pageState: expect.objectContaining({
+              actions: expect.arrayContaining([
+                expect.objectContaining({ selector: '#revealed', text: 'Revealed action' }),
+              ]),
+            }),
+          }),
+          type: 'result',
+        }),
+        'https://chat.example',
+      ),
+    );
     cleanup();
   });
 

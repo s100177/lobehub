@@ -70,8 +70,8 @@ describe('BridgeSessionManager', () => {
     assert.deepEqual(await resultPromise, { title: 'Form' });
   });
 
-  it('refuses actions when the visible iframe has not connected', async () => {
-    const manager = new BridgeSessionManager();
+  it('waits briefly for the visible iframe before refusing an action', async () => {
+    const manager = new BridgeSessionManager({ connectionWaitMs: 10 });
     manager.register('topic-1', { ownerId: 'user-1', url: 'https://app.example/form' });
 
     await assert.rejects(
@@ -84,8 +84,38 @@ describe('BridgeSessionManager', () => {
     );
   });
 
+  it('delivers the first action when a newly visible iframe connects during the grace period', async () => {
+    const manager = new BridgeSessionManager({ commandTimeoutMs: 500, connectionWaitMs: 100 });
+    manager.register('topic-1', { ownerId: 'user-1', url: 'https://app.example/form' });
+
+    const resultPromise = manager.enqueue('topic-1', {
+      action: 'click',
+      ownerId: 'user-1',
+      params: { selector: '#go' },
+    });
+    manager.connect('topic-1', {
+      clientId: 'client-1',
+      ownerId: 'user-1',
+      url: 'https://app.example/form',
+    });
+    const command = await manager.poll('topic-1', {
+      clientId: 'client-1',
+      ownerId: 'user-1',
+    });
+    assert.equal(command.action, 'click');
+    manager.complete('topic-1', {
+      clientId: 'client-1',
+      commandId: command.id,
+      epoch: command.epoch,
+      ownerId: 'user-1',
+      result: { clicked: true },
+    });
+
+    assert.deepEqual(await resultPromise, { clicked: true });
+  });
+
   it('does not reuse an old iframe client after navigation starts a new session', async () => {
-    const manager = new BridgeSessionManager();
+    const manager = new BridgeSessionManager({ connectionWaitMs: 10 });
     manager.register('topic-1', { ownerId: 'user-1', url: 'https://app.example/old' });
     manager.connect('topic-1', {
       clientId: 'old-client',
@@ -252,7 +282,7 @@ describe('BridgeSessionManager', () => {
     await fillPromise;
   });
 
-  it('rejects pending AI work immediately when the visible iframe disconnects', async () => {
+  it('rejects non-reconnectable AI work immediately when the visible iframe disconnects', async () => {
     const manager = new BridgeSessionManager({ commandTimeoutMs: 500 });
     manager.register('topic-1', { ownerId: 'user-1', url: 'https://app.example/form' });
     manager.connect('topic-1', {
@@ -261,13 +291,37 @@ describe('BridgeSessionManager', () => {
       url: 'https://app.example/form',
     });
     const resultPromise = manager.enqueue('topic-1', {
-      action: 'inspect',
+      action: 'fill',
       ownerId: 'user-1',
-      params: {},
+      params: { selector: '#name', text: 'Ada' },
     });
 
     manager.disconnect('topic-1', { clientId: 'client-1', ownerId: 'user-1' });
     await assert.rejects(resultPromise, { code: 'BRIDGE_DISCONNECTED' });
+  });
+
+  it('rejects non-reconnectable work when a recovering iframe replaces the failed client', async () => {
+    const manager = new BridgeSessionManager({ commandTimeoutMs: 500 });
+    manager.register('topic-1', { ownerId: 'user-1', url: 'https://app.example/form' });
+    manager.connect('topic-1', {
+      clientId: 'failed-client',
+      ownerId: 'user-1',
+      url: 'https://app.example/form',
+    });
+    const resultPromise = manager.enqueue('topic-1', {
+      action: 'hover',
+      ownerId: 'user-1',
+      params: { selector: '#menu' },
+    });
+    await manager.poll('topic-1', { clientId: 'failed-client', ownerId: 'user-1' });
+
+    manager.connect('topic-1', {
+      clientId: 'recovered-client',
+      ownerId: 'user-1',
+      url: 'https://app.example/form',
+    });
+
+    await assert.rejects(resultPromise, { code: 'BRIDGE_CLIENT_REPLACED' });
   });
 
   it('completes a navigation command from the freshly connected document only', async () => {
@@ -320,5 +374,47 @@ describe('BridgeSessionManager', () => {
       result: { url: 'https://app.example/next' },
     });
     assert.deepEqual(await resultPromise, { url: 'https://app.example/next' });
+  });
+
+  it('moves an inspect requested during tab activation to the freshly connected iframe', async () => {
+    const manager = new BridgeSessionManager({ commandTimeoutMs: 500 });
+    manager.register('topic-1', { ownerId: 'user-1', url: 'https://app.example/form' });
+    manager.connect('topic-1', {
+      clientId: 'client-1',
+      ownerId: 'user-1',
+      url: 'https://app.example/form',
+    });
+    const resultPromise = manager.enqueue('topic-1', {
+      action: 'inspect',
+      ownerId: 'user-1',
+      params: {},
+    });
+    const oldCommand = await manager.poll('topic-1', {
+      clientId: 'client-1',
+      ownerId: 'user-1',
+    });
+
+    manager.disconnect('topic-1', { clientId: 'client-1', ownerId: 'user-1' });
+    manager.connect('topic-1', {
+      clientId: 'client-2',
+      ownerId: 'user-1',
+      url: 'https://app.example/policy',
+    });
+    const freshCommand = await manager.poll('topic-1', {
+      clientId: 'client-2',
+      ownerId: 'user-1',
+    });
+    assert.equal(freshCommand.id, oldCommand.id);
+    assert.equal(freshCommand.action, 'inspect');
+    assert.notEqual(freshCommand.epoch, oldCommand.epoch);
+    manager.complete('topic-1', {
+      clientId: 'client-2',
+      commandId: freshCommand.id,
+      epoch: freshCommand.epoch,
+      ownerId: 'user-1',
+      result: { url: 'https://app.example/policy' },
+    });
+
+    assert.deepEqual(await resultPromise, { url: 'https://app.example/policy' });
   });
 });

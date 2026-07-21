@@ -5,6 +5,7 @@ import {
   type BrowserState,
   type CancelTaskParams,
   type ExecutePlanParams,
+  type HoverParams,
   type InterruptParams,
 } from '../types';
 
@@ -16,6 +17,7 @@ export interface BrowserRuntimeService {
   executePlan: (args: ExecutePlanParams) => Promise<BrowserState>;
   fill: (args: { selector: string; text: string; timeout?: number }) => Promise<BrowserState>;
   forward: () => Promise<BrowserState>;
+  hover: (args: HoverParams) => Promise<BrowserState>;
   inspect: () => Promise<BrowserState>;
   interrupt: (args: InterruptParams) => Promise<BrowserState>;
   navigate: (args: {
@@ -139,6 +141,27 @@ export class BrowserExecutionRuntime {
     } catch (error) {
       return {
         content: `Failed to fill "${args.selector}": ${error instanceof Error ? error.message : String(error)}`,
+        error,
+        success: false,
+      };
+    }
+  }
+
+  async hover(args: HoverParams): Promise<BuiltinServerRuntimeOutput> {
+    try {
+      const state = await this.service.hover(args);
+
+      return {
+        content: `Hovered over element "${args.selector}"`,
+        state: this.withEvent(
+          state,
+          this.createEvent('hover', 'success', `Hovered over ${args.selector}`, args.selector),
+        ),
+        success: true,
+      };
+    } catch (error) {
+      return {
+        content: `Failed to hover over "${args.selector}": ${error instanceof Error ? error.message : String(error)}`,
         error,
         success: false,
       };

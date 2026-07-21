@@ -18,6 +18,7 @@ const inputStyle = {
 
 const Page = () => {
   const [clickCount, setClickCount] = useState(0);
+  const [hoverMenuVisible, setHoverMenuVisible] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [view, setView] = useState<string>();
 
@@ -143,6 +144,46 @@ const Page = () => {
           >
             新标签查看费用说明
           </button>
+          <div
+            style={{ position: 'relative', width: 'max-content' }}
+            onMouseLeave={() => setHoverMenuVisible(false)}
+          >
+            <button
+              data-testid="expense-actions-trigger"
+              type="button"
+              style={{
+                background: '#fff',
+                border: '1px solid #94a3b8',
+                borderRadius: 8,
+                cursor: 'pointer',
+                fontWeight: 700,
+                padding: '8px 12px',
+              }}
+              onMouseEnter={() => setHoverMenuVisible(true)}
+            >
+              更多操作
+            </button>
+            {hoverMenuVisible ? (
+              <div
+                data-testid="expense-hover-menu"
+                role="menu"
+                style={{
+                  background: '#fff',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: 8,
+                  boxShadow: '0 10px 24px rgb(15 23 42 / 14%)',
+                  left: 0,
+                  padding: 8,
+                  position: 'absolute',
+                  top: 'calc(100% + 6px)',
+                  width: 180,
+                  zIndex: 3,
+                }}
+              >
+                <span role="menuitem">查看费用规则</span>
+              </div>
+            ) : null}
+          </div>
         </header>
 
         <form

@@ -2,7 +2,7 @@
 
 import { Flexbox } from '@lobehub/ui';
 import { createStaticStyles } from 'antd-style';
-import type { CSSProperties, SyntheticEvent } from 'react';
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, SyntheticEvent } from 'react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 import {
@@ -47,7 +47,9 @@ export const installIframeSamePanelNavigationGuard = (
       'click',
       (event) => {
         if (iframeDocument.documentElement.hasAttribute(BROWSER_BRIDGE_DOCUMENT_ATTRIBUTE)) return;
-        if (event.defaultPrevented || event.button !== 0) return;
+        const isPrimaryClick = event.type === 'click' && event.button === 0;
+        const isMiddleClick = event.type === 'auxclick' && event.button === 1;
+        if (event.defaultPrevented || (!isPrimaryClick && !isMiddleClick)) return;
 
         const target = event.target;
         const link =
@@ -56,19 +58,34 @@ export const installIframeSamePanelNavigationGuard = (
             : undefined;
         if (!link || link.tagName.toLowerCase() !== 'a') return;
 
+        const resolvedUrl = new URL(
+          link.getAttribute('href') || link.href,
+          iframeWindow.location.href || iframeDocument.baseURI,
+        );
         const opensNewContext =
           link.getAttribute('target')?.toLowerCase() === '_blank' ||
+          resolvedUrl.origin !== iframeWindow.location.origin ||
+          isMiddleClick ||
           event.ctrlKey ||
           event.metaKey ||
-          event.shiftKey ||
-          event.altKey;
+          event.shiftKey;
         if (!opensNewContext) return;
 
         event.preventDefault();
-        openInsidePanel(
-          link.getAttribute('href') || link.href,
-          link.textContent?.trim() || undefined,
-        );
+        openInsidePanel(resolvedUrl, link.textContent?.trim() || undefined);
+      },
+      true,
+    );
+    iframeDocument.addEventListener(
+      'auxclick',
+      (event) => {
+        if (!(event instanceof MouseEvent)) return;
+        if (iframeDocument.documentElement.hasAttribute(BROWSER_BRIDGE_DOCUMENT_ATTRIBUTE)) return;
+        const target = event.target;
+        const link = target instanceof Element ? target.closest('a[href]') : null;
+        if (!(link instanceof HTMLAnchorElement) || event.button !== 1) return;
+        event.preventDefault();
+        openInsidePanel(link.href, link.textContent?.trim() || undefined);
       },
       true,
     );
@@ -507,6 +524,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ apiName, state, showResult, sess
   const loadedIframeTabsRef = useRef(new Set<string>());
   const pendingCommandTabsRef = useRef(new Map<string, { title?: string; url: string }>());
   const bridgeConnectionRef = useRef<BridgeConnection | undefined>(undefined);
+  const switchingTabRef = useRef(false);
   const loadIdRef = useRef(0);
 
   useEffect(() => {
@@ -569,6 +587,8 @@ const BrowserPanel = memo<BrowserPanelProps>(({ apiName, state, showResult, sess
       const currentTabs = tabsRef.current;
       const existing = currentTabs.find((tab) => tab.url === nextUrl);
       if (existing) {
+        if (existing.id === activeTabIdRef.current) return;
+        switchingTabRef.current = true;
         setActiveTabId(existing.id);
         return;
       }
@@ -582,6 +602,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ apiName, state, showResult, sess
         ...previous,
         { id, srcUrl: nextUrl, title: nextTitle || new URL(nextUrl).hostname, url: nextUrl },
       ]);
+      switchingTabRef.current = true;
       setActiveTabId(id);
       setIsPageLoading(true);
       setActiveBridgeAction(undefined);
@@ -598,11 +619,40 @@ const BrowserPanel = memo<BrowserPanelProps>(({ apiName, state, showResult, sess
       iframeRefs.current.delete(tabId);
       setTabs(remaining);
       if (activeTabId === tabId) {
+        switchingTabRef.current = true;
         setActiveTabId(remaining[Math.max(0, tabIndex - 1)]?.id || remaining[0].id);
       }
     },
     [activeTabId, tabs],
   );
+
+  const activateTabByKeyboard = (event: ReactKeyboardEvent<HTMLButtonElement>, tabId: string) => {
+    const currentIndex = tabs.findIndex((tab) => tab.id === tabId);
+    if (currentIndex < 0) return;
+    const nextIndex =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? tabs.length - 1
+          : event.key === 'ArrowLeft'
+            ? (currentIndex - 1 + tabs.length) % tabs.length
+            : event.key === 'ArrowRight'
+              ? (currentIndex + 1) % tabs.length
+              : undefined;
+    if (nextIndex === undefined) return;
+
+    event.preventDefault();
+    const nextTab = tabs[nextIndex];
+    switchingTabRef.current = true;
+    setActiveTabId(nextTab.id);
+    setIsPageLoading(!loadedIframeTabsRef.current.has(nextTab.id));
+    setActiveBridgeAction(undefined);
+    requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLButtonElement>(`[data-browser-tab-activate="${nextTab.id}"]`)
+        ?.focus();
+    });
+  };
 
   const cleanupBridgeConnection = useCallback(async () => {
     const connection = bridgeConnectionRef.current;
@@ -691,7 +741,8 @@ const BrowserPanel = memo<BrowserPanelProps>(({ apiName, state, showResult, sess
             { command?: BrowserBridgeCommand } | undefined;
           const command = payload?.command;
           const iframeWindow = iframeRef.current?.contentWindow;
-          if (!command?.id || iframeWindow !== connection.iframeWindow) return;
+          if (!command?.id || switchingTabRef.current || iframeWindow !== connection.iframeWindow)
+            return;
 
           connection.iframeWindow?.postMessage(
             {
@@ -707,6 +758,18 @@ const BrowserPanel = memo<BrowserPanelProps>(({ apiName, state, showResult, sess
         } catch {
           if (controller.signal.aborted) return;
 
+          const disconnectedClientId = connection.clientId;
+          connection.connected = false;
+          connection.clientId = createBridgeClientId();
+          connection.iframeWindow?.postMessage(
+            {
+              clientId: disconnectedClientId,
+              source: BROWSER_HOST_SOURCE,
+              type: 'disconnected',
+              version: BROWSER_BRIDGE_VERSION,
+            },
+            connection.expectedOrigin,
+          );
           setBridgeStatus('unavailable');
           setLocalState((previous) =>
             previous ? { ...previous, bridgeStatus: 'unavailable' } : previous,
@@ -795,6 +858,16 @@ const BrowserPanel = memo<BrowserPanelProps>(({ apiName, state, showResult, sess
     );
   }, [isControlling]);
 
+  useEffect(() => {
+    if (activeBridgeAction?.phase !== 'success' && activeBridgeAction?.phase !== 'error') return;
+
+    const timeout = window.setTimeout(
+      () => setActiveBridgeAction(undefined),
+      activeBridgeAction.phase === 'success' ? 1200 : 3000,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [activeBridgeAction]);
+
   const prepareBridgeConnection = useCallback(
     (iframe: HTMLIFrameElement, expectedOrigin: string, force = false) => {
       const currentConnection = bridgeConnectionRef.current;
@@ -837,7 +910,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ apiName, state, showResult, sess
     if (!isIframeMode) return;
     const iframe = iframeRefs.current.get(activeTabId);
     iframeRef.current = iframe || null;
-    setIsPageLoading(false);
+    setIsPageLoading(Boolean(iframe && !loadedIframeTabsRef.current.has(activeTabId)));
     setActiveBridgeAction(undefined);
 
     if (iframe && expectedBridgeOrigin && loadedIframeTabsRef.current.has(activeTabId)) {
@@ -845,6 +918,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ apiName, state, showResult, sess
     } else {
       void cleanupBridgeConnection();
     }
+    switchingTabRef.current = false;
   }, [
     activeTabId,
     cleanupBridgeConnection,
@@ -1072,9 +1146,11 @@ const BrowserPanel = memo<BrowserPanelProps>(({ apiName, state, showResult, sess
         ? 'AI 已完成'
         : activeBridgeAction?.action === 'fill'
           ? 'AI 正在输入'
-          : activeBridgeAction?.action === 'submit'
-            ? 'AI 准备提交'
-            : 'AI 正在操作';
+          : activeBridgeAction?.action === 'hover'
+            ? 'AI 正在悬停'
+            : activeBridgeAction?.action === 'submit'
+              ? 'AI 准备提交'
+              : 'AI 正在操作';
   const bridgeUnavailable = isIframeMode && bridgeStatus === 'unavailable';
 
   const pauseByIntervention = () => {
@@ -1153,11 +1229,15 @@ const BrowserPanel = memo<BrowserPanelProps>(({ apiName, state, showResult, sess
               <button
                 aria-selected={tab.id === activeTabId}
                 className={styles.tabActivate}
+                data-browser-tab-activate={tab.id}
                 role="tab"
+                tabIndex={tab.id === activeTabId ? 0 : -1}
                 title={tab.title}
                 type="button"
+                onKeyDown={(event) => activateTabByKeyboard(event, tab.id)}
                 onClick={() => {
                   if (tab.id === activeTabId) return;
+                  switchingTabRef.current = true;
                   setActiveTabId(tab.id);
                   setIsPageLoading(true);
                   setActiveBridgeAction(undefined);

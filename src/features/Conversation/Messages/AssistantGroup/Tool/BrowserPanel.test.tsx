@@ -350,12 +350,20 @@ describe('BrowserPanel clean browser rendering', () => {
       'aria-selected',
       'true',
     );
+    expect(screen.getByLabelText('Browser page loading')).toBeInTheDocument();
     const policyIframe = document.querySelector('iframe[title="Policy"]');
     expect(policyIframe).toHaveAttribute('src', 'https://app.example/policy');
     fireEvent.click(screen.getByRole('tab', { name: /Expense form/ }));
     const preservedIframe = document.querySelector('iframe[title="Expense form"]');
     expect(preservedIframe).toBe(iframe);
     expect(preservedIframe).toHaveAttribute('data-preserved-state', 'original-form-state');
+
+    const expenseTab = screen.getByRole('tab', { name: /Expense form/ });
+    fireEvent.keyDown(expenseTab, { key: 'ArrowRight' });
+    expect(screen.getByRole('tab', { name: /Policy/ })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: /Policy/ })).toHaveAttribute('tabindex', '0');
+    fireEvent.keyDown(screen.getByRole('tab', { name: /Policy/ }), { key: 'Home' });
+    expect(expenseTab).toHaveAttribute('aria-selected', 'true');
 
     act(() => {
       window.dispatchEvent(
@@ -1213,6 +1221,78 @@ describe('BrowserPanel clean browser rendering', () => {
         sessionId: 'session-bridge',
       });
     });
+  });
+
+  it('automatically reconnects after a bridge poll failure', async () => {
+    let connectCount = 0;
+    let pollCount = 0;
+    const connectedClientIds: string[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (input === '/api/browser/bridge' && body?.action === 'connect') {
+        connectCount += 1;
+        connectedClientIds.push(body.clientId);
+        return { json: async () => ({ connected: true }), ok: true, status: 200 };
+      }
+      if (String(input).startsWith('/api/browser/bridge?')) {
+        pollCount += 1;
+        if (pollCount === 1) throw new Error('temporary poll failure');
+        return new Promise((_, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('The operation was aborted.', 'AbortError')),
+            { once: true },
+          );
+        });
+      }
+      if (input === '/api/browser/bridge' && body?.action === 'disconnect') {
+        return { json: async () => ({ ok: true }), ok: true, status: 200 };
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <BrowserPanel
+        sessionId="session-recover"
+        state={{
+          embeddable: true,
+          iframeUrl: 'https://app.example/form',
+          mode: 'iframe',
+          title: 'Recovering form',
+          url: 'https://app.example/form',
+        }}
+      />,
+    );
+    const iframe = screen.getByTitle('Recovering form') as HTMLIFrameElement;
+    const iframeWindow = { postMessage: vi.fn() } as unknown as Window;
+    Object.defineProperty(iframe, 'contentWindow', { configurable: true, value: iframeWindow });
+    fireEvent.load(iframe);
+    const ready = () =>
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            source: BROWSER_BRIDGE_SOURCE,
+            title: 'Recovering form',
+            type: 'ready',
+            url: 'https://app.example/form',
+            version: BROWSER_BRIDGE_VERSION,
+          },
+          origin: 'https://app.example',
+          source: iframeWindow,
+        }),
+      );
+
+    ready();
+    expect(await screen.findByText('Bridge unavailable.')).toBeInTheDocument();
+    expect((iframeWindow as any).postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'disconnected' }),
+      'https://app.example',
+    );
+
+    ready();
+    await waitFor(() => expect(connectCount).toBe(2));
+    expect(connectedClientIds[1]).not.toBe(connectedClientIds[0]);
+    await waitFor(() => expect(screen.queryByText('Bridge unavailable.')).not.toBeInTheDocument());
   });
 
   it('shows bridge unavailable while keeping remote fallback for iframe pages without the sdk', async () => {

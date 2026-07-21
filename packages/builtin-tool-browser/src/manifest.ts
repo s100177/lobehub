@@ -70,6 +70,25 @@ export const BrowserManifest: BuiltinToolManifest = {
     },
     {
       description:
+        'Hover over a visible element by CSS selector to reveal menus, tooltips, or controls, then return the updated page state.',
+      name: BrowserApiName.hover,
+      parameters: {
+        properties: {
+          selector: {
+            description: 'CSS selector of the element to hover',
+            type: 'string',
+          },
+          timeout: {
+            description: 'Timeout in milliseconds to wait for the element (default: 5000)',
+            type: 'number',
+          },
+        },
+        required: ['selector'],
+        type: 'object',
+      },
+    },
+    {
+      description:
         'Submit the form associated with a field, button, or form selector. Use this after filling a search box or form input to perform the search or submit action.',
       name: BrowserApiName.submit,
       parameters: {

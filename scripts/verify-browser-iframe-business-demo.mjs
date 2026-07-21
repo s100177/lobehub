@@ -74,6 +74,13 @@ try {
   await assertIframeCount(businessIframes, 2);
   const tabs = page.getByRole('tab');
   await tabs.nth(1).waitFor({ timeout: 15_000 });
+  const firstTabActionStartedAt = Date.now();
+  await callBrowserActionOnce(page, sessionId, 'inspect', {});
+  const firstTabActionMs = Date.now() - firstTabActionStartedAt;
+  assert(
+    firstTabActionMs <= 3500,
+    `First action in a new iframe tab took ${firstTabActionMs}ms instead of using the connection grace period`,
+  );
   assert.equal(context.pages().length, 1, 'target=_blank escaped into a system browser page');
   assert.equal(
     await originalFrame.locator('#reason').inputValue(),
@@ -85,6 +92,10 @@ try {
   await originalIframe.waitFor({ state: 'visible' });
 
   await callBrowserAction(page, sessionId, 'inspect', {});
+  await callBrowserAction(page, sessionId, 'hover', {
+    selector: '[data-testid="expense-actions-trigger"]',
+  });
+  await originalFrame.getByTestId('expense-hover-menu').waitFor({ timeout: 10_000 });
   const fillRequest = callBrowserAction(page, sessionId, 'fill', {
     selector: '#department',
     text: '研发部',
@@ -147,6 +158,8 @@ try {
     aiClickHandlerCount: 1,
     aiFilledDepartment: '研发部',
     browserPageCount: context.pages().length,
+    firstNewTabActionMs: firstTabActionMs,
+    hoverMenuRevealed: true,
     iframeCount: await businessIframes.count(),
     manualInputPreserved: true,
     nonNavigationToolUpdatePreservedIframe: true,
@@ -206,6 +219,27 @@ async function callBrowserAction(page, sessionId, action, params) {
   }
 
   assert.fail(`${action} did not reach an active iframe Bridge`);
+}
+
+async function callBrowserActionOnce(page, sessionId, action, params) {
+  const response = await page.evaluate(
+    async ({ action: requestedAction, params: requestedParams, sessionId: requestedSessionId }) => {
+      const result = await fetch('/api/browser/action', {
+        body: JSON.stringify({
+          action: requestedAction,
+          params: requestedParams,
+          sessionId: requestedSessionId,
+        }),
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+      return { body: await result.json().catch(() => undefined), ok: result.ok };
+    },
+    { action, params, sessionId },
+  );
+  assert(response.ok, `First ${action} failed without retry: ${JSON.stringify(response.body)}`);
+  return response.body;
 }
 
 async function assertIframeCount(locator, expected) {

@@ -8,5 +8,6 @@ export {
   type BrowserState,
   type CancelTaskParams,
   type ExecutePlanParams,
+  type HoverParams,
   type InterruptParams,
 } from './types';

@@ -356,6 +356,19 @@ iframe 交互体验基线：
 - 首次 Bridge 建连前的新标签点击只短暂等待当前文档连接；连接超时或曾连接后断开时，
   必须退化为当前 iframe 导航，禁止吞点击或将旧点击重放给新的 Bridge client。
 - selector 仅有一个可见匹配时才能执行；多个可见匹配必须要求更精确的 selector，禁止猜测。
+- 新标签刚切换或 Bridge 正在恢复时，服务端应短暂等待当前可见 client 建连再发送首个 AI
+  动作，不能立即把 `BRIDGE_NOT_CONNECTED` 暴露给模型或要求用户重试。
+- 用户在 AI 接管期间的 pointer、click、input、wheel 或 keydown 任一操作都只触发一次暂停；
+  后续事件不得重复请求中断。完成提示应短暂显示后自动收起，不能长期遮挡网页。
+- 中键、Ctrl/Cmd/Shift 点击进入右侧标签；Alt 点击保留页面原生语义。跨 origin 普通链接
+  不得让当前 iframe 丢失 Bridge，应提示切换 Remote。
+- Bridge 轮询故障后，iframe 应重新宣告 ready 并自动恢复连接，不能要求用户刷新页面。
+- `hover(selector)` 必须作用于用户当前看到的页面并触发页面 hover 事件，用于展开菜单、
+  tooltip 和二级操作；面板与页面内高亮应明确显示 “AI 正在悬停”。iframe Bridge
+  保证事件驱动 hover；浏览器不允许脚本伪造可信指针，因此只依赖 CSS `:hover` 伪类的页面
+  必须使用 Remote 的原生 Playwright hover。
+- 右侧标签遵循标准 tablist 键盘语义，支持 ArrowLeft/ArrowRight/Home/End，并只让活动
+  标签进入 Tab 顺序。未加载标签切换后持续显示轻量进度条，直到真实 load。
 
 iframe 体验验收标准：
 

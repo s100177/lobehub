@@ -82,4 +82,24 @@ describe('/api/browser/action route', () => {
       expect.any(Object),
     );
   });
+
+  it('forwards hover to the browser service', async () => {
+    const request = new NextRequest('https://test.com/api/browser/action', {
+      body: JSON.stringify({
+        action: 'hover',
+        params: { selector: '#menu' },
+        sessionId: 'session-hover',
+      }),
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    });
+
+    const response = await POST(request, { params: Promise.resolve({}) });
+
+    expect(fetch).toHaveBeenCalledWith(
+      'http://browser-service.test/hover',
+      expect.objectContaining({ body: JSON.stringify({ selector: '#menu' }) }),
+    );
+    expect(response.status).toBe(200);
+  });
 });

@@ -12,6 +12,7 @@ const BrowserPortal = memo<BuiltinPortalProps>(
       case BrowserApiName.navigate:
       case BrowserApiName.click:
       case BrowserApiName.fill:
+      case BrowserApiName.hover:
       case BrowserApiName.cancelTask:
       case BrowserApiName.executePlan:
       case BrowserApiName.interrupt:

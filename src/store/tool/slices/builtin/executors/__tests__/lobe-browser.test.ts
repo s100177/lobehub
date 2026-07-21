@@ -90,6 +90,39 @@ describe('browser executor', () => {
     });
   });
 
+  it('proxies hover and returns the revealed page state', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({ title: 'Menu', url: 'https://example.com/menu' }),
+      ok: true,
+      status: 200,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await invokeExecutor(
+      BrowserIdentifier,
+      BrowserApiName.hover,
+      { selector: '#menu' },
+      { messageId: 'tool-message-id', topicId: 'topic-1', toolCallId: 'call-1' },
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/browser/action', {
+      body: JSON.stringify({
+        action: BrowserApiName.hover,
+        params: { selector: '#menu' },
+        sessionId: 'topic-1',
+      }),
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      signal: undefined,
+    });
+    expect(result).toMatchObject({
+      content: 'Hovered over element "#menu"',
+      state: { sessionId: 'topic-1', title: 'Menu' },
+      success: true,
+    });
+  });
+
   it('proxies inspect actions for structured page state', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       json: async () => ({

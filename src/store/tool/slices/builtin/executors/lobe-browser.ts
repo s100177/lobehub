@@ -47,6 +47,7 @@ const createBrowserRuntimeService = (
   executePlan: (args) => callBrowserAction(sessionId, BrowserApiName.executePlan, args, signal),
   fill: (args) => callBrowserAction(sessionId, BrowserApiName.fill, args, signal),
   forward: () => callBrowserAction(sessionId, BrowserApiName.forward, undefined, signal),
+  hover: (args) => callBrowserAction(sessionId, BrowserApiName.hover, args, signal),
   interrupt: (args) => callBrowserAction(sessionId, BrowserApiName.interrupt, args, signal),
   inspect: () => callBrowserAction(sessionId, BrowserApiName.inspect, undefined, signal),
   navigate: (args) => callBrowserAction(sessionId, BrowserApiName.navigate, args, signal),
@@ -81,6 +82,11 @@ class BrowserExecutor extends BaseExecutor<typeof BrowserApiName> {
     params: { selector: string; text: string; timeout?: number },
     ctx?: BuiltinToolContext,
   ): Promise<BuiltinToolResult> => this.runtime(ctx).fill(params);
+
+  hover = async (
+    params: { selector: string; timeout?: number },
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => this.runtime(ctx).hover(params);
 
   scroll = async (
     params: { x?: number; y?: number },

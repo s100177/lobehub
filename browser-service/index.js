@@ -1732,6 +1732,12 @@ async function performSafeFill(page, selector, text, timeout = 5000) {
   return { ok: true };
 }
 
+async function performSafeHover(page, selector, timeout = 5000) {
+  await page.waitForSelector(selector, { state: 'visible', timeout });
+  await page.hover(selector);
+  await page.waitForTimeout(120);
+}
+
 async function performSafeSelect(page, selector, value, timeout = 5000) {
   try {
     await page.waitForSelector(selector, { state: 'visible', timeout });
@@ -2465,6 +2471,28 @@ app.post('/fill', sessionMiddleware, async (req, res) => {
     await performSafeFill(page, selector, text, timeout);
     resetExecutionState(session);
     recordAction(session, { action: 'fill', summary: `Filled ${selector}`, target: selector });
+    res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
+  } catch (err) {
+    sendBridgeError(res, err);
+  }
+});
+
+app.post('/hover', sessionMiddleware, async (req, res) => {
+  try {
+    const { selector, timeout = 5000 } = req.body;
+    if (!selector) return res.status(400).json({ error: 'Missing selector' });
+
+    if (isIframeSession(req)) return res.json(await runIframeAction(req, 'hover', req.body));
+
+    const session = await getOrCreateSession(req.sessionId);
+    const { page } = session;
+    await performSafeHover(page, selector, timeout);
+    resetExecutionState(session);
+    recordAction(session, {
+      action: 'hover',
+      summary: `Hovered over ${selector}`,
+      target: selector,
+    });
     res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
     sendBridgeError(res, err);

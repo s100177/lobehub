@@ -8,6 +8,7 @@ export const BrowserApiName = {
   executePlan: 'executePlan',
   fill: 'fill',
   forward: 'forward',
+  hover: 'hover',
   interrupt: 'interrupt',
   inspect: 'inspect',
   navigate: 'navigate',
@@ -32,6 +33,11 @@ export interface ClickParams {
 export interface FillParams {
   selector: string;
   text: string;
+  timeout?: number;
+}
+
+export interface HoverParams {
+  selector: string;
   timeout?: number;
 }
 
@@ -79,6 +85,7 @@ export interface BrowserActionEvent {
     | 'executePlan'
     | 'fill'
     | 'forward'
+    | 'hover'
     | 'interrupt'
     | 'inspect'
     | 'navigate'

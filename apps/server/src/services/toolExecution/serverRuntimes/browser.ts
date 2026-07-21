@@ -71,6 +71,9 @@ export const browserRuntime: ServerRuntimeRegistration = {
       forward: async () => {
         return fetchBrowser('/forward', sessionId, ownerId, {}) as Promise<BrowserState>;
       },
+      hover: async (args) => {
+        return fetchBrowser('/hover', sessionId, ownerId, args) as Promise<BrowserState>;
+      },
       inspect: async () => {
         return fetchBrowser('/inspect', sessionId, ownerId, {}) as Promise<BrowserState>;
       },

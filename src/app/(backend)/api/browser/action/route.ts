@@ -26,6 +26,7 @@ const ALLOWED_ACTIONS = new Set([
   'interrupt',
   'back',
   'forward',
+  'hover',
 ]);
 
 export const POST = checkAuth(async (request: Request, { userId }) => {

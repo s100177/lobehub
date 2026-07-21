@@ -8,6 +8,7 @@ export const BrowserRenders: Record<string, BuiltinRender> = {
   [BrowserApiName.cancelTask]: BrowserCard as BuiltinRender,
   [BrowserApiName.click]: BrowserCard as BuiltinRender,
   [BrowserApiName.fill]: BrowserCard as BuiltinRender,
+  [BrowserApiName.hover]: BrowserCard as BuiltinRender,
   [BrowserApiName.submit]: BrowserCard as BuiltinRender,
   [BrowserApiName.scroll]: BrowserCard as BuiltinRender,
   [BrowserApiName.screenshot]: BrowserCard as BuiltinRender,

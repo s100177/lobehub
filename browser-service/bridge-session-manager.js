@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 const NAVIGATION_ACTIONS = new Set(['back', 'click', 'forward', 'submit']);
+const RECONNECTABLE_ACTIONS = new Set([...NAVIGATION_ACTIONS, 'inspect']);
 
 export class BridgeError extends Error {
   constructor(code, message, status = 409) {
@@ -11,8 +12,14 @@ export class BridgeError extends Error {
 }
 
 export class BridgeSessionManager {
-  constructor({ commandTimeoutMs = 15_000, idleMs = 300_000, maxSessions = 20 } = {}) {
+  constructor({
+    commandTimeoutMs = 15_000,
+    connectionWaitMs = 3000,
+    idleMs = 300_000,
+    maxSessions = 20,
+  } = {}) {
     this.commandTimeoutMs = commandTimeoutMs;
+    this.connectionWaitMs = connectionWaitMs;
     this.idleMs = idleMs;
     this.maxSessions = maxSessions;
     this.sessions = new Map();
@@ -25,6 +32,7 @@ export class BridgeSessionManager {
     const session = existing || {
       client: undefined,
       commands: [],
+      connectionWaiters: new Set(),
       epoch: 0,
       lastUsed: Date.now(),
       ownerId,
@@ -62,20 +70,28 @@ export class BridgeSessionManager {
     }
 
     if (!session.client || session.client.id !== clientId) {
-      this.rejectCommandsExceptNavigation(
+      this.rejectCommandsExceptReconnectable(
         session,
         new BridgeError('BRIDGE_CLIENT_REPLACED', 'The visible iframe Bridge client was replaced'),
       );
       session.epoch += 1;
     }
     session.client = { id: clientId, lastSeen: Date.now(), url };
-    const navigationPending = [...session.pending.entries()].find(([, pending]) =>
-      NAVIGATION_ACTIONS.has(pending.action),
+    for (const waiter of session.connectionWaiters) waiter.resolve();
+    const reconnectablePending = [...session.pending.entries()].find(([, pending]) =>
+      RECONNECTABLE_ACTIONS.has(pending.action),
     );
-    if (navigationPending) {
-      const [id, pending] = navigationPending;
+    if (reconnectablePending) {
+      const [id, pending] = reconnectablePending;
       pending.epoch = session.epoch;
-      session.commands = [{ action: 'inspect', epoch: session.epoch, id, params: {} }];
+      session.commands = [
+        {
+          action: NAVIGATION_ACTIONS.has(pending.action) ? 'inspect' : pending.action,
+          epoch: session.epoch,
+          id,
+          params: {},
+        },
+      ];
     }
     session.lastUsed = Date.now();
     this.flushPollWaiters(session);
@@ -86,7 +102,7 @@ export class BridgeSessionManager {
     const session = this.requireSession(sessionId, ownerId);
     if (session.client?.id === clientId) {
       session.client = undefined;
-      this.rejectCommandsExceptNavigation(
+      this.rejectCommandsExceptReconnectable(
         session,
         new BridgeError('BRIDGE_DISCONNECTED', 'The visible iframe Bridge disconnected'),
       );
@@ -113,12 +129,12 @@ export class BridgeSessionManager {
 
   async enqueue(sessionId, { action, ownerId, params, timeoutMs = this.commandTimeoutMs }) {
     const session = this.requireSession(sessionId, ownerId);
-    if (!session.client) {
+    if (!session.client) await this.waitForConnection(session, this.connectionWaitMs);
+    if (!session.client)
       throw new BridgeError(
         'BRIDGE_NOT_CONNECTED',
         'The visible iframe has not connected its Lobe Browser Bridge. Open the browser panel or use Remote mode.',
       );
-    }
     if (session.interrupted && action !== 'inspect') {
       throw new BridgeError(
         'BRIDGE_INSPECT_REQUIRED',
@@ -246,6 +262,7 @@ export class BridgeSessionManager {
     this.assertOwner(session, ownerId);
     const error = new BridgeError('BRIDGE_SESSION_CLOSED', 'Bridge session was closed', 410);
     this.rejectCommands(session, error);
+    for (const waiter of session.connectionWaiters) waiter.reject(error);
     for (const waiter of session.pollWaiters) waiter.resolve(undefined);
     this.sessions.delete(sessionId);
   }
@@ -295,14 +312,42 @@ export class BridgeSessionManager {
     session.pending.clear();
   }
 
-  rejectCommandsExceptNavigation(session, error) {
+  rejectCommandsExceptReconnectable(session, error) {
     session.commands = [];
     for (const [id, pending] of session.pending) {
-      if (NAVIGATION_ACTIONS.has(pending.action)) continue;
+      if (RECONNECTABLE_ACTIONS.has(pending.action)) continue;
       clearTimeout(pending.timer);
       pending.reject(error);
       session.pending.delete(id);
     }
+  }
+
+  waitForConnection(session, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      const waiter = { reject, resolve, timer: undefined };
+      const cleanup = () => {
+        clearTimeout(waiter.timer);
+        session.connectionWaiters.delete(waiter);
+      };
+      waiter.resolve = () => {
+        cleanup();
+        resolve();
+      };
+      waiter.reject = (error) => {
+        cleanup();
+        reject(error);
+      };
+      waiter.timer = setTimeout(() => {
+        cleanup();
+        reject(
+          new BridgeError(
+            'BRIDGE_NOT_CONNECTED',
+            'The visible iframe has not connected its Lobe Browser Bridge. Open the browser panel or use Remote mode.',
+          ),
+        );
+      }, timeoutMs);
+      session.connectionWaiters.add(waiter);
+    });
   }
 
   evictOverflow() {

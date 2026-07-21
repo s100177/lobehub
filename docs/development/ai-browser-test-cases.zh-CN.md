@@ -281,6 +281,19 @@ iframe 交互还必须满足以下保活和响应约束：
   操作第一个元素。
 - `history.pushState`、`history.replaceState`、`popstate` 和 `hashchange` 应同步右侧标签的
   URL / 标题，不使用固定延迟伪造导航完成状态。
+- 新标签出现后立即发起首个 `inspect/click/fill`，不得由测试或模型重试；服务端应在 3 秒
+  Bridge 连接窗口内完成动作。
+- AI 接管期间连续发生 `pointerdown + click + input`，或重复 wheel/keydown，只能上报一次
+  人工接管并暂停；非接管状态不得上报。
+- 中键及 Ctrl/Cmd/Shift 点击不得打开系统浏览器；Alt 点击不得被改写。跨 origin 普通链接
+  应保留当前 iframe 并提示 Remote。
+- 模拟长轮询故障后，晚到 ready 必须将 `Bridge unavailable` 恢复为 connected；成功 / 失败
+  动作提示分别在短暂可读时间后清理，不得形成点击遮挡或常驻视觉噪声。
+- demo 页面提供事件驱动、只有 hover 后才出现的菜单；iframe 与 remote 的
+  `hover(selector)` 都必须让菜单真实可见，随后 inspect 能发现新增操作。另用纯 CSS
+  `:hover` 用例确认 Remote 可用；iframe 对此不作能力承诺。
+- 多标签支持 ArrowLeft/ArrowRight/Home/End 切换和 roving tabIndex；首次加载的标签在
+  load 前保持轻量加载反馈，已加载标签切回时不闪烁。
 
 成功后证据写入 `.omx/artifacts/browser-iframe-experience/`：
 
