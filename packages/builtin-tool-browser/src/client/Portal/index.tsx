@@ -20,15 +20,15 @@ const BrowserPortal = memo<BuiltinPortalProps>(
       case BrowserApiName.screenshot:
       case BrowserApiName.back:
       case BrowserApiName.forward: {
-        return <BrowserPanel sessionId={sessionId} state={state} />;
+        return <BrowserPanel apiName={apiName} sessionId={sessionId} state={state} />;
       }
 
       case BrowserApiName.evaluate: {
-        return <BrowserPanel showResult sessionId={sessionId} state={state} />;
+        return <BrowserPanel showResult apiName={apiName} sessionId={sessionId} state={state} />;
       }
     }
 
-    return <BrowserPanel sessionId={sessionId} state={state} />;
+    return <BrowserPanel apiName={apiName} sessionId={sessionId} state={state} />;
   },
 );
 

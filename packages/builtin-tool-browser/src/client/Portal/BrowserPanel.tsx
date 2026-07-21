@@ -6,6 +6,7 @@ import type { CSSProperties, SyntheticEvent } from 'react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 import {
+  BROWSER_BRIDGE_DOCUMENT_ATTRIBUTE,
   BROWSER_BRIDGE_SOURCE,
   BROWSER_BRIDGE_VERSION,
   BROWSER_HOST_SOURCE,
@@ -25,6 +26,7 @@ export const installIframeSamePanelNavigationGuard = (
     const iframeWindow = iframe.contentWindow;
     const iframeDocument = iframe.contentDocument || iframeWindow?.document;
     if (!iframeWindow || !iframeDocument) return false;
+    if (iframeDocument.documentElement.hasAttribute(BROWSER_BRIDGE_DOCUMENT_ATTRIBUTE)) return true;
     const existingGuard = guardedIframeDocuments.get(iframeDocument);
     if (existingGuard) {
       existingGuard.openPanelTab = openPanelTab;
@@ -44,6 +46,7 @@ export const installIframeSamePanelNavigationGuard = (
     iframeDocument.addEventListener(
       'click',
       (event) => {
+        if (iframeDocument.documentElement.hasAttribute(BROWSER_BRIDGE_DOCUMENT_ATTRIBUTE)) return;
         if (event.defaultPrevented || event.button !== 0) return;
 
         const target = event.target;
@@ -402,6 +405,7 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
 }));
 
 interface BrowserPanelProps {
+  apiName?: string;
   sessionId: string;
   showResult?: boolean;
   state: BrowserState;
@@ -447,7 +451,7 @@ const hasTargetBox = (
   (target?.width ?? 0) > 0 &&
   (target?.height ?? 0) > 0;
 
-const BRIDGE_TIMEOUT_MS = 1500;
+const BRIDGE_TIMEOUT_MS = 5000;
 const MAX_IFRAME_TABS = 8;
 
 const createBridgeClientId = () =>
@@ -476,7 +480,7 @@ const getErrorMessage = async (res: Response) => {
   return data?.error || `Bridge request failed with HTTP ${res.status}`;
 };
 
-const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) => {
+const BrowserPanel = memo<BrowserPanelProps>(({ apiName, state, showResult, sessionId }) => {
   const [localState, setLocalState] = useState<BrowserState | undefined>(state);
   const [bridgeStatus, setBridgeStatus] = useState<BrowserState['bridgeStatus']>(
     state.bridgeStatus,
@@ -520,27 +524,39 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     setRemoteCandidateUrl(undefined);
     if (state.mode === 'iframe') {
       const nextUrl = state.iframeUrl || state.url;
-      setTabs((previous) =>
-        previous.map((tab) =>
-          tab.id === activeTabIdRef.current && nextUrl
-            ? { ...tab, srcUrl: nextUrl, title: state.title || tab.title, url: nextUrl }
-            : tab,
-        ),
-      );
+      if (apiName === 'navigate') {
+        setTabs((previous) =>
+          previous.map((tab) =>
+            tab.id === activeTabIdRef.current && nextUrl
+              ? {
+                  ...tab,
+                  srcUrl: nextUrl,
+                  title: state.title || tab.title,
+                  url: nextUrl,
+                }
+              : tab,
+          ),
+        );
+      }
     }
-  }, [state]);
+  }, [apiName, state]);
 
   const currentState = localState;
 
   const taskState = currentState?.taskState;
   const isControlling = taskState ? controllingStates.has(taskState) : false;
+  const isControllingRef = useRef(isControlling);
   const { iframeUrl, mode = 'remote', result, title, url } = currentState || {};
   const isIframeMode = mode === 'iframe';
   const activeTab = tabs.find((tab) => tab.id === activeTabId) || tabs[0];
   const displayTitle = isIframeMode ? activeTab?.title || title : title;
   const displayUrl = isIframeMode ? activeTab?.url || iframeUrl || url : iframeUrl || url;
   const expectedBridgeOrigin = isIframeMode ? getOrigin(displayUrl) : undefined;
-  const trustedIframeOrigin = isIframeMode ? getOrigin(iframeUrl || url) : undefined;
+  const trustedIframeOrigin = isIframeMode ? getOrigin(activeTab?.srcUrl) : undefined;
+
+  useEffect(() => {
+    isControllingRef.current = isControlling;
+  }, [isControlling]);
 
   const openPanelTab = useCallback(
     (nextUrl: string, nextTitle?: string) => {
@@ -738,6 +754,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
         connection.iframeWindow?.postMessage(
           {
             clientId: connection.clientId,
+            controlling: isControllingRef.current,
             sessionId,
             source: BROWSER_HOST_SOURCE,
             type: 'connected',
@@ -761,6 +778,22 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     },
     [sessionId, startBridgePolling],
   );
+
+  useEffect(() => {
+    const connection = bridgeConnectionRef.current;
+    if (!connection?.connected) return;
+
+    connection.iframeWindow?.postMessage(
+      {
+        active: isControlling,
+        clientId: connection.clientId,
+        source: BROWSER_HOST_SOURCE,
+        type: 'control-state',
+        version: BROWSER_BRIDGE_VERSION,
+      },
+      connection.expectedOrigin,
+    );
+  }, [isControlling]);
 
   const prepareBridgeConnection = useCallback(
     (iframe: HTMLIFrameElement, expectedOrigin: string, force = false) => {
@@ -928,19 +961,33 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
         if (!connection?.connected || event.data.clientId !== connection.clientId) return;
         const phase = event.data.phase;
         if (phase !== 'start' && phase !== 'success' && phase !== 'error') return;
-        if (phase !== 'success') {
-          setActiveBridgeAction({
-            action: event.data.action,
-            commandId: event.data.commandId,
-            phase,
-            target: event.data.target,
-          });
-        }
+        setActiveBridgeAction((previous) => ({
+          action: event.data.action,
+          commandId: event.data.commandId,
+          phase,
+          target:
+            event.data.target ||
+            (previous?.commandId === event.data.commandId ? previous?.target : undefined),
+        }));
       }
       if (event.data?.type === 'navigation-state' && typeof event.data?.url === 'string') {
         const connection = bridgeConnectionRef.current;
         if (!connection?.connected || event.data.clientId !== connection.clientId) return;
         setIsPageLoading(event.data.phase === 'start');
+        setTabs((previous) =>
+          previous.map((tab) =>
+            tab.id === activeTabIdRef.current
+              ? {
+                  ...tab,
+                  title:
+                    typeof event.data.title === 'string' && event.data.title
+                      ? event.data.title
+                      : tab.title,
+                  url: event.data.url,
+                }
+              : tab,
+          ),
+        );
       }
       if (event.data?.type === 'open-tab' && typeof event.data?.url === 'string') {
         const connection = bridgeConnectionRef.current;

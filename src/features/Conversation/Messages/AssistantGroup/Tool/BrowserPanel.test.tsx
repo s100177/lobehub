@@ -81,6 +81,116 @@ describe('BrowserPanel clean browser rendering', () => {
     );
   });
 
+  it('keeps the live iframe document when a non-navigation tool result updates the shell', async () => {
+    const initialState: BrowserState = {
+      embeddable: true,
+      iframeUrl: 'http://localhost:4311/form.html',
+      mode: 'iframe',
+      title: 'Expense form',
+      url: 'http://localhost:4311/form.html',
+    };
+    const { rerender } = render(
+      <BrowserPanel apiName="navigate" sessionId="session-preserve" state={initialState} />,
+    );
+    const iframe = screen.getByTitle('Expense form');
+    iframe.setAttribute('data-live-form-value', 'draft-42');
+
+    rerender(
+      <BrowserPanel
+        apiName="click"
+        sessionId="session-preserve"
+        state={{
+          ...initialState,
+          title: 'Expense form updated',
+          url: 'https://stale.example/result',
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTitle('Expense form')).toBe(iframe));
+    expect(iframe).toHaveAttribute('src', 'http://localhost:4311/form.html');
+    expect(iframe).toHaveAttribute('data-live-form-value', 'draft-42');
+    expect(screen.queryByText('https://stale.example/result')).not.toBeInTheDocument();
+  });
+
+  it('keeps the same bridge connection when only AI control state changes', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (input === '/api/browser/bridge' && body?.action === 'connect') {
+        return { json: async () => ({ connected: true }), ok: true, status: 200 };
+      }
+      if (String(input).startsWith('/api/browser/bridge?')) {
+        return new Promise((_, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('The operation was aborted.', 'AbortError')),
+            { once: true },
+          );
+        });
+      }
+      if (input === '/api/browser/bridge' && body?.action === 'disconnect') {
+        return { json: async () => ({ ok: true }), ok: true, status: 200 };
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const state: BrowserState = {
+      embeddable: true,
+      iframeUrl: 'https://app.example/form',
+      mode: 'iframe',
+      title: 'Form',
+      url: 'https://app.example/form',
+    };
+    const { rerender } = render(
+      <BrowserPanel apiName="navigate" sessionId="session-control" state={state} />,
+    );
+    const iframe = screen.getByTitle('Form') as HTMLIFrameElement;
+    const iframeWindow = { postMessage: vi.fn() } as unknown as Window;
+    Object.defineProperty(iframe, 'contentWindow', { configurable: true, value: iframeWindow });
+    fireEvent.load(iframe);
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          source: BROWSER_BRIDGE_SOURCE,
+          type: 'ready',
+          url: state.url,
+          version: BROWSER_BRIDGE_VERSION,
+        },
+        origin: 'https://app.example',
+        source: iframeWindow,
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(
+          ([url, init]) =>
+            url === '/api/browser/bridge' && JSON.parse(String(init?.body)).action === 'connect',
+        ),
+      ).toHaveLength(1),
+    );
+
+    rerender(
+      <BrowserPanel
+        apiName="click"
+        sessionId="session-control"
+        state={{ ...state, taskState: 'acting' }}
+      />,
+    );
+
+    await waitFor(() =>
+      expect((iframeWindow as any).postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ active: true, type: 'control-state' }),
+        'https://app.example',
+      ),
+    );
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url, init]) =>
+          url === '/api/browser/bridge' && JSON.parse(String(init?.body)).action === 'connect',
+      ),
+    ).toHaveLength(1);
+  });
+
   it('keeps iframe pages sandboxed from opening system browser popups', () => {
     const state: BrowserState = {
       embeddable: true,
@@ -621,7 +731,7 @@ describe('BrowserPanel clean browser rendering', () => {
     });
 
     await waitFor(() => expect(resolveResult).toBeDefined());
-    expect(target).toHaveTextContent('AI 正在输入：报销部门');
+    expect(target).toHaveTextContent('AI 已完成：报销部门');
     await act(async () => resolveResult?.());
     expect(await screen.findByText('AI 已完成：报销部门')).toBeInTheDocument();
   });
@@ -1138,7 +1248,7 @@ describe('BrowserPanel clean browser rendering', () => {
 
     fireEvent.load(iframe);
     await act(async () => {
-      vi.advanceTimersByTime(1600);
+      vi.advanceTimersByTime(5100);
     });
     expect(screen.getByText('Bridge unavailable.')).toBeInTheDocument();
 

@@ -10,6 +10,7 @@ import type {
 export const BROWSER_BRIDGE_SOURCE = 'lobe-browser-bridge';
 export const BROWSER_HOST_SOURCE = 'lobe-browser-host';
 export const BROWSER_BRIDGE_VERSION = 1;
+export const BROWSER_BRIDGE_DOCUMENT_ATTRIBUTE = 'data-lobe-browser-bridge';
 
 export type BrowserBridgeAction =
   'back' | 'click' | 'fill' | 'forward' | 'inspect' | 'scroll' | 'submit';
@@ -58,6 +59,7 @@ export type BrowserBridgeMessage =
       clientId: string;
       phase: 'complete' | 'start';
       source: typeof BROWSER_BRIDGE_SOURCE;
+      title?: string;
       type: 'navigation-state';
       url: string;
       version: typeof BROWSER_BRIDGE_VERSION;
@@ -106,11 +108,27 @@ const escapeSelector = (value: string) =>
     ? CSS.escape(value)
     : value.replaceAll(/[^\w-]/g, (character) => `\\${character}`);
 
+let bridgeElementSequence = 0;
+
 const selectorFor = (element: Element): string => {
-  if (element.id) return `#${escapeSelector(element.id)}`;
+  if (element.id) {
+    const selector = `#${escapeSelector(element.id)}`;
+    if (document.querySelectorAll(selector).length === 1) return selector;
+  }
   const name = element.getAttribute('name');
-  if (name) return `${element.tagName.toLowerCase()}[name="${escapeSelector(name)}"]`;
-  return element.tagName.toLowerCase();
+  if (name) {
+    const selector = `${element.tagName.toLowerCase()}[name="${escapeSelector(name)}"]`;
+    if (document.querySelectorAll(selector).length === 1) return selector;
+  }
+
+  let bridgeId = element.getAttribute('data-lobe-browser-id');
+  if (!bridgeId) {
+    bridgeElementSequence += 1;
+    bridgeId = `element-${bridgeElementSequence}`;
+    element.setAttribute('data-lobe-browser-id', bridgeId);
+  }
+
+  return `[data-lobe-browser-id="${escapeSelector(bridgeId)}"]`;
 };
 
 const isVisible = (element: Element) => {
@@ -135,10 +153,17 @@ const detectRisk = (element: Element): BrowserRiskType | undefined => {
 
 const requireElement = (selector: unknown): Element => {
   if (typeof selector !== 'string' || !selector) throw new Error('A CSS selector is required');
-  const element = document.querySelector(selector);
-  if (!element) throw new Error(`Element "${selector}" was not found in the visible iframe`);
-  if (!isVisible(element)) throw new Error(`Element "${selector}" is not visible in the iframe`);
-  return element;
+  const elements = Array.from(document.querySelectorAll(selector));
+  if (elements.length === 0)
+    throw new Error(`Element "${selector}" was not found in the visible iframe`);
+  const visibleElements = elements.filter(isVisible);
+  if (visibleElements.length === 0)
+    throw new Error(`Element "${selector}" is not visible in the iframe`);
+  if (visibleElements.length > 1)
+    throw new Error(
+      `Element selector "${selector}" is ambiguous: ${visibleElements.length} visible matches`,
+    );
+  return visibleElements[0];
 };
 
 const describeElement = (element: Element): BrowserBridgeTarget => {
@@ -379,10 +404,19 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
     );
 
   let commandInProgress = false;
+  let automationActive = false;
   let activeCommandId: string | undefined;
+  let hasConnected = false;
   let hostClientId: string | undefined;
   let readyTimer: number | undefined;
+  const pendingOpenTabs: Array<{ timeoutId: number; title?: string; url: string }> = [];
   const originalWindowOpen = window.open;
+  const originalPushState = history.pushState.bind(history);
+  const originalReplaceState = history.replaceState.bind(history);
+  document.documentElement.setAttribute(
+    BROWSER_BRIDGE_DOCUMENT_ATTRIBUTE,
+    String(BROWSER_BRIDGE_VERSION),
+  );
   const sendReady = () =>
     send({
       capabilities: ['click', 'fill', 'submit', 'scroll', 'inspect', 'back', 'forward'],
@@ -395,6 +429,45 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
     sendReady();
     readyTimer = window.setInterval(sendReady, 500);
   };
+  const sendNavigationState = () => {
+    if (!hostClientId) return;
+    send({
+      clientId: hostClientId,
+      phase: 'complete',
+      title: document.title,
+      type: 'navigation-state',
+      url: window.location.href,
+    });
+  };
+  const sendOrQueueOpenTab = (url: string, title?: string) => {
+    if (!hostClientId) {
+      if (hasConnected) {
+        window.location.assign(url);
+        return;
+      }
+      const pending = {
+        timeoutId: window.setTimeout(() => {
+          const index = pendingOpenTabs.indexOf(pending);
+          if (index >= 0) pendingOpenTabs.splice(index, 1);
+          window.location.assign(url);
+        }, 1000),
+        title,
+        url,
+      };
+      pendingOpenTabs.push(pending);
+      return;
+    }
+    send({ clientId: hostClientId, commandId: activeCommandId, title, type: 'open-tab', url });
+  };
+  const flushPendingOpenTabs = () => {
+    while (hostClientId && pendingOpenTabs.length > 0) {
+      const pending = pendingOpenTabs.shift();
+      if (pending) {
+        window.clearTimeout(pending.timeoutId);
+        sendOrQueueOpenTab(pending.url, pending.title);
+      }
+    }
+  };
   const onMessage = async (event: MessageEvent) => {
     if (event.source !== window.parent || event.origin !== parentOrigin) return;
     if (
@@ -403,14 +476,23 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
       event.data.clientId === hostClientId
     ) {
       hostClientId = undefined;
+      automationActive = false;
       startReadyAnnouncements();
+      return;
+    }
+    if (event.data?.source === BROWSER_HOST_SOURCE && event.data?.type === 'control-state') {
+      if (event.data.clientId !== hostClientId) return;
+      automationActive = event.data.active === true;
       return;
     }
     if (event.data?.source === BROWSER_HOST_SOURCE && event.data?.type === 'connected') {
       if (typeof event.data.clientId !== 'string' || !event.data.clientId) return;
+      hasConnected = true;
       hostClientId = event.data.clientId;
+      automationActive = event.data.controlling === true;
       if (readyTimer) window.clearInterval(readyTimer);
       readyTimer = undefined;
+      flushPendingOpenTabs();
       return;
     }
     if (
@@ -488,7 +570,7 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
   };
 
   const onUserClick = () => {
-    if (!commandInProgress && hostClientId)
+    if (automationActive && !commandInProgress && hostClientId)
       send({ clientId: hostClientId, inputType: 'click', type: 'user-intervention' });
   };
   const keepLinkInsideFrame = (event: MouseEvent) => {
@@ -506,37 +588,10 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
     if (!opensNewContext) return;
 
     event.preventDefault();
-    if (hostClientId) {
-      send({
-        clientId: hostClientId,
-        commandId: activeCommandId,
-        title: link.textContent?.trim() || undefined,
-        type: 'open-tab',
-        url: link.href,
-      });
-    } else {
-      window.location.assign(link.href);
-    }
-  };
-  const reportNavigation = (event: MouseEvent) => {
-    if (event.defaultPrevented || event.button !== 0 || !hostClientId) return;
-    const target = event.target;
-    const link = target instanceof Element ? target.closest('a[href]') : null;
-    if (!(link instanceof HTMLAnchorElement) || !link.href) return;
-
-    send({ clientId: hostClientId, phase: 'start', type: 'navigation-state', url: link.href });
-    window.setTimeout(() => {
-      if (hostClientId)
-        send({
-          clientId: hostClientId,
-          phase: 'complete',
-          type: 'navigation-state',
-          url: window.location.href,
-        });
-    }, 250);
+    sendOrQueueOpenTab(link.href, link.textContent?.trim() || undefined);
   };
   const onUserInput = () => {
-    if (!commandInProgress && hostClientId)
+    if (automationActive && !commandInProgress && hostClientId)
       send({ clientId: hostClientId, inputType: 'input', type: 'user-intervention' });
   };
 
@@ -544,31 +599,41 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
   window.open = ((url?: string | URL, target?: string) => {
     if (!url) return window;
     const resolvedUrl = new URL(String(url), window.location.href).toString();
-    if (target?.toLowerCase() === '_self' || !hostClientId) {
+    if (target?.toLowerCase() === '_self') {
       window.location.assign(resolvedUrl);
     } else {
-      send({
-        clientId: hostClientId,
-        commandId: activeCommandId,
-        type: 'open-tab',
-        url: resolvedUrl,
-      });
+      sendOrQueueOpenTab(resolvedUrl);
     }
     return window;
   }) as typeof window.open;
+  history.pushState = ((...args: Parameters<History['pushState']>) => {
+    originalPushState(...args);
+    sendNavigationState();
+  }) as History['pushState'];
+  history.replaceState = ((...args: Parameters<History['replaceState']>) => {
+    originalReplaceState(...args);
+    sendNavigationState();
+  }) as History['replaceState'];
   document.addEventListener('click', keepLinkInsideFrame, true);
   document.addEventListener('click', onUserClick, true);
-  document.addEventListener('click', reportNavigation);
   document.addEventListener('input', onUserInput, true);
+  window.addEventListener('hashchange', sendNavigationState);
+  window.addEventListener('popstate', sendNavigationState);
   startReadyAnnouncements();
 
   return () => {
     window.removeEventListener('message', onMessage);
     window.open = originalWindowOpen;
+    history.pushState = originalPushState;
+    history.replaceState = originalReplaceState;
     if (readyTimer) window.clearInterval(readyTimer);
+    for (const pending of pendingOpenTabs) window.clearTimeout(pending.timeoutId);
+    pendingOpenTabs.length = 0;
     document.removeEventListener('click', keepLinkInsideFrame, true);
     document.removeEventListener('click', onUserClick, true);
-    document.removeEventListener('click', reportNavigation);
     document.removeEventListener('input', onUserInput, true);
+    window.removeEventListener('hashchange', sendNavigationState);
+    window.removeEventListener('popstate', sendNavigationState);
+    document.documentElement.removeAttribute(BROWSER_BRIDGE_DOCUMENT_ATTRIBUTE);
   };
 };

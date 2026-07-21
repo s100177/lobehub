@@ -2,13 +2,15 @@
 
 import { BrowserIdentifier, type BrowserState } from '@lobechat/builtin-tool-browser';
 import { BrowserPortal } from '@lobechat/builtin-tool-browser/client';
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 
 const BrowserE2EPanel = () => {
   const reactId = useId();
   const sessionId = `docker-ui-e2e-${reactId.replaceAll(':', '')}`;
+  const [apiName, setApiName] = useState('navigate');
   const [state, setState] = useState<BrowserState>();
   const [error, setError] = useState<string>();
+  const [toolUpdateComplete, setToolUpdateComplete] = useState(false);
 
   const fixtureUrl = useMemo(() => {
     if (typeof window === 'undefined') return '';
@@ -19,10 +21,8 @@ const BrowserE2EPanel = () => {
     return new URL(path, window.location.origin).toString();
   }, []);
 
-  useEffect(() => {
-    if (!fixtureUrl) return;
-
-    const callBrowserAction = async (action: string, params: Record<string, unknown> = {}) => {
+  const callBrowserAction = useCallback(
+    async (action: string, params: Record<string, unknown> = {}) => {
       const response = await fetch('/api/browser/action', {
         body: JSON.stringify({
           action,
@@ -40,7 +40,12 @@ const BrowserE2EPanel = () => {
       }
 
       return data;
-    };
+    },
+    [sessionId],
+  );
+
+  useEffect(() => {
+    if (!fixtureUrl) return;
 
     const navigate = async () => {
       const params = new URLSearchParams(window.location.search);
@@ -58,7 +63,7 @@ const BrowserE2EPanel = () => {
     navigate().catch((err) => {
       setError(err instanceof Error ? err.message : String(err));
     });
-  }, [fixtureUrl, sessionId]);
+  }, [callBrowserAction, fixtureUrl, sessionId]);
 
   return (
     <main
@@ -78,6 +83,28 @@ const BrowserE2EPanel = () => {
         <p style={{ margin: '6px 0 0' }}>
           This test page renders the real BrowserPanel against the deployed browser service.
         </p>
+        {state?.mode === 'iframe' ? (
+          <button
+            data-testid="simulate-browser-tool-update"
+            type="button"
+            onClick={async () => {
+              setToolUpdateComplete(false);
+              try {
+                const inspected = await callBrowserAction('inspect');
+                setApiName('inspect');
+                setState({ ...inspected, sessionId });
+                setToolUpdateComplete(true);
+              } catch (err) {
+                setError(err instanceof Error ? err.message : String(err));
+              }
+            }}
+          >
+            Run non-navigation tool update
+          </button>
+        ) : null}
+        {toolUpdateComplete ? (
+          <span data-testid="browser-tool-update-complete">Complete</span>
+        ) : null}
       </header>
       <section
         style={{
@@ -92,7 +119,7 @@ const BrowserE2EPanel = () => {
           <pre style={{ color: '#b91c1c', padding: 16 }}>{error}</pre>
         ) : state ? (
           <BrowserPortal
-            apiName="navigate"
+            apiName={apiName}
             arguments={{}}
             identifier={BrowserIdentifier}
             messageId={sessionId}

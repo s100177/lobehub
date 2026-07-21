@@ -268,6 +268,20 @@ BROWSER_IFRAME_DEMO_URL='http://host:3211/browser-e2e?mode=iframe&path=/browser-
 - 普通链接在当前 iframe 内导航，不增加右侧标签或系统页面。
 - 页面无未处理异常。
 
+iframe 交互还必须满足以下保活和响应约束：
+
+- `click`、`fill`、`inspect` 等非导航工具结果只能更新浏览器壳状态，不得重写当前
+  iframe 的 `src`；页面表单值、滚动位置和 React 状态必须保留。
+- AI 接管状态变化只发送轻量 `control-state`，不得断开并重建 Bridge 连接。
+- Bridge 首次连接过程中触发 `_blank` 或 `window.open`，请求只短暂等待当前文档的首次
+  连接；超时或已断开时退化为当前 iframe 导航，不得吞掉点击，也不得重放给后续 client。
+- 普通人工浏览不产生 “用户打断”；只有任务处于 AI 接管态时，人工输入才暂停自动执行。
+- 同一个 selector 同时命中隐藏和可见元素时，AI 必须操作可见元素。
+- 同一个 selector 命中多个可见元素时，Bridge 必须返回选择器不唯一错误，不得猜测并
+  操作第一个元素。
+- `history.pushState`、`history.replaceState`、`popstate` 和 `hashchange` 应同步右侧标签的
+  URL / 标题，不使用固定延迟伪造导航完成状态。
+
 成功后证据写入 `.omx/artifacts/browser-iframe-experience/`：
 
 - `iframe-experience.json`：断言结果、iframe 数量、浏览器 page 数量和最终 URL。

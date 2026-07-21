@@ -44,7 +44,12 @@ describe('installBrowserBridge', () => {
     const cleanup = installBrowserBridge({ allowedParentOrigin: 'https://chat.example' });
     window.dispatchEvent(
       new MessageEvent('message', {
-        data: { clientId: 'client-1', source: BROWSER_HOST_SOURCE, type: 'connected' },
+        data: {
+          clientId: 'client-1',
+          controlling: true,
+          source: BROWSER_HOST_SOURCE,
+          type: 'connected',
+        },
         origin: 'https://chat.example',
         source: window.parent,
       }),
@@ -236,7 +241,12 @@ describe('installBrowserBridge', () => {
     const cleanup = installBrowserBridge({ allowedParentOrigin: 'https://chat.example' });
     window.dispatchEvent(
       new MessageEvent('message', {
-        data: { clientId: 'client-1', source: BROWSER_HOST_SOURCE, type: 'connected' },
+        data: {
+          clientId: 'client-1',
+          controlling: true,
+          source: BROWSER_HOST_SOURCE,
+          type: 'connected',
+        },
         origin: 'https://chat.example',
         source: window.parent,
       }),
@@ -319,6 +329,275 @@ describe('installBrowserBridge', () => {
       }),
       'https://chat.example',
     );
+    cleanup();
+  });
+
+  it('queues new-window navigation until the host bridge connects', () => {
+    document.body.innerHTML = '<a id="details" href="#details" target="_blank">Details</a>';
+    const postMessage = vi.fn();
+    Object.defineProperty(window, 'parent', { configurable: true, value: { postMessage } });
+    const cleanup = installBrowserBridge({ allowedParentOrigin: 'https://chat.example' });
+    postMessage.mockClear();
+
+    document
+      .getElementById('details')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0, cancelable: true }));
+    expect(window.location.hash).not.toBe('#details');
+    expect(postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'open-tab' }),
+      expect.anything(),
+    );
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { clientId: 'client-1', source: BROWSER_HOST_SOURCE, type: 'connected' },
+        origin: 'https://chat.example',
+        source: window.parent,
+      }),
+    );
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: 'client-1',
+        title: 'Details',
+        type: 'open-tab',
+        url: expect.stringMatching(/#details$/),
+      }),
+      'https://chat.example',
+    );
+    cleanup();
+  });
+
+  it('falls back to same-frame navigation when the host bridge does not connect', async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = '<a id="details" href="#details" target="_blank">Details</a>';
+    const postMessage = vi.fn();
+    Object.defineProperty(window, 'parent', { configurable: true, value: { postMessage } });
+    const cleanup = installBrowserBridge({ allowedParentOrigin: 'https://chat.example' });
+
+    document
+      .getElementById('details')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0, cancelable: true }));
+    expect(window.location.hash).not.toBe('#details');
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(window.location.hash).toBe('#details');
+    expect(postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'open-tab' }),
+      expect.anything(),
+    );
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  it('does not replay a click from a disconnected bridge into a later client lifetime', () => {
+    document.body.innerHTML =
+      '<a id="details" href="#after-disconnect" target="_blank">Details</a>';
+    const postMessage = vi.fn();
+    Object.defineProperty(window, 'parent', { configurable: true, value: { postMessage } });
+    const cleanup = installBrowserBridge({ allowedParentOrigin: 'https://chat.example' });
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { clientId: 'client-1', source: BROWSER_HOST_SOURCE, type: 'connected' },
+        origin: 'https://chat.example',
+        source: window.parent,
+      }),
+    );
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { clientId: 'client-1', source: BROWSER_HOST_SOURCE, type: 'disconnected' },
+        origin: 'https://chat.example',
+        source: window.parent,
+      }),
+    );
+    postMessage.mockClear();
+
+    document
+      .getElementById('details')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0, cancelable: true }));
+    expect(window.location.hash).toBe('#after-disconnect');
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { clientId: 'client-2', source: BROWSER_HOST_SOURCE, type: 'connected' },
+        origin: 'https://chat.example',
+        source: window.parent,
+      }),
+    );
+    expect(postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ clientId: 'client-2', type: 'open-tab' }),
+      expect.anything(),
+    );
+    cleanup();
+  });
+
+  it('does not report normal browsing as intervention outside AI control', () => {
+    document.body.innerHTML = '<input id="name" /><button id="go">Continue</button>';
+    const postMessage = vi.fn();
+    Object.defineProperty(window, 'parent', { configurable: true, value: { postMessage } });
+    const cleanup = installBrowserBridge({ allowedParentOrigin: 'https://chat.example' });
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { clientId: 'client-1', source: BROWSER_HOST_SOURCE, type: 'connected' },
+        origin: 'https://chat.example',
+        source: window.parent,
+      }),
+    );
+    postMessage.mockClear();
+
+    document.getElementById('go')!.click();
+    document.getElementById('name')!.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'user-intervention' }),
+      expect.anything(),
+    );
+    cleanup();
+  });
+
+  it('reports same-document navigation without a synthetic loading delay', () => {
+    const postMessage = vi.fn();
+    Object.defineProperty(window, 'parent', { configurable: true, value: { postMessage } });
+    const cleanup = installBrowserBridge({ allowedParentOrigin: 'https://chat.example' });
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { clientId: 'client-1', source: BROWSER_HOST_SOURCE, type: 'connected' },
+        origin: 'https://chat.example',
+        source: window.parent,
+      }),
+    );
+    postMessage.mockClear();
+
+    document.title = 'Policy';
+    history.pushState({}, '', '?view=policy');
+
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: 'client-1',
+        phase: 'complete',
+        title: 'Policy',
+        type: 'navigation-state',
+        url: expect.stringContaining('?view=policy'),
+      }),
+      'https://chat.example',
+    );
+    expect(postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ phase: 'start', type: 'navigation-state' }),
+      expect.anything(),
+    );
+    cleanup();
+  });
+
+  it('uses the visible element when a selector also matches a hidden duplicate', async () => {
+    document.body.innerHTML =
+      '<input class="search" style="display:none" /><input class="search" />';
+    const inputs = document.querySelectorAll('.search');
+    vi.spyOn(inputs[1], 'getBoundingClientRect').mockReturnValue({
+      bottom: 20,
+      height: 20,
+      left: 0,
+      right: 100,
+      top: 0,
+      width: 100,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    const postMessage = vi.fn();
+    Object.defineProperty(window, 'parent', { configurable: true, value: { postMessage } });
+    const cleanup = installBrowserBridge({ allowedParentOrigin: 'https://chat.example' });
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { clientId: 'client-1', source: BROWSER_HOST_SOURCE, type: 'connected' },
+        origin: 'https://chat.example',
+        source: window.parent,
+      }),
+    );
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          clientId: 'client-1',
+          command: {
+            action: 'fill',
+            epoch: 1,
+            id: 'fill-visible',
+            params: { selector: '.search', text: '复星医药' },
+          },
+          sessionId: 'topic-1',
+          source: BROWSER_HOST_SOURCE,
+          type: 'command',
+        },
+        origin: 'https://chat.example',
+        source: window.parent,
+      }),
+    );
+
+    await vi.waitFor(() => expect((inputs[1] as HTMLInputElement).value).toBe('复星医药'));
+    expect((inputs[0] as HTMLInputElement).value).toBe('');
+    cleanup();
+  });
+
+  it('rejects an ambiguous selector instead of acting on the first visible match', async () => {
+    document.body.innerHTML =
+      '<button class="save">Save A</button><button class="save">Save B</button>';
+    const buttons = document.querySelectorAll('.save');
+    for (const button of buttons) {
+      vi.spyOn(button, 'getBoundingClientRect').mockReturnValue({
+        bottom: 20,
+        height: 20,
+        left: 0,
+        right: 100,
+        top: 0,
+        width: 100,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      });
+    }
+    const clicked = vi.fn();
+    for (const button of buttons) button.addEventListener('click', clicked);
+    const postMessage = vi.fn();
+    Object.defineProperty(window, 'parent', { configurable: true, value: { postMessage } });
+    const cleanup = installBrowserBridge({ allowedParentOrigin: 'https://chat.example' });
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { clientId: 'client-1', source: BROWSER_HOST_SOURCE, type: 'connected' },
+        origin: 'https://chat.example',
+        source: window.parent,
+      }),
+    );
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          clientId: 'client-1',
+          command: {
+            action: 'click',
+            epoch: 1,
+            id: 'click-ambiguous',
+            params: { selector: '.save' },
+          },
+          sessionId: 'topic-1',
+          source: BROWSER_HOST_SOURCE,
+          type: 'command',
+        },
+        origin: 'https://chat.example',
+        source: window.parent,
+      }),
+    );
+
+    await vi.waitFor(() =>
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          commandId: 'click-ambiguous',
+          error: expect.objectContaining({
+            code: 'BRIDGE_ACTION_FAILED',
+            message: expect.stringContaining('ambiguous'),
+          }),
+          type: 'result',
+        }),
+        'https://chat.example',
+      ),
+    );
+    expect(clicked).not.toHaveBeenCalled();
     cleanup();
   });
 

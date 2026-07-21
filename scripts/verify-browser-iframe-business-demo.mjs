@@ -52,6 +52,24 @@ try {
   await originalFrame.getByRole('heading', { name: '费用审批' }).waitFor({ timeout: 30_000 });
 
   await originalFrame.locator('#reason').fill('用户手动填写且必须保留');
+  const originalIframeHandle = await originalIframe.elementHandle();
+  assert(originalIframeHandle, 'Original business iframe handle was not available');
+  await page.getByTestId('simulate-browser-tool-update').click();
+  await page.getByTestId('browser-tool-update-complete').waitFor({ timeout: 10_000 });
+  const iframeAfterToolUpdate = await businessIframes.first().elementHandle();
+  assert(
+    iframeAfterToolUpdate &&
+      (await originalIframeHandle.evaluate(
+        (iframe, next) => iframe === next,
+        iframeAfterToolUpdate,
+      )),
+    'A non-navigation tool result replaced the live iframe node',
+  );
+  assert.equal(
+    await originalFrame.locator('#reason').inputValue(),
+    '用户手动填写且必须保留',
+    'A non-navigation tool result reloaded the visible iframe',
+  );
   await originalFrame.getByTestId('policy-blank-link').click();
   await assertIframeCount(businessIframes, 2);
   const tabs = page.getByRole('tab');
@@ -131,6 +149,7 @@ try {
     browserPageCount: context.pages().length,
     iframeCount: await businessIframes.count(),
     manualInputPreserved: true,
+    nonNavigationToolUpdatePreservedIframe: true,
     normalLinkUrl: await activeIframe.evaluate((iframe) => iframe.contentWindow?.location.href),
     ok: true,
     pageErrors,
