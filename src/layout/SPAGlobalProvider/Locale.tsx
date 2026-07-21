@@ -2,6 +2,7 @@ import { ConfigProvider } from 'antd';
 import dayjs from 'dayjs';
 import type { PropsWithChildren } from 'react';
 import { memo, useEffect, useState } from 'react';
+import { I18nextProvider } from 'react-i18next';
 import { isRtlLang } from 'rtl-detect';
 
 import Editor from '@/layout/GlobalProvider/Editor';
@@ -86,19 +87,21 @@ const Locale = memo<LocaleLayoutProps>(({ children, defaultLang, antdLocale }) =
   const documentDir = isRtlLang(lang!) ? 'rtl' : 'ltr';
 
   return (
-    <ConfigProvider
-      direction={documentDir}
-      locale={locale}
-      theme={{
-        components: {
-          Button: {
-            contentFontSizeSM: 12,
+    <I18nextProvider i18n={i18n.instance}>
+      <ConfigProvider
+        direction={documentDir}
+        locale={locale}
+        theme={{
+          components: {
+            Button: {
+              contentFontSizeSM: 12,
+            },
           },
-        },
-      }}
-    >
-      <Editor>{children}</Editor>
-    </ConfigProvider>
+        }}
+      >
+        <Editor>{children}</Editor>
+      </ConfigProvider>
+    </I18nextProvider>
   );
 });
 

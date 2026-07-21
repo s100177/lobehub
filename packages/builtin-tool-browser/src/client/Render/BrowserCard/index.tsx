@@ -94,15 +94,16 @@ const BrowserCard = memo<BuiltinRenderProps<Record<string, any>, BrowserState>>(
     const autoOpenedRef = useRef<string | undefined>(undefined);
 
     const handleOpen = useCallback(() => {
-      if (!isOpen) {
-        openToolUI(messageId!, identifier, { apiName });
+      if (!isOpen && messageId && identifier) {
+        openToolUI(messageId, identifier, { apiName });
       }
     }, [messageId, identifier, apiName, isOpen, openToolUI]);
 
     const url = pluginState?.url;
 
     useEffect(() => {
-      if (!url || !messageId || isOpen || autoOpenedRef.current === messageId) return;
+      if (!url || !messageId || !identifier || isOpen || autoOpenedRef.current === messageId)
+        return;
 
       autoOpenedRef.current = messageId;
       openToolUI(messageId, identifier, { apiName });

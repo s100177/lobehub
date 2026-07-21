@@ -1513,7 +1513,7 @@ export class AgentRuntimeService {
         return {
           currentState: {
             cost: persisted.cost ?? undefined,
-            error: persisted.error ?? undefined,
+            error: persisted.error?.message ?? undefined,
             interruption: persisted.interruption ?? undefined,
             lastModified:
               persisted.completedAt?.toISOString() ??

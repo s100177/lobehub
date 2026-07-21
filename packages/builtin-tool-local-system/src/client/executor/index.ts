@@ -19,6 +19,7 @@ import { BaseExecutor } from '@lobechat/types';
 import { deviceService } from '@/services/device';
 import { localFileService } from '@/services/electron/localFileService';
 
+import type { LocalSystemApiName } from '../../types';
 import { LocalSystemIdentifier } from '../../types';
 import { resolveArgsWithScope } from '../../utils/path';
 
@@ -86,7 +87,7 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
   }
 
   private async proxyToActiveDevice(
-    apiName: string,
+    apiName: (typeof LocalSystemApiName)[keyof typeof LocalSystemApiName],
     params: any,
     ctx?: BuiltinToolContext,
   ): Promise<BuiltinToolResult | undefined> {
@@ -149,11 +150,8 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
 
   readFiles = async (
     params: LocalReadFilesParams,
-    ctx?: BuiltinToolContext,
+    _ctx?: BuiltinToolContext,
   ): Promise<BuiltinToolResult> => {
-    const remoteResult = await this.proxyToActiveDevice(LocalSystemApiEnum.readFiles, params, ctx);
-    if (remoteResult) return remoteResult;
-
     try {
       const result = await this.runtime.readFiles(params);
       return this.toResult(result);

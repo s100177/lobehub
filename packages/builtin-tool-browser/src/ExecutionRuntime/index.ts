@@ -29,8 +29,6 @@ export interface BrowserRuntimeService {
 }
 
 export class BrowserExecutionRuntime {
-  private service: BrowserRuntimeService;
-
   constructor(
     private service: BrowserRuntimeService,
     private sessionId: string,

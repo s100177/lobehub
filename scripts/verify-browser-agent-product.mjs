@@ -333,6 +333,67 @@ async function assertRemoteViewerPostsUserInput() {
   }
 }
 
+async function assertRemoteViewerPreservesKeyboardOrder() {
+  const sessionId = 'verify-agent-viewer-keyboard';
+  await request('/navigate', { mode: 'remote', url: `${pageOrigin}/kiki-search` }, sessionId);
+  const field = await request(
+    '/evaluate',
+    {
+      code: `(() => {
+        const rect = document.querySelector('#kw').getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      })()`,
+    },
+    sessionId,
+  );
+
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { height: 760, width: 960 } });
+    await page.goto(`${pageOrigin}/viewer-wrapper?session=${sessionId}`, {
+      waitUntil: 'domcontentloaded',
+    });
+    const screen = page.frameLocator('#viewer').locator('#screen');
+    await screen.waitFor({ state: 'visible', timeout: 10_000 });
+    await page
+      .frameLocator('#viewer')
+      .locator('#status')
+      .filter({ hasText: 'live' })
+      .waitFor({ timeout: 10_000 });
+    const screenBox = await screen.boundingBox();
+    assert(screenBox, 'Expected remote viewer canvas bounds');
+    await screen.click({
+      position: {
+        x: (field.result.x / 1280) * screenBox.width,
+        y: (field.result.y / 800) * screenBox.height,
+      },
+    });
+    await page.keyboard.press('Control+A');
+    await page.keyboard.type('MANUAL_REMOTE_OK');
+
+    let value;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      value = (
+        await request('/evaluate', { code: "document.querySelector('#kw').value" }, sessionId)
+      ).result;
+      if (value === 'MANUAL_REMOTE_OK') break;
+      await delay(100);
+    }
+
+    assert(value === 'MANUAL_REMOTE_OK', `Expected ordered remote typing, got ${value}`);
+
+    const inspected = await request('/inspect', {}, sessionId);
+    const interruptionCount =
+      inspected.executionTimeline?.filter((event) => event.action === 'interrupt').length || 0;
+    assert(
+      interruptionCount === 1,
+      `Expected one intervention event for a typing burst, got ${interruptionCount}`,
+    );
+  } finally {
+    await browser.close();
+  }
+}
+
 async function assertServerRecordsUserIntervention() {
   await request(
     '/navigate',
@@ -1002,6 +1063,7 @@ try {
     'verify-agent-viewer',
   );
   await assertRemoteViewerPostsUserInput();
+  await assertRemoteViewerPreservesKeyboardOrder();
   await assertServerRecordsUserIntervention();
   await assertPopupNavigationStaysInRemoteSession();
 

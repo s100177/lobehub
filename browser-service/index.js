@@ -228,6 +228,8 @@ function appendExecutionEvent(session, event) {
 }
 
 function recordUserIntervention(session, { inputType = 'input', reason } = {}) {
+  if (session.executionState?.phase === 'paused_by_user_intervention') return;
+
   const currentStepId = session.executionState?.currentStepId;
   const blockedStepId =
     currentStepId || session.executionState?.blockedStepId || 'user_intervention';
@@ -1968,6 +1970,7 @@ function renderViewerHtml({ basePath, sessionId, takeover }) {
     let lastFrameKey = '';
     let lastPointer = null;
     let lastPointerSentAt = 0;
+    let inputQueue = Promise.resolve();
 
     function endpoint(mode) {
       if (basePath === '/' || basePath === '') {
@@ -2000,20 +2003,29 @@ function renderViewerHtml({ basePath, sessionId, takeover }) {
       }, '*');
     }
 
-    async function sendInput(payload, options = {}) {
-      try {
-        const response = await fetch(endpoint('input'), {
-          body: JSON.stringify(payload),
-          headers: { 'Content-Type': 'application/json' },
-          method: 'POST',
-        });
-        if (options.drawResponse !== false && response.ok) {
-          const frame = await response.json().catch(() => null);
-          if (frame) drawFrame(frame, { force: true });
+    function sendInput(payload, options = {}) {
+      const run = async () => {
+        try {
+          const response = await fetch(endpoint('input'), {
+            body: JSON.stringify(payload),
+            headers: { 'Content-Type': 'application/json' },
+            method: 'POST',
+          });
+          const frame = response.ok ? await response.json().catch(() => null) : null;
+          if (options.drawResponse !== false && frame) {
+            drawFrame(frame, { force: true });
+          }
+        } catch {
+          statusEl.textContent = 'input failed';
         }
-      } catch {
-        statusEl.textContent = 'input failed';
+      };
+
+      if (options.ordered === false) {
+        void run();
+        return;
       }
+
+      inputQueue = inputQueue.then(run, run);
     }
 
     function drawFrame(frame, options = {}) {
@@ -2151,7 +2163,7 @@ function renderViewerHtml({ basePath, sessionId, takeover }) {
       const now = Date.now();
       if (now - lastPointerSentAt < 120) return;
       lastPointerSentAt = now;
-      sendInput({ type: 'mousemove', ...lastPointer });
+      sendInput({ type: 'mousemove', ...lastPointer }, { drawResponse: false, ordered: false });
     });
     canvas.addEventListener('wheel', (event) => {
       event.preventDefault();
@@ -2168,8 +2180,9 @@ function renderViewerHtml({ basePath, sessionId, takeover }) {
         key: event.key,
         metaKey: event.metaKey,
         shiftKey: event.shiftKey,
+        screenshot: false,
         type: 'key',
-      });
+      }, { drawResponse: false });
     });
 
     window.addEventListener('beforeunload', () => eventSource?.close());
@@ -3134,6 +3147,9 @@ app.post('/input', sessionMiddleware, async (req, res) => {
     await session.page.waitForTimeout(100);
     if (payload.type && payload.type !== 'mousemove') {
       recordUserIntervention(session, { inputType: payload.type });
+    }
+    if (payload.screenshot === false) {
+      return res.json({ ok: true });
     }
     res.json(
       await getPageState(session.page, {

@@ -678,6 +678,12 @@ export class GatewayActionImpl {
       }),
     });
 
+    const eventRouter = createGatewayEventRouter({
+      createMemberHandler: this.buildMemberHandlerFactory(execContext, gatewayOpId),
+      ownerHandler: eventHandler,
+      ownerOperationId: result.operationId,
+    });
+
     let didFinalize = false;
 
     const finalizeGatewayRun = async (params: {
@@ -704,12 +710,13 @@ export class GatewayActionImpl {
         // terminal-missing fallback so the op never sticks `running`.
         if (!params.terminalReceived) this.#get().completeOperation(gatewayOpId);
         if (result.topicId) {
+          this.#get().internal_updateTopicLoading(result.topicId, false);
           // A clean completion the user isn't watching is owned by
           // `markTopicUnread` (status: 'unread'); skip the 'active' write so
           // the two never race over the status field. Every other case (viewing,
           // error, abort) clears the running state back to 'active' as before.
           const viewing = this.#get().activeTopicId === result.topicId;
-          if (viewing || !succeeded) {
+          if (viewing || !params.succeeded) {
             void this.#get().updateTopicStatus?.({
               agentId: execContext.agentId,
               groupId: execContext.groupId,
@@ -737,7 +744,7 @@ export class GatewayActionImpl {
     if (agentGatewayUrl) {
       this.#get().connectToGateway({
         gatewayUrl: agentGatewayUrl,
-        onEvent: eventHandler,
+        onEvent: eventRouter,
         onSessionComplete: ({ succeeded, terminalReceived }) => {
           void finalizeGatewayRun({ source: 'gateway', succeeded, terminalReceived });
         },
@@ -864,6 +871,12 @@ export class GatewayActionImpl {
       }),
     });
 
+    const eventRouter = createGatewayEventRouter({
+      createMemberHandler: this.buildMemberHandlerFactory(context, gatewayOpId),
+      ownerHandler: eventHandler,
+      ownerOperationId: operationId,
+    });
+
     let didFinalize = false;
     const finalizeReconnectedRun = async (params: {
       source: 'gateway' | 'poll';
@@ -908,8 +921,13 @@ export class GatewayActionImpl {
     if (agentGatewayUrl) {
       this.#get().connectToGateway({
         gatewayUrl: agentGatewayUrl,
-        onEvent: eventHandler,
-        onSessionComplete: ({ succeeded, terminalReceived }) => {
+        onEvent: eventRouter,
+        onSessionComplete: ({ authFailed, succeeded, terminalReceived }) => {
+          if (!terminalReceived && !authFailed) {
+            stopCompletionMonitor();
+            this.#get().completeOperation(gatewayOpId);
+            return;
+          }
           void finalizeReconnectedRun({ source: 'gateway', succeeded, terminalReceived });
         },
         operationId,

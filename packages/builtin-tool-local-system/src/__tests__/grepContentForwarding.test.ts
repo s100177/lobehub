@@ -12,8 +12,8 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
-// The executor module pulls in @/services/electron/localFileService (renderer alias).
-// In the package's vitest env that alias doesn't resolve — stub it.
+// The executor module pulls in app services that this forwarding test does not use.
+// Keep the package test isolated from the renderer and device transports.
 vi.mock('@/services/electron/localFileService', () => ({
   localFileService: {
     editLocalFile: vi.fn(),
@@ -29,6 +29,12 @@ vi.mock('@/services/electron/localFileService', () => ({
     runCommand: vi.fn(),
     searchLocalFiles: vi.fn(),
     writeFile: vi.fn(),
+  },
+}));
+
+vi.mock('@/services/device', () => ({
+  deviceService: {
+    executeLocalSystemTool: vi.fn(),
   },
 }));
 

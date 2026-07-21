@@ -130,6 +130,21 @@ const localizeError = (error: ChatMessageError): ChatMessageError => {
   return error;
 };
 
+const formatSubAgentBatchResultContent = (
+  tasks: SubAgentTask[],
+  results: SubAgentsBatchResultPayload['results'],
+) =>
+  results
+    .map((result, index) => {
+      const title = tasks[index]?.description ?? `Task ${index + 1}`;
+      const content = result.success
+        ? (result.result ?? 'Completed successfully.')
+        : `Failed: ${result.error ?? 'Unknown error'}`;
+
+      return `${index + 1}. ${title}\n${content}`;
+    })
+    .join('\n\n');
+
 const getActiveDeviceIdFromMessages = (
   messages: GeneralAgentCallLLMInstructionPayload['messages'],
 ): string | undefined =>

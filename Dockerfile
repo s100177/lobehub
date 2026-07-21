@@ -75,6 +75,8 @@ COPY packages ./packages
 COPY patches ./patches
 # bring in desktop workspace manifest so pnpm can resolve it
 COPY apps/desktop/src/main/package.json ./apps/desktop/src/main/package.json
+# The local CLI is part of this fork's workspace and must be present during dependency resolution.
+COPY apps/cli/package.json ./apps/cli/package.json
 
 RUN set -e && \
     if [ "${USE_CN_MIRROR:-false}" = "true" ]; then \

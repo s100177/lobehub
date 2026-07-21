@@ -70,6 +70,7 @@ describe('LocalSystemExecutor', () => {
       });
 
       expect(globFilesMock).toHaveBeenCalledWith({
+        limit: 100,
         pattern: '**/*.{png,jpg,jpeg,gif,webp}',
         scope: '/tmp/images',
       });

@@ -6,6 +6,7 @@ export {
   type BrowserApiNameType,
   BrowserIdentifier,
   type BrowserState,
+  type CancelTaskParams,
   type ExecutePlanParams,
   type InterruptParams,
 } from './types';

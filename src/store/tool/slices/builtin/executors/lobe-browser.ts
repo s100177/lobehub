@@ -14,7 +14,7 @@ import { BaseExecutor } from '@lobechat/types';
 const createBrowserSessionId = (ctx?: BuiltinToolContext) =>
   ctx?.topicId || ctx?.messageId || ctx?.toolCallId || 'default';
 
-const callBrowserAction = async <TParams extends Record<string, unknown> | undefined>(
+const callBrowserAction = async <TParams extends object | undefined>(
   sessionId: string,
   action: string,
   params?: TParams,

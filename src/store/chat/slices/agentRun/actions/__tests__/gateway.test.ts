@@ -6,6 +6,7 @@ import type * as ConstVersion from '@/const/version';
 import { aiAgentService } from '@/services/aiAgent';
 import { messageService } from '@/services/message';
 import { topicService } from '@/services/topic';
+import { messageMapKey } from '@/store/chat/utils/messageMapKey';
 
 import type { GatewayConnection } from '../transports/gateway/gateway';
 import { GatewayActionImpl } from '../transports/gateway/gateway';
@@ -151,7 +152,7 @@ describe('GatewayActionImpl', () => {
   beforeEach(() => {
     mockAgentStore.state = { activeAgentId: undefined, agentMap: {} };
     mockUserDefaultConfig.disableGatewayMode = undefined;
-    vi.mocked(topicService.updateTopicMetadata).mockResolvedValue(undefined);
+    vi.mocked(topicService.updateTopicMetadata).mockResolvedValue(undefined as never);
   });
 
   afterEach(() => {
@@ -1092,6 +1093,7 @@ describe('GatewayActionImpl', () => {
         disconnectFromGateway: vi.fn(),
         internal_dispatchTopic: vi.fn(),
         internal_updateTopicLoading: internalUpdateTopicLoading,
+        moveQueuedMessages: vi.fn(),
         onOperationCancel: vi.fn(),
         replaceMessages,
         startOperation,
@@ -1368,10 +1370,9 @@ describe('GatewayActionImpl', () => {
       expect(messageService.getMessages).toHaveBeenCalledWith(
         expect.objectContaining({ agentId: 'agent-1', topicId: 'topic-1' }),
       );
-      expect(replaceMessages).toHaveBeenCalledWith(
-        [{ content: '后台任务完成', id: 'ast-1' }],
-        { context: expect.objectContaining({ agentId: 'agent-1', topicId: 'topic-1' }) },
-      );
+      expect(replaceMessages).toHaveBeenCalledWith([{ content: '后台任务完成', id: 'ast-1' }], {
+        context: expect.objectContaining({ agentId: 'agent-1', topicId: 'topic-1' }),
+      });
       expect(completeOperation).toHaveBeenCalledWith('gw-op-reconnect');
       expect(internalUpdateTopicLoading).toHaveBeenCalledWith('topic-1', false);
 
@@ -1427,6 +1428,7 @@ describe('GatewayActionImpl', () => {
       const captured: { onSessionComplete?: (p: any) => void } = {};
       const completeOperation = vi.fn();
       const updateTopicStatus = vi.fn();
+      const replaceMessages = vi.fn();
       const startOperation = vi.fn(() => ({ operationId: 'gw-op-reconnect' }));
       const state: Record<string, any> = {
         activeAgentId: 'agent-1',
@@ -1448,6 +1450,7 @@ describe('GatewayActionImpl', () => {
         },
         internal_updateTopicLoading: vi.fn(),
         onOperationCancel: vi.fn(),
+        replaceMessages,
         startOperation,
         updateTopicStatus,
       })) as any;
@@ -1464,7 +1467,7 @@ describe('GatewayActionImpl', () => {
       const action = new GatewayActionImpl(set as any, get, undefined);
       action.createClient = vi.fn(() => createMockClient());
 
-      return { action, captured, completeOperation, updateTopicStatus };
+      return { action, captured, completeOperation, replaceMessages, updateTopicStatus };
     }
 
     // The core black-hole guard: a reconnect that closes WITHOUT witnessing a
@@ -1487,7 +1490,7 @@ describe('GatewayActionImpl', () => {
         .mockResolvedValue(undefined as never);
       captured.onSessionComplete!({ authFailed: false, succeeded: false, terminalReceived: false });
 
-      expect(completeOperation).toHaveBeenCalledWith('gw-op-reconnect');
+      await vi.waitFor(() => expect(completeOperation).toHaveBeenCalledWith('gw-op-reconnect'));
       expect(topicService.updateTopicMetadata).not.toHaveBeenCalled();
       expect(updateTopicStatus).not.toHaveBeenCalled();
     });
@@ -1508,6 +1511,11 @@ describe('GatewayActionImpl', () => {
         .mockResolvedValue(undefined as never);
       captured.onSessionComplete!({ authFailed: false, succeeded: true, terminalReceived: true });
 
+      await vi.waitFor(() =>
+        expect(topicService.updateTopicMetadata).toHaveBeenCalledWith('topic-1', {
+          runningOperation: null,
+        }),
+      );
       // The run lifecycle owns completion when a terminal event arrives, so the
       // reconnect path must not double-complete its local op here.
       expect(completeOperation).not.toHaveBeenCalled();
@@ -1534,7 +1542,7 @@ describe('GatewayActionImpl', () => {
         .mockResolvedValue(undefined as never);
       captured.onSessionComplete!({ authFailed: true, succeeded: false, terminalReceived: false });
 
-      expect(completeOperation).toHaveBeenCalledWith('gw-op-reconnect');
+      await vi.waitFor(() => expect(completeOperation).toHaveBeenCalledWith('gw-op-reconnect'));
       expect(topicService.updateTopicMetadata).toHaveBeenCalledWith('topic-1', {
         runningOperation: null,
       });

@@ -35,7 +35,7 @@ export const installIframeSamePanelNavigationGuard = (iframe: HTMLIFrameElement)
 
     normalizeLinks();
 
-    const observer = new iframeWindow.MutationObserver(normalizeLinks);
+    const observer = new MutationObserver(normalizeLinks);
     observer.observe(iframeDocument.documentElement, {
       childList: true,
       subtree: true,

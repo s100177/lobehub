@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 
 import { ReasoningGraphSchema } from '@lobechat/types';

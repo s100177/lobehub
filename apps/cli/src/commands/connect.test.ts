@@ -37,6 +37,23 @@ vi.mock('../tools/shell', () => ({
   cleanupAllProcesses: vi.fn(),
 }));
 
+vi.mock('../device/register', () => ({
+  mintWorkspaceConnectToken: vi.fn().mockResolvedValue({
+    token: 'workspace-token',
+    workspaceId: 'test-workspace',
+  }),
+  registerDevice: vi.fn().mockResolvedValue(undefined),
+  registerWorkspaceDevice: vi.fn().mockResolvedValue(undefined),
+  resolveDeviceIdentity: vi.fn().mockReturnValue({
+    deviceId: 'mock-device-id',
+    identitySource: 'fallback',
+  }),
+  resolveWorkspaceDeviceIdentity: vi.fn().mockReturnValue({
+    deviceId: 'mock-workspace-device-id',
+    identitySource: 'fallback',
+  }),
+}));
+
 let mockRunningPid: number | null = null;
 let mockSpawnedPid = 0;
 let mockStatus: any = null;
@@ -226,10 +243,10 @@ describe('connect command', () => {
       type: 'tool_call_request',
     });
 
-    expect(executeToolCall).toHaveBeenCalledWith('readLocalFile', '{"path":"/test"}');
+    expect(executeToolCall).toHaveBeenCalledWith('readLocalFile', '{"path":"/test"}', undefined);
     expect(lastSentToolResponse).toEqual({
       requestId: 'req-1',
-      result: { content: 'tool result', error: undefined, success: true },
+      result: { content: 'tool result', error: undefined, state: undefined, success: true },
     });
   });
 
@@ -261,15 +278,15 @@ describe('connect command', () => {
   });
 
   it('should retry auth_failed with token refresh when new token available', async () => {
+    const program = createProgram();
+    await program.parseAsync(['node', 'test', 'connect']);
+
     vi.mocked(resolveToken).mockResolvedValueOnce({
       serverUrl: 'https://app.lobehub.com',
       token: 'refreshed-token',
       tokenType: 'jwt',
       userId: 'test-user',
     });
-
-    const program = createProgram();
-    await program.parseAsync(['node', 'test', 'connect']);
 
     const mockClient = vi.mocked(GatewayClient).mock.results[0].value;
 
@@ -280,7 +297,10 @@ describe('connect command', () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it('should handle auth_expired', async () => {
+  it('should refresh and reconnect when auth expires', async () => {
+    const program = createProgram();
+    await program.parseAsync(['node', 'test', 'connect']);
+
     vi.mocked(resolveToken).mockResolvedValueOnce({
       serverUrl: 'https://app.lobehub.com',
       token: 'new-tok',
@@ -288,14 +308,13 @@ describe('connect command', () => {
       userId: 'user',
     });
 
-    const program = createProgram();
-    await program.parseAsync(['node', 'test', 'connect']);
-
     await clientEventHandlers['auth_expired']?.();
 
-    expect(log.error).toHaveBeenCalledWith(expect.stringContaining('expired'));
-    expect(cleanupAllProcesses).toHaveBeenCalled();
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    const mockClient = vi.mocked(GatewayClient).mock.results[0].value;
+    expect(mockClient.updateToken).toHaveBeenCalledWith('new-tok');
+    expect(mockClient.reconnect).toHaveBeenCalled();
+    expect(cleanupAllProcesses).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 
   it('should ignore auth_expired for api key auth', async () => {
