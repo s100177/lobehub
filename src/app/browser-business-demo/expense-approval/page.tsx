@@ -1,7 +1,8 @@
 'use client';
 
+import { installBrowserBridge } from '@lobechat/builtin-tool-browser/bridge';
 import type { CSSProperties } from 'react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 const fieldStyle = {
   display: 'grid',
@@ -17,6 +18,12 @@ const inputStyle = {
 
 const Page = () => {
   const [submitted, setSubmitted] = useState(false);
+
+  useEffect(() => {
+    if (window.parent === window) return;
+
+    return installBrowserBridge();
+  }, []);
 
   return (
     <main

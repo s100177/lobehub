@@ -1,5 +1,12 @@
-import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
+
+import { checkAuth } from '@/app/(backend)/middleware/auth';
+
+import {
+  createBrowserServiceHeaders,
+  getBrowserServiceUrl,
+  proxyBrowserServiceResponse,
+} from '../utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,8 +28,8 @@ const ALLOWED_ACTIONS = new Set([
   'forward',
 ]);
 
-export async function POST(request: NextRequest) {
-  const browserServiceUrl = process.env.BROWSER_SERVICE_URL;
+export const POST = checkAuth(async (request: Request, { userId }) => {
+  const browserServiceUrl = getBrowserServiceUrl();
   if (!browserServiceUrl) {
     return NextResponse.json({ error: 'Browser service not configured' }, { status: 503 });
   }
@@ -48,25 +55,15 @@ export async function POST(request: NextRequest) {
     const res = await fetch(`${browserServiceUrl}/${serviceAction}`, {
       body: JSON.stringify(params ?? {}),
       cache: 'no-store',
-      headers: {
+      headers: createBrowserServiceHeaders(userId, {
         'Content-Type': 'application/json',
         'X-Session-ID': sessionId,
-      },
+      }),
       method: 'POST',
     });
-
-    const text = await res.text();
-    const contentType = res.headers.get('content-type') ?? 'application/json';
-
-    return new NextResponse(text, {
-      headers: {
-        'Cache-Control': 'no-store',
-        'Content-Type': contentType,
-      },
-      status: res.status,
-    });
+    return proxyBrowserServiceResponse(res, 'application/json');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: `Proxy error: ${message}` }, { status: 502 });
   }
-}
+});

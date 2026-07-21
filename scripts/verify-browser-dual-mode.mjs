@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import http from 'node:http';
 import { createRequire } from 'node:module';
-import { dirname, resolve } from 'node:path';
+import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
@@ -11,12 +11,16 @@ const pagePort = Number.parseInt(process.env.BROWSER_VERIFY_PAGE_PORT || '4311',
 const browserOrigin = `http://127.0.0.1:${browserPort}`;
 const pageOrigin = `http://127.0.0.1:${pagePort}`;
 const publicLikePageOrigin = `http://0.0.0.0:${pagePort}`;
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const inRepoServiceDir = resolve(repoRoot, 'browser-service');
-const deployedServiceDir = resolve(repoRoot, '..', 'browser-service');
+const browserOwnerId = 'verify-user';
+const browserServiceToken = 'verify-service-token';
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const inRepoServiceDir = path.resolve(repoRoot, 'browser-service');
+const deployedServiceDir = path.resolve(repoRoot, '..', 'browser-service');
 const browserServiceDir =
   process.env.BROWSER_SERVICE_DIR ||
-  (existsSync(resolve(inRepoServiceDir, 'node_modules')) ? inRepoServiceDir : deployedServiceDir);
+  (existsSync(path.resolve(inRepoServiceDir, 'node_modules'))
+    ? inRepoServiceDir
+    : deployedServiceDir);
 const require = createRequire(import.meta.url);
 const { chromium } = require(require.resolve('playwright', { paths: [browserServiceDir] }));
 
@@ -103,6 +107,8 @@ async function request(path, body, sessionId = 'verify') {
     body: JSON.stringify(body),
     headers: {
       'Content-Type': 'application/json',
+      'X-Browser-Owner-ID': browserOwnerId,
+      'X-Browser-Service-Token': browserServiceToken,
       'X-Session-ID': sessionId,
     },
     method: 'POST',
@@ -137,7 +143,13 @@ function assert(condition, message) {
 async function assertRemoteViewerDoesNotBlankOnPointerFrame() {
   const browser = await chromium.launch({ headless: true });
   try {
-    const page = await browser.newPage({ viewport: { height: 700, width: 900 } });
+    const page = await browser.newPage({
+      extraHTTPHeaders: {
+        'X-Browser-Owner-ID': browserOwnerId,
+        'X-Browser-Service-Token': browserServiceToken,
+      },
+      viewport: { height: 700, width: 900 },
+    });
     await page.goto(`${browserOrigin}/viewer?session=verify-remote&basePath=/`, {
       waitUntil: 'domcontentloaded',
     });
@@ -220,7 +232,13 @@ function sampleViewerCanvas() {
 }
 
 const browserService = spawn(process.execPath, ['index.js'], {
-  env: { ...process.env, PORT: String(browserPort) },
+  env: {
+    ...process.env,
+    BROWSER_ALLOW_PRIVATE_HOSTS: '0.0.0.0,127.0.0.1',
+    BROWSER_IFRAME_ALLOWED_ORIGINS: pageOrigin,
+    BROWSER_SERVICE_TOKEN: browserServiceToken,
+    PORT: String(browserPort),
+  },
   cwd: browserServiceDir,
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -243,17 +261,6 @@ try {
     `Expected iframeUrl ${pageOrigin}/, got ${iframe.iframeUrl}`,
   );
 
-  const blocked = await request(
-    '/navigate',
-    { mode: 'auto', url: `${pageOrigin}/blocked` },
-    'verify-blocked',
-  );
-  assert(blocked.mode === 'remote', `Expected blocked page to use remote, got ${blocked.mode}`);
-  assert(
-    blocked.fallbackReason?.includes('X-Frame-Options'),
-    `Expected X-Frame-Options fallback reason, got ${blocked.fallbackReason}`,
-  );
-
   const publicAuto = await request(
     '/navigate',
     { mode: 'auto', url: `${publicLikePageOrigin}/` },
@@ -266,6 +273,21 @@ try {
   assert(
     publicAuto.fallbackReason?.includes('public web navigation'),
     `Expected public-web remote reason, got ${publicAuto.fallbackReason}`,
+  );
+
+  let blockedIframeError;
+  try {
+    await request(
+      '/navigate',
+      { mode: 'iframe', url: `${publicLikePageOrigin}/` },
+      'verify-untrusted-iframe',
+    );
+  } catch (error) {
+    blockedIframeError = error;
+  }
+  assert(
+    blockedIframeError?.message.includes('BROWSER_IFRAME_ORIGIN_BLOCKED'),
+    `Expected explicit iframe mode to reject an untrusted origin, got ${blockedIframeError}`,
   );
 
   const blankLinkPoint = await request(

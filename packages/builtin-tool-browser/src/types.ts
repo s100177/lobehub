@@ -223,13 +223,7 @@ export type BrowserTaskState =
   | 'failed';
 
 export type BrowserRiskType =
-  | 'authorization'
-  | 'create'
-  | 'delete'
-  | 'payment'
-  | 'purchase'
-  | 'release'
-  | 'submit';
+  'authorization' | 'create' | 'delete' | 'payment' | 'purchase' | 'release' | 'submit';
 
 export interface BrowserRiskBlock {
   action: 'click' | 'submit';
@@ -313,11 +307,13 @@ export interface BrowserPageSkillPack {
 export interface BrowserState {
   actionEvents?: BrowserActionEvent[];
   blocked?: boolean;
+  bridgeStatus?: 'connected' | 'unavailable' | 'waiting';
   embeddable?: boolean;
   executionEvents?: BrowserPlanExecutionEvent[];
   executionState?: BrowserExecutionState;
   executionTimeline?: BrowserPlanExecutionEvent[];
   fallbackReason?: string;
+  frameId?: string;
   iframeUrl?: string;
   mode?: 'iframe' | 'remote';
   pageState?: BrowserPageState;

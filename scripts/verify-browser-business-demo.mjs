@@ -22,6 +22,8 @@ loadEnvFile(process.env.BROWSER_BUSINESS_ENV_FILE);
 
 const browserPort = Number.parseInt(process.env.BROWSER_BUSINESS_DEMO_PORT || '3340', 10);
 const browserOrigin = `http://127.0.0.1:${browserPort}`;
+const browserOwnerId = 'verify-user';
+const browserServiceToken = 'verify-service-token';
 const inRepoServiceDir = path.resolve(repoRoot, 'browser-service');
 const deployedServiceDir = path.resolve(repoRoot, '..', 'browser-service');
 const browserServiceDir = process.env.BROWSER_SERVICE_DIR || inRepoServiceDir;
@@ -412,6 +414,8 @@ async function request(pathname, body, sessionId) {
     body: JSON.stringify(body),
     headers: {
       'Content-Type': 'application/json',
+      'X-Browser-Owner-ID': browserOwnerId,
+      'X-Browser-Service-Token': browserServiceToken,
       'X-Session-ID': sessionId,
     },
     method: 'POST',
@@ -429,7 +433,10 @@ const browserService = spawn(process.execPath, ['index.js'], {
   cwd: createBrowserServiceRuntimeDir(),
   env: {
     ...process.env,
+    BROWSER_ALLOW_PRIVATE_HOSTS: new URL(targetUrl).hostname,
+    BROWSER_IFRAME_ALLOWED_ORIGINS: new URL(targetUrl).origin,
     BROWSER_SKILL_PACKS_DIR: skillPacksDir,
+    BROWSER_SERVICE_TOKEN: browserServiceToken,
     PORT: String(browserPort),
   },
   stdio: ['ignore', 'pipe', 'pipe'],
@@ -582,6 +589,18 @@ function createBrowserServiceRuntimeDir() {
   cpSync(
     path.resolve(browserServiceDir, 'package.json'),
     path.resolve(browserServiceRuntimeDir, 'package.json'),
+  );
+  cpSync(
+    path.resolve(browserServiceDir, 'bridge-session-manager.js'),
+    path.resolve(browserServiceRuntimeDir, 'bridge-session-manager.js'),
+  );
+  cpSync(
+    path.resolve(browserServiceDir, 'service-auth.js'),
+    path.resolve(browserServiceRuntimeDir, 'service-auth.js'),
+  );
+  cpSync(
+    path.resolve(browserServiceDir, 'iframe-policy.js'),
+    path.resolve(browserServiceRuntimeDir, 'iframe-policy.js'),
   );
   symlinkSync(
     path.resolve(dependencyServiceDir, 'node_modules'),

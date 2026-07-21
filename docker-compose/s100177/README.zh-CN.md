@@ -106,6 +106,29 @@ Lobe 容器通过内网环境变量访问它：
 BROWSER_SERVICE_URL=http://browser-service:3100
 ```
 
+Browser Runtime v2 还要求在 `.env` 配置：
+
+```text
+BROWSER_SERVICE_TOKEN=<随机服务令牌>
+BROWSER_IFRAME_ALLOWED_ORIGINS=http://business-app.example.com
+BROWSER_ALLOW_PRIVATE_HOSTS=
+```
+
+- `BROWSER_SERVICE_TOKEN` 同时注入 Lobe 与 browser-service，阻止绕过 Lobe 登录直接调用浏览器控制接口。
+- `BROWSER_IFRAME_ALLOWED_ORIGINS` 是允许安装 Browser Bridge 的受控业务系统 origin，多个值用逗号分隔。必须写 origin，不带路径。
+- `BROWSER_ALLOW_PRIVATE_HOSTS` 只控制 Remote Playwright 是否可访问私网主机，默认留空。需要访问内网业务系统时只列出明确主机名或 IP，不要开放整个网段。
+
+browser-service 只通过 Compose 内部网络暴露 `3100`，不再映射到宿主机端口。业务系统的 iframe 是由用户浏览器直接加载，不经过 browser-service。
+
+为当前部署生成令牌并设置受信 origin：
+
+```bash
+openssl rand -hex 32
+# 将输出写入 BROWSER_SERVICE_TOKEN
+# 将被嵌入的业务系统 origin 写入 BROWSER_IFRAME_ALLOWED_ORIGINS，例如：
+BROWSER_IFRAME_ALLOWED_ORIGINS=http://192.168.1.50:8080
+```
+
 不要把它替换成官方镜像；官方部署不包含这个 fork 的 live browser viewer/input/SSE 改动。
 
 ## 手动验证远程设备修复

@@ -44,6 +44,7 @@ services:
       - 'REDIS_PREFIX=lobechat'
       - 'REDIS_TLS=0'
       - 'BROWSER_SERVICE_URL=http://browser-service:3100'
+      - 'BROWSER_SERVICE_TOKEN=${BROWSER_SERVICE_TOKEN:?set BROWSER_SERVICE_TOKEN in .env}'
       - 'DEVICE_GATEWAY_URL=http://device-gateway:8787'
       - 'DEVICE_GATEWAY_SERVICE_TOKEN=${DEVICE_GATEWAY_SERVICE_TOKEN}'
     env_file:
@@ -57,10 +58,13 @@ services:
     build:
       context: ../../browser-service
     container_name: lobe-browser
-    ports:
-      - '${BROWSER_SERVICE_PORT:-3100}:3100'
+    expose:
+      - '3100'
     environment:
       - 'PORT=3100'
+      - 'BROWSER_SERVICE_TOKEN=${BROWSER_SERVICE_TOKEN:?set BROWSER_SERVICE_TOKEN in .env}'
+      - 'BROWSER_ALLOW_PRIVATE_HOSTS=${BROWSER_ALLOW_PRIVATE_HOSTS:-}'
+      - 'BROWSER_IFRAME_ALLOWED_ORIGINS=${BROWSER_IFRAME_ALLOWED_ORIGINS:?set BROWSER_IFRAME_ALLOWED_ORIGINS in .env}'
       - 'MAX_SESSIONS=${BROWSER_MAX_SESSIONS:-20}'
       - 'SESSION_IDLE_MS=${BROWSER_SESSION_IDLE_MS:-300000}'
     healthcheck:

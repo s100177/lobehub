@@ -1,8 +1,15 @@
+import { createHash } from 'node:crypto';
+import { lookup } from 'node:dns/promises';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { isIP } from 'node:net';
 import path from 'node:path';
 
 import express from 'express';
 import { chromium } from 'playwright';
+
+import { BridgeError, BridgeSessionManager } from './bridge-session-manager.js';
+import { createIframePolicy } from './iframe-policy.js';
+import { createServiceAuthMiddleware } from './service-auth.js';
 
 const PORT = Number.parseInt(process.env.PORT || '3100', 10);
 const MAX_SESSIONS = Number.parseInt(process.env.MAX_SESSIONS || '20', 10);
@@ -14,21 +21,122 @@ const STREAM_ACTIVE_INTERVAL_MS = Number.parseInt(
 const STREAM_IDLE_INTERVAL_MS = Number.parseInt(process.env.STREAM_IDLE_INTERVAL_MS || '1200', 10);
 const STREAM_ACTIVE_WINDOW_MS = Number.parseInt(process.env.STREAM_ACTIVE_WINDOW_MS || '5000', 10);
 const VIEWPORT = { width: 1280, height: 800 };
-const EMBED_CHECK_TIMEOUT_MS = Number.parseInt(process.env.EMBED_CHECK_TIMEOUT_MS || '5000', 10);
 const SKILL_PACKS_DIR = process.env.BROWSER_SKILL_PACKS_DIR;
 const USER_AGENT =
   process.env.BROWSER_USER_AGENT ||
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36';
+const BROWSER_SERVICE_TOKEN = process.env.BROWSER_SERVICE_TOKEN;
+const iframePolicy = createIframePolicy(process.env.BROWSER_IFRAME_ALLOWED_ORIGINS);
+const ALLOWED_PRIVATE_HOSTS = new Set(
+  (process.env.BROWSER_ALLOW_PRIVATE_HOSTS || '')
+    .split(',')
+    .map((host) => host.trim().toLowerCase())
+    .filter(Boolean),
+);
+const dnsCache = new Map();
 
 const sessions = new Map();
 const sessionCreations = new Map();
+const sessionModes = new Map();
+const sessionOwners = new Map();
+const bridgeSessions = new BridgeSessionManager({
+  commandTimeoutMs: Number.parseInt(process.env.BRIDGE_COMMAND_TIMEOUT_MS || '15000', 10),
+  idleMs: SESSION_IDLE_MS,
+  maxSessions: MAX_SESSIONS,
+});
+let sharedBrowser;
+let sharedBrowserCreation;
+
+function isPrivateAddress(address) {
+  const normalized = address.toLowerCase().replaceAll(/^\[|\]$/g, '');
+  if (normalized === '::' || normalized === '::1') return true;
+  if (normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe80:'))
+    return true;
+  const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
+  const ipv4 = (mapped || normalized).match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (!ipv4) return false;
+  const [, aRaw, bRaw, cRaw] = ipv4;
+  const a = Number(aRaw);
+  const b = Number(bRaw);
+  const c = Number(cRaw);
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    (a === 192 && b === 0 && c === 0)
+  );
+}
+
+async function resolveHostAddresses(hostname) {
+  if (isIP(hostname)) return [hostname];
+  const cached = dnsCache.get(hostname);
+  if (cached && cached.expiresAt > Date.now()) return cached.addresses;
+  const addresses = (await lookup(hostname, { all: true, verbatim: true })).map(
+    ({ address }) => address,
+  );
+  dnsCache.set(hostname, { addresses, expiresAt: Date.now() + 30_000 });
+  return addresses;
+}
+
+async function assertNetworkUrlAllowed(input) {
+  const url = new URL(input);
+  if (['about:', 'blob:', 'data:'].includes(url.protocol)) return;
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error('Only HTTP(S) browser requests are allowed');
+  }
+  const hostname = url.hostname.toLowerCase();
+  if (ALLOWED_PRIVATE_HOSTS.has(hostname)) return;
+  const addresses = await resolveHostAddresses(hostname);
+  if (addresses.some(isPrivateAddress)) {
+    const error = new Error(`Private browser destination is not allowed: ${hostname}`);
+    error.code = 'BROWSER_SSRF_BLOCKED';
+    error.status = 403;
+    throw error;
+  }
+}
+
+async function getSharedBrowser() {
+  if (sharedBrowser?.isConnected()) return sharedBrowser;
+  if (sharedBrowserCreation) return sharedBrowserCreation;
+
+  sharedBrowserCreation = chromium
+    .launch({
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-blink-features=AutomationControlled',
+      ],
+      headless: true,
+    })
+    .then((browser) => {
+      sharedBrowser = browser;
+      browser.once('disconnected', () => {
+        if (sharedBrowser === browser) sharedBrowser = undefined;
+        for (const [sessionId, session] of sessions) {
+          if (session.browser === browser) sessions.delete(sessionId);
+        }
+      });
+      return browser;
+    })
+    .finally(() => {
+      sharedBrowserCreation = undefined;
+    });
+
+  return sharedBrowserCreation;
+}
 
 async function destroySession(sessionId) {
   const session = sessions.get(sessionId);
   if (!session) return;
 
   try {
-    await session.browser.close();
+    await session.context.close();
   } catch {
     // Closing an already-dead browser should not block session cleanup.
   }
@@ -39,8 +147,11 @@ async function destroySession(sessionId) {
 async function getOrCreateSession(sessionId) {
   const existing = sessions.get(sessionId);
   if (existing) {
-    existing.lastUsed = Date.now();
-    return existing;
+    if (!existing.page.isClosed() && existing.browser.isConnected()) {
+      existing.lastUsed = Date.now();
+      return existing;
+    }
+    await destroySession(sessionId);
   }
 
   const pending = sessionCreations.get(sessionId);
@@ -61,15 +172,7 @@ async function getOrCreateSession(sessionId) {
       if (oldest) await destroySession(oldest.id);
     }
 
-    const browser = await chromium.launch({
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-blink-features=AutomationControlled',
-      ],
-      headless: true,
-    });
+    const browser = await getSharedBrowser();
     const context = await browser.newContext({
       extraHTTPHeaders: {
         'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
@@ -78,6 +181,14 @@ async function getOrCreateSession(sessionId) {
       timezoneId: 'Asia/Shanghai',
       userAgent: USER_AGENT,
       viewport: VIEWPORT,
+    });
+    await context.route('**/*', async (route) => {
+      try {
+        await assertNetworkUrlAllowed(route.request().url());
+        await route.continue();
+      } catch {
+        await route.abort('blockedbyclient');
+      }
     });
     await context.addInitScript(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
@@ -113,12 +224,20 @@ async function getOrCreateSession(sessionId) {
   }
 }
 
-setInterval(() => {
+const cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [id, session] of sessions) {
     if (now - session.lastUsed > SESSION_IDLE_MS) destroySession(id).catch(() => {});
   }
+  bridgeSessions.cleanup(now);
+  for (const [sessionId, ownerId] of sessionOwners) {
+    if (!sessions.has(sessionId) && !bridgeSessions.has(sessionId, ownerId)) {
+      sessionModes.delete(sessionId);
+      sessionOwners.delete(sessionId);
+    }
+  }
 }, 60_000);
+cleanupTimer.unref();
 
 function recordAction(session, { action, status = 'success', summary, target }) {
   session.actionEvents = [
@@ -384,6 +503,9 @@ async function getPageState(page, options = {}) {
       : undefined,
   ]);
 
+  const frameId = screenshot
+    ? createHash('sha256').update(screenshot).digest('base64url').slice(0, 16)
+    : undefined;
   return {
     embeddable: false,
     mode: 'remote',
@@ -396,7 +518,7 @@ async function getPageState(page, options = {}) {
     ...(pageState ? { pageState } : {}),
     ...(pageState?.plan ? { plan: pageState.plan } : {}),
     ...(pointer ? { pointer } : {}),
-    ...(screenshot ? { screenshot: screenshot.toString('base64') } : {}),
+    ...(screenshot ? { frameId, screenshot: screenshot.toString('base64') } : {}),
     ...(pageState?.skillPack ? { skillPack: pageState.skillPack } : {}),
     ...(pageState?.taskState ? { taskState: pageState.taskState } : {}),
   };
@@ -409,89 +531,6 @@ function normalizeHttpUrl(input) {
   }
 
   return url.toString();
-}
-
-function isLocalOrPrivateHostname(hostname) {
-  const normalized = hostname.toLowerCase();
-
-  if (normalized === 'localhost' || normalized.endsWith('.localhost')) return true;
-  if (normalized === 'host.docker.internal') return true;
-
-  const ipv4 = normalized.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
-  if (!ipv4) return false;
-
-  const [, aRaw, bRaw] = ipv4;
-  const a = Number(aRaw);
-  const b = Number(bRaw);
-
-  return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
-}
-
-function shouldAutoUseIframe(url) {
-  return isLocalOrPrivateHostname(new URL(url).hostname);
-}
-
-function getFrameBlockReason(headers) {
-  const xFrameOptions = headers.get('x-frame-options')?.toLowerCase();
-  if (xFrameOptions) {
-    if (xFrameOptions.includes('deny')) return 'Blocked by X-Frame-Options: DENY';
-    if (xFrameOptions.includes('sameorigin')) return 'Blocked by X-Frame-Options: SAMEORIGIN';
-    if (xFrameOptions.includes('allow-from'))
-      return 'Blocked by legacy X-Frame-Options: ALLOW-FROM';
-  }
-
-  const csp = headers.get('content-security-policy')?.toLowerCase();
-  const frameAncestors = csp
-    ?.split(';')
-    .map((part) => part.trim())
-    .find((part) => part.startsWith('frame-ancestors'));
-
-  if (!frameAncestors) return undefined;
-  if (frameAncestors.includes('*')) return undefined;
-  if (frameAncestors.includes("'none'")) return "Blocked by CSP frame-ancestors 'none'";
-
-  return `Blocked by CSP ${frameAncestors}`;
-}
-
-async function fetchForEmbedCheck(url, method, timeout) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-  try {
-    return await fetch(url, {
-      headers: {
-        'User-Agent': USER_AGENT,
-      },
-      method,
-      redirect: 'follow',
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function detectEmbeddable(url, timeout = EMBED_CHECK_TIMEOUT_MS) {
-  try {
-    let response = await fetchForEmbedCheck(url, 'HEAD', timeout);
-    if (response.status === 405 || response.status === 403) {
-      response = await fetchForEmbedCheck(url, 'GET', timeout);
-    }
-
-    const fallbackReason = getFrameBlockReason(response.headers);
-    const finalUrl = response.url || url;
-
-    return {
-      embeddable: !fallbackReason,
-      fallbackReason,
-      finalUrl,
-    };
-  } catch (err) {
-    return {
-      embeddable: false,
-      fallbackReason: `Embed check failed: ${err.message}`,
-      finalUrl: url,
-    };
-  }
 }
 
 function getIframePageState({ fallbackReason, finalUrl, requestedMode }) {
@@ -1760,8 +1799,58 @@ function sessionMiddleware(req, res, next) {
     return res.status(400).json({ error: 'Missing X-Session-ID header or session query' });
   }
 
+  const ownerId = req.headers['x-browser-owner-id'];
+  if (!ownerId || Array.isArray(ownerId)) {
+    return res
+      .status(400)
+      .json({ code: 'BROWSER_OWNER_REQUIRED', error: 'Missing X-Browser-Owner-ID header' });
+  }
+
+  const existingOwner = sessionOwners.get(sessionId);
+  if (existingOwner && existingOwner !== ownerId) {
+    return res.status(403).json({
+      code: 'BROWSER_SESSION_FORBIDDEN',
+      error: 'Browser session belongs to another user',
+    });
+  }
+
+  sessionOwners.set(sessionId, ownerId);
+  req.ownerId = ownerId;
   req.sessionId = sessionId;
   next();
+}
+
+function sendBridgeError(res, error) {
+  if (error instanceof BridgeError) {
+    return res.status(error.status).json({ code: error.code, error: error.message });
+  }
+  if (error && typeof error === 'object' && typeof error.status === 'number') {
+    return res.status(error.status).json({ code: error.code, error: error.message });
+  }
+  return res.status(500).json({
+    code: 'BRIDGE_INTERNAL_ERROR',
+    error: error instanceof Error ? error.message : String(error),
+  });
+}
+
+function isIframeSession(req) {
+  return sessionModes.get(req.sessionId) === 'iframe';
+}
+
+async function runIframeAction(req, action, params) {
+  if (!bridgeSessions.has(req.sessionId, req.ownerId)) {
+    throw new BridgeError(
+      'BRIDGE_SESSION_EXPIRED',
+      'The iframe Bridge session expired. Navigate to the page again before controlling it.',
+      410,
+    );
+  }
+  return bridgeSessions.enqueue(req.sessionId, {
+    action,
+    ownerId: req.ownerId,
+    params,
+    timeoutMs: typeof params?.timeout === 'number' ? params.timeout : undefined,
+  });
 }
 
 function renderViewerHtml({ basePath, sessionId, takeover }) {
@@ -2000,7 +2089,7 @@ function renderViewerHtml({ basePath, sessionId, takeover }) {
         type: 'user-input',
         inputType: type,
         sessionId,
-      }, '*');
+      }, window.location.origin);
     }
 
     function sendInput(payload, options = {}) {
@@ -2044,7 +2133,7 @@ function renderViewerHtml({ basePath, sessionId, takeover }) {
           canvas.height = viewport.height;
         }
       }
-      const frameKey = frame.url + ':' + frame.title + ':' + frame.screenshot.slice(0, 80);
+      const frameKey = frame.frameId || frame.url + ':' + frame.title + ':' + frame.screenshot.length;
       if (!options.force && frameKey === lastFrameKey) {
         statusEl.textContent = 'live';
         return;
@@ -2243,9 +2332,24 @@ async function applyInput(page, payload) {
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
+app.use(createServiceAuthMiddleware(BROWSER_SERVICE_TOKEN));
 
 app.get('/status', async (req, res) => {
-  res.json({ maxSessions: MAX_SESSIONS, ok: true, sessions: sessions.size });
+  const memory = process.memoryUsage();
+  res.json({
+    bridgeSessions: bridgeSessions.size,
+    browserConnected: Boolean(sharedBrowser?.isConnected()),
+    maxSessions: MAX_SESSIONS,
+    memory: {
+      external: memory.external,
+      heapTotal: memory.heapTotal,
+      heapUsed: memory.heapUsed,
+      rss: memory.rss,
+    },
+    ok: true,
+    remoteSessions: sessions.size,
+    sessions: sessions.size + bridgeSessions.size,
+  });
 });
 
 app.post('/navigate', sessionMiddleware, async (req, res) => {
@@ -2261,31 +2365,38 @@ app.post('/navigate', sessionMiddleware, async (req, res) => {
     let fallbackReason;
 
     if (mode !== 'remote') {
+      if (mode === 'iframe') iframePolicy.assertAllowed(normalizedUrl);
       const embed =
-        mode === 'iframe'
+        mode === 'iframe' || (mode === 'auto' && iframePolicy.shouldAutoUse(normalizedUrl))
           ? { embeddable: true, finalUrl: normalizedUrl }
-          : shouldAutoUseIframe(normalizedUrl)
-            ? await detectEmbeddable(normalizedUrl)
-            : {
-                embeddable: false,
-                fallbackReason:
-                  'Remote mode selected for public web navigation to keep links inside the right-side browser',
-                finalUrl: normalizedUrl,
-              };
+          : {
+              embeddable: false,
+              fallbackReason:
+                'Remote mode selected for public web navigation to keep links inside the right-side browser',
+              finalUrl: normalizedUrl,
+            };
 
       if (embed.embeddable) {
-        return res.json(
-          getIframePageState({
+        await destroySession(req.sessionId);
+        bridgeSessions.destroy(req.sessionId, req.ownerId);
+        bridgeSessions.register(req.sessionId, { ownerId: req.ownerId, url: embed.finalUrl });
+        sessionModes.set(req.sessionId, 'iframe');
+        return res.json({
+          ...getIframePageState({
             fallbackReason: embed.fallbackReason,
             finalUrl: embed.finalUrl,
             requestedMode: mode,
           }),
-        );
+          bridgeStatus: 'waiting',
+        });
       }
 
       fallbackReason = embed.fallbackReason;
     }
 
+    await assertNetworkUrlAllowed(normalizedUrl);
+    bridgeSessions.destroy(req.sessionId, req.ownerId);
+    sessionModes.set(req.sessionId, 'remote');
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
     await page.goto(normalizedUrl, { timeout, waitUntil: 'domcontentloaded' });
@@ -2305,7 +2416,7 @@ app.post('/navigate', sessionMiddleware, async (req, res) => {
       mode: 'remote',
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendBridgeError(res, err);
   }
 });
 
@@ -2313,6 +2424,8 @@ app.post('/click', sessionMiddleware, async (req, res) => {
   try {
     const { selector, timeout = 5000 } = req.body;
     if (!selector) return res.status(400).json({ error: 'Missing selector' });
+
+    if (isIframeSession(req)) return res.json(await runIframeAction(req, 'click', req.body));
 
     const session = await getOrCreateSession(req.sessionId);
     const clicked = await runWithPopupAdoption(session, () =>
@@ -2336,7 +2449,7 @@ app.post('/click', sessionMiddleware, async (req, res) => {
     recordAction(session, { action: 'click', summary: `Clicked ${selector}`, target: selector });
     res.json(await getPageState(session.page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendBridgeError(res, err);
   }
 });
 
@@ -2345,6 +2458,8 @@ app.post('/fill', sessionMiddleware, async (req, res) => {
     const { selector, text, timeout = 5000 } = req.body;
     if (!selector) return res.status(400).json({ error: 'Missing selector' });
 
+    if (isIframeSession(req)) return res.json(await runIframeAction(req, 'fill', req.body));
+
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
     await performSafeFill(page, selector, text, timeout);
@@ -2352,7 +2467,7 @@ app.post('/fill', sessionMiddleware, async (req, res) => {
     recordAction(session, { action: 'fill', summary: `Filled ${selector}`, target: selector });
     res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendBridgeError(res, err);
   }
 });
 
@@ -2360,6 +2475,8 @@ app.post('/submit', sessionMiddleware, async (req, res) => {
   try {
     const { selector, timeout = 10000 } = req.body;
     if (!selector) return res.status(400).json({ error: 'Missing selector' });
+
+    if (isIframeSession(req)) return res.json(await runIframeAction(req, 'submit', req.body));
 
     const session = await getOrCreateSession(req.sessionId);
     const submitted = await runWithPopupAdoption(session, () =>
@@ -2385,13 +2502,14 @@ app.post('/submit', sessionMiddleware, async (req, res) => {
     recordAction(session, { action: 'submit', summary: `Submitted ${selector}`, target: selector });
     res.json(await getPageState(session.page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendBridgeError(res, err);
   }
 });
 
 app.post('/scroll', sessionMiddleware, async (req, res) => {
   try {
     const { x = 0, y = 0 } = req.body;
+    if (isIframeSession(req)) return res.json(await runIframeAction(req, 'scroll', { x, y }));
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
     await page.evaluate(({ x, y }) => window.scrollTo(x, y), { x, y });
@@ -2400,12 +2518,19 @@ app.post('/scroll', sessionMiddleware, async (req, res) => {
     recordAction(session, { action: 'scroll', summary: `Scrolled to x=${x}, y=${y}` });
     res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendBridgeError(res, err);
   }
 });
 
 app.post('/screenshot', sessionMiddleware, async (req, res) => {
   try {
+    if (isIframeSession(req)) {
+      return res.status(409).json({
+        code: 'BRIDGE_ACTION_UNSUPPORTED',
+        error:
+          'Screenshots are unavailable in iframe mode; inspect the visible page or switch to Remote mode',
+      });
+    }
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
     recordAction(session, {
@@ -2414,7 +2539,7 @@ app.post('/screenshot', sessionMiddleware, async (req, res) => {
     });
     res.json(await getPageState(page, { sessionId: req.sessionId }));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendBridgeError(res, err);
   }
 });
 
@@ -2422,6 +2547,13 @@ app.post('/evaluate', sessionMiddleware, async (req, res) => {
   try {
     const { code } = req.body;
     if (!code) return res.status(400).json({ error: 'Missing code' });
+
+    if (isIframeSession(req)) {
+      return res.status(409).json({
+        code: 'BRIDGE_ACTION_UNSUPPORTED',
+        error: 'Arbitrary JavaScript is disabled in iframe Bridge mode',
+      });
+    }
 
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
@@ -2432,12 +2564,19 @@ app.post('/evaluate', sessionMiddleware, async (req, res) => {
       ...(await getPageState(page, { screenshot: false, sessionId: req.sessionId })),
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendBridgeError(res, err);
   }
 });
 
 app.post('/execute-plan', sessionMiddleware, async (req, res) => {
   try {
+    if (isIframeSession(req)) {
+      return res.status(409).json({
+        code: 'BRIDGE_ACTION_UNSUPPORTED',
+        error:
+          'Multi-step plans are not available in iframe Bridge mode yet; use inspect and explicit safe actions',
+      });
+    }
     const {
       authorized = false,
       inspectedAfterPause = false,
@@ -2980,12 +3119,13 @@ app.post('/execute-plan', sessionMiddleware, async (req, res) => {
           : state.taskState || 'ai_controlling',
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendBridgeError(res, err);
   }
 });
 
 app.post('/inspect', sessionMiddleware, async (req, res) => {
   try {
+    if (isIframeSession(req)) return res.json(await runIframeAction(req, 'inspect', {}));
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
     markInterventionInspected(session);
@@ -2994,7 +3134,7 @@ app.post('/inspect', sessionMiddleware, async (req, res) => {
     recordAction(session, { action: 'inspect', summary: `Inspected ${page.url()}` });
     res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendBridgeError(res, err);
   }
 });
 
@@ -3014,7 +3154,7 @@ app.post('/interrupt', sessionMiddleware, async (req, res) => {
       taskState: 'paused_by_user_intervention',
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendBridgeError(res, err);
   }
 });
 
@@ -3033,31 +3173,33 @@ app.post('/cancel-task', sessionMiddleware, async (req, res) => {
       taskState: 'cancelled',
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendBridgeError(res, err);
   }
 });
 
 app.post('/back', sessionMiddleware, async (req, res) => {
   try {
+    if (isIframeSession(req)) return res.json(await runIframeAction(req, 'back', {}));
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
     await page.goBack({ waitUntil: 'networkidle' });
     recordAction(session, { action: 'back', summary: `Went back to ${page.url()}` });
     res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendBridgeError(res, err);
   }
 });
 
 app.post('/forward', sessionMiddleware, async (req, res) => {
   try {
+    if (isIframeSession(req)) return res.json(await runIframeAction(req, 'forward', {}));
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
     await page.goForward({ waitUntil: 'networkidle' });
     recordAction(session, { action: 'forward', summary: `Went forward to ${page.url()}` });
     res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendBridgeError(res, err);
   }
 });
 
@@ -3072,6 +3214,99 @@ app.get('/viewer', sessionMiddleware, async (req, res) => {
   );
 });
 
+app.post('/bridge/connect', sessionMiddleware, (req, res) => {
+  try {
+    const { clientId, url } = req.body || {};
+    if (!clientId || !url) return res.status(400).json({ error: 'Missing clientId or url' });
+    return res.json(bridgeSessions.connect(req.sessionId, { clientId, ownerId: req.ownerId, url }));
+  } catch (error) {
+    return sendBridgeError(res, error);
+  }
+});
+
+app.get('/bridge/commands', sessionMiddleware, async (req, res) => {
+  const clientId = req.query.clientId;
+  if (typeof clientId !== 'string' || !clientId) {
+    return res.status(400).json({ error: 'Missing clientId' });
+  }
+
+  const controller = new AbortController();
+  let finished = false;
+  req.once('close', () => {
+    if (!finished) controller.abort();
+  });
+
+  try {
+    const command = await bridgeSessions.poll(req.sessionId, {
+      clientId,
+      ownerId: req.ownerId,
+      signal: controller.signal,
+    });
+    finished = true;
+    return res.json({ command });
+  } catch (error) {
+    finished = true;
+    if (error instanceof BridgeError && error.code === 'BRIDGE_POLL_ABORTED') return;
+    return sendBridgeError(res, error);
+  }
+});
+
+app.post('/bridge/result', sessionMiddleware, (req, res) => {
+  try {
+    const { clientId, commandId, epoch, error, result, url } = req.body || {};
+    if (!clientId || !commandId || !Number.isInteger(epoch)) {
+      return res.status(400).json({ error: 'Missing clientId, commandId, or epoch' });
+    }
+    const currentUrl = url || result?.url;
+    if (currentUrl)
+      bridgeSessions.updateClientUrl(req.sessionId, {
+        clientId,
+        ownerId: req.ownerId,
+        url: currentUrl,
+      });
+    return res.json(
+      bridgeSessions.complete(req.sessionId, {
+        clientId,
+        commandId,
+        epoch,
+        error,
+        ownerId: req.ownerId,
+        result,
+      }),
+    );
+  } catch (bridgeError) {
+    return sendBridgeError(res, bridgeError);
+  }
+});
+
+app.post('/bridge/disconnect', sessionMiddleware, (req, res) => {
+  try {
+    const { clientId } = req.body || {};
+    if (!clientId) return res.status(400).json({ error: 'Missing clientId' });
+    return res.json(bridgeSessions.disconnect(req.sessionId, { clientId, ownerId: req.ownerId }));
+  } catch (error) {
+    return sendBridgeError(res, error);
+  }
+});
+
+app.post('/bridge/interrupt', sessionMiddleware, (req, res) => {
+  try {
+    const { clientId } = req.body || {};
+    if (!clientId) return res.status(400).json({ error: 'Missing clientId' });
+    return res.json(bridgeSessions.interrupt(req.sessionId, { clientId, ownerId: req.ownerId }));
+  } catch (error) {
+    return sendBridgeError(res, error);
+  }
+});
+
+app.get('/bridge/status', sessionMiddleware, (req, res) => {
+  try {
+    return res.json(bridgeSessions.getStatus(req.sessionId, req.ownerId));
+  } catch (error) {
+    return sendBridgeError(res, error);
+  }
+});
+
 app.get('/events', sessionMiddleware, async (req, res) => {
   res.set({
     'Cache-Control': 'no-cache, no-transform',
@@ -3082,6 +3317,7 @@ app.get('/events', sessionMiddleware, async (req, res) => {
   res.flushHeaders?.();
 
   let closed = false;
+  let lastFrameId;
   let timer;
   req.on('close', () => {
     closed = true;
@@ -3092,14 +3328,13 @@ app.get('/events', sessionMiddleware, async (req, res) => {
     if (closed) return;
     try {
       const session = await getOrCreateSession(req.sessionId);
-      res.write(
-        `data: ${JSON.stringify(
-          await getPageState(session.page, {
-            pointer: session.lastPointer,
-            sessionId: req.sessionId,
-          }),
-        )}\n\n`,
-      );
+      const state = await getPageState(session.page, {
+        pointer: session.lastPointer,
+        sessionId: req.sessionId,
+      });
+      if (state.frameId && state.frameId === lastFrameId) delete state.screenshot;
+      lastFrameId = state.frameId || lastFrameId;
+      res.write(`data: ${JSON.stringify(state)}\n\n`);
     } catch (err) {
       res.write(`event: error\ndata: ${JSON.stringify({ error: err.message })}\n\n`);
     }
@@ -3169,11 +3404,21 @@ app.get('/page', sessionMiddleware, async (req, res) => {
 
 app.post('/close', sessionMiddleware, async (req, res) => {
   await destroySession(req.sessionId);
+  bridgeSessions.destroy(req.sessionId, req.ownerId);
+  sessionModes.delete(req.sessionId);
+  sessionOwners.delete(req.sessionId);
   res.json({ ok: true });
 });
 
-app.listen(PORT, () => {
-  console.info(`Browser service listening on port ${PORT}`);
-  console.info(`  Max sessions: ${MAX_SESSIONS}`);
-  console.info(`  Session idle timeout: ${SESSION_IDLE_MS / 1000}s`);
-});
+export const browserServiceApp = app;
+
+export const startBrowserService = (port = PORT) =>
+  app.listen(port, () => {
+    console.info(`Browser service listening on port ${port}`);
+    console.info(`  Max sessions: ${MAX_SESSIONS}`);
+    console.info(`  Session idle timeout: ${SESSION_IDLE_MS / 1000}s`);
+  });
+
+if (process.argv[1] && import.meta.url === new URL(process.argv[1], 'file:').href) {
+  startBrowserService();
+}

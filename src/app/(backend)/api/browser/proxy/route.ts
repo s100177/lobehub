@@ -1,5 +1,12 @@
-import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
+
+import { checkAuth } from '@/app/(backend)/middleware/auth';
+
+import {
+  createBrowserServiceHeaders,
+  getBrowserServiceUrl,
+  proxyBrowserServiceResponse,
+} from '../utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,19 +21,20 @@ export const dynamic = 'force-dynamic';
  *
  * Usage: GET /api/browser/proxy?session=<sessionId>
  */
-export async function GET(request: NextRequest) {
-  const session = request.nextUrl.searchParams.get('session');
+export const GET = checkAuth(async (request: Request, { userId }) => {
+  const searchParams = new URL(request.url).searchParams;
+  const session = searchParams.get('session');
   if (!session) {
     return new NextResponse('Missing session parameter', { status: 400 });
   }
 
-  const browserServiceUrl = process.env.BROWSER_SERVICE_URL;
+  const browserServiceUrl = getBrowserServiceUrl();
   if (!browserServiceUrl) {
     return new NextResponse('Browser service not configured', { status: 503 });
   }
 
-  const mode = request.nextUrl.searchParams.get('mode');
-  const takeover = request.nextUrl.searchParams.get('takeover');
+  const mode = searchParams.get('mode');
+  const takeover = searchParams.get('takeover');
   const path = mode === 'events' ? '/events' : '/viewer';
 
   try {
@@ -37,42 +45,45 @@ export async function GET(request: NextRequest) {
       if (takeover === '1') targetUrl.searchParams.set('takeover', '1');
     }
 
-    const res = await fetch(targetUrl, { cache: 'no-store' });
+    const res = await fetch(targetUrl, {
+      cache: 'no-store',
+      headers: createBrowserServiceHeaders(userId),
+    });
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       return new NextResponse(text, { status: res.status });
     }
 
-    return new NextResponse(res.body, {
-      headers: {
+    return proxyBrowserServiceResponse(
+      res,
+      mode === 'events' ? 'text/event-stream' : 'text/html; charset=utf-8',
+      {
         'Cache-Control': 'no-cache, no-transform',
-        'Content-Security-Policy': 'frame-ancestors *',
-        'Content-Type':
-          res.headers.get('content-type') ??
-          (mode === 'events' ? 'text/event-stream' : 'text/html; charset=utf-8'),
+        'Content-Security-Policy': "frame-ancestors 'self'",
         'X-Accel-Buffering': 'no',
-        'X-Frame-Options': 'ALLOWALL',
+        'X-Frame-Options': 'SAMEORIGIN',
       },
-    });
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return new NextResponse(`Proxy error: ${message}`, { status: 502 });
   }
-}
+});
 
-export async function POST(request: NextRequest) {
-  const session = request.nextUrl.searchParams.get('session');
+export const POST = checkAuth(async (request: Request, { userId }) => {
+  const searchParams = new URL(request.url).searchParams;
+  const session = searchParams.get('session');
   if (!session) {
     return new NextResponse('Missing session parameter', { status: 400 });
   }
 
-  const mode = request.nextUrl.searchParams.get('mode');
+  const mode = searchParams.get('mode');
   if (mode !== 'input') {
     return new NextResponse('Unsupported browser proxy POST mode', { status: 400 });
   }
 
-  const browserServiceUrl = process.env.BROWSER_SERVICE_URL;
+  const browserServiceUrl = getBrowserServiceUrl();
   if (!browserServiceUrl) {
     return new NextResponse('Browser service not configured', { status: 503 });
   }
@@ -81,22 +92,16 @@ export async function POST(request: NextRequest) {
     const res = await fetch(`${browserServiceUrl}/input`, {
       body: await request.text(),
       cache: 'no-store',
-      headers: {
+      headers: createBrowserServiceHeaders(userId, {
         'Content-Type': request.headers.get('content-type') ?? 'application/json',
         'X-Session-ID': session,
-      },
+      }),
       method: 'POST',
     });
 
-    return new NextResponse(res.body, {
-      headers: {
-        'Cache-Control': 'no-store',
-        'Content-Type': res.headers.get('content-type') ?? 'application/json',
-      },
-      status: res.status,
-    });
+    return proxyBrowserServiceResponse(res, 'application/json');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return new NextResponse(`Proxy error: ${message}`, { status: 502 });
   }
-}
+});

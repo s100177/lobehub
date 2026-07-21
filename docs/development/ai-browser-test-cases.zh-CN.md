@@ -231,6 +231,33 @@ http://127.0.0.1:4330
 /iframe-blocked
 ```
 
+Runtime v2 还必须覆盖：
+
+- allowlist 中的业务 origin 可进入 `iframe`，未授权 origin 的显式 iframe 请求返回 `BROWSER_IFRAME_ORIGIN_BLOCKED`。
+- iframe Bridge 只接受预期 parent window + origin 的命令，拒绝伪造消息。
+- AI `fill/click` 改变的就是用户当前看到的 iframe DOM，不存在隐藏 Playwright fallback。
+- Bridge 断开或动作失败时返回真实错误，不能报告成功。
+- client 重连后旧 document epoch 的结果返回 `BRIDGE_STALE_RESULT`。
+- browser-service 缺少 token 时控制接口返回 503，错误 token 返回 401。
+- 公网或未接入 Bridge 的页面使用 `remote`；私网 Remote 目标必须在 `BROWSER_ALLOW_PRIVATE_HOSTS` 中。
+
+不启动服务的基础验证：
+
+```bash
+node --test \
+  browser-service/bridge-session-manager.test.js \
+  browser-service/iframe-policy.test.js \
+  browser-service/service-auth.test.js
+
+pnpm --filter @lobechat/builtin-tool-browser exec vitest run
+```
+
+真实 Chromium Bridge 验证：
+
+```bash
+pnpm test:browser-bridge-sdk
+```
+
 ### 2.2 L2：自动化 Playwright 验收
 
 目的：
@@ -667,7 +694,7 @@ BROWSER_DOCKER_E2E_BASE_URL=http://192.168.1.36:3211 \
 
 - 用户授权后调用 `executePlan({ authorized: true, ... })`，而不是只在前端切换状态。
 - 搜索页带 `query` 输入时，执行事件包含 fill 和 submit completed。
-- 购买页或订单页执行到 ask /risk_gate 前停止。
+- 购买页或订单页执行到 ask /risk\_gate 前停止。
 - 停止时返回 blocked execution event，并且不触发购买、支付、删除、释放、授权等页面副作用。
 
 ### 4.9 歧义询问

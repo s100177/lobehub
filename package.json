@@ -111,6 +111,7 @@
     "stylelint": "stylelint \"src/**/*.{js,jsx,ts,tsx}\" --fix",
     "test": "npm run test-app && npm run test-server",
     "test:browser-agent": "node scripts/verify-browser-agent-product.mjs",
+    "test:browser-bridge-sdk": "node scripts/verify-browser-bridge-sdk.mjs",
     "test:browser-business-demo": "node scripts/verify-browser-business-demo.mjs",
     "test:browser-business-demo:create-env": "node scripts/create-browser-business-demo-env.mjs",
     "test:browser-business-demo-evidence": "node scripts/run-browser-business-demo-evidence.mjs",

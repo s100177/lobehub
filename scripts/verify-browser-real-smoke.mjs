@@ -6,6 +6,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const browserPort = Number.parseInt(process.env.BROWSER_REAL_SMOKE_PORT || '3330', 10);
 const browserOrigin = `http://127.0.0.1:${browserPort}`;
+const browserOwnerId = 'verify-user';
+const browserServiceToken = 'verify-service-token';
 const repoRoot = path.resolve(import.meta.dirname, '..');
 const inRepoServiceDir = path.resolve(repoRoot, 'browser-service');
 const deployedServiceDir = path.resolve(repoRoot, '..', 'browser-service');
@@ -61,6 +63,8 @@ async function request(path, body, sessionId) {
     body: JSON.stringify(body),
     headers: {
       'Content-Type': 'application/json',
+      'X-Browser-Owner-ID': browserOwnerId,
+      'X-Browser-Service-Token': browserServiceToken,
       'X-Session-ID': sessionId,
     },
     method: 'POST',
@@ -76,7 +80,12 @@ async function request(path, body, sessionId) {
 
 const browserService = spawn(process.execPath, ['index.js'], {
   cwd: createBrowserServiceRuntimeDir(),
-  env: { ...process.env, PORT: String(browserPort) },
+  env: {
+    ...process.env,
+    BROWSER_IFRAME_ALLOWED_ORIGINS: new URL(smokeUrls[0]).origin,
+    BROWSER_SERVICE_TOKEN: browserServiceToken,
+    PORT: String(browserPort),
+  },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 
@@ -135,6 +144,18 @@ function createBrowserServiceRuntimeDir() {
   cpSync(
     path.resolve(browserServiceDir, 'package.json'),
     path.resolve(browserServiceRuntimeDir, 'package.json'),
+  );
+  cpSync(
+    path.resolve(browserServiceDir, 'bridge-session-manager.js'),
+    path.resolve(browserServiceRuntimeDir, 'bridge-session-manager.js'),
+  );
+  cpSync(
+    path.resolve(browserServiceDir, 'service-auth.js'),
+    path.resolve(browserServiceRuntimeDir, 'service-auth.js'),
+  );
+  cpSync(
+    path.resolve(browserServiceDir, 'iframe-policy.js'),
+    path.resolve(browserServiceRuntimeDir, 'iframe-policy.js'),
   );
   symlinkSync(
     path.resolve(dependencyServiceDir, 'node_modules'),

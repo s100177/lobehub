@@ -12,6 +12,11 @@
 - [ ] 每个核心页面都能识别当前选中项、输入值和主要按钮。
 - [ ] 每个核心页面都能返回风险提示。
 - [ ] 每个核心页面都能判断是否登录。
+- [ ] iframe 业务页已安装 Browser Bridge，并固定 `allowedParentOrigin`。
+- [ ] iframe 业务页 CSP `frame-ancestors` 允许 Lobe origin。
+- [ ] 业务页 origin 已加入 `BROWSER_IFRAME_ALLOWED_ORIGINS`。
+- [ ] 需要 Remote 访问的私网 host 已逐项加入 `BROWSER_ALLOW_PRIVATE_HOSTS`。
+- [ ] `BROWSER_SERVICE_TOKEN` 已生成并同时注入 Lobe 与 browser-service。
 
 ## 3. 页面技能包
 

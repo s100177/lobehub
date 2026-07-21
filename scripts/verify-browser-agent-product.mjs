@@ -11,6 +11,8 @@ const browserPort = Number.parseInt(process.env.BROWSER_AGENT_VERIFY_PORT || '33
 const pagePort = Number.parseInt(process.env.BROWSER_AGENT_VERIFY_PAGE_PORT || '4330', 10);
 const browserOrigin = `http://127.0.0.1:${browserPort}`;
 const pageOrigin = `http://127.0.0.1:${pagePort}`;
+const browserOwnerId = 'verify-user';
+const browserServiceToken = 'verify-service-token';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const inRepoServiceDir = path.resolve(repoRoot, 'browser-service');
 const deployedServiceDir = path.resolve(repoRoot, '..', 'browser-service');
@@ -241,6 +243,8 @@ async function request(path, body, sessionId = 'verify-agent') {
     body: JSON.stringify(body),
     headers: {
       'Content-Type': 'application/json',
+      'X-Browser-Owner-ID': browserOwnerId,
+      'X-Browser-Service-Token': browserServiceToken,
       'X-Session-ID': sessionId,
     },
     method: 'POST',
@@ -292,7 +296,13 @@ function assertTargetHighlight(target, labelPattern, context) {
 async function assertRemoteViewerPostsUserInput() {
   const browser = await chromium.launch({ headless: true });
   try {
-    const page = await browser.newPage({ viewport: { height: 760, width: 960 } });
+    const page = await browser.newPage({
+      extraHTTPHeaders: {
+        'X-Browser-Owner-ID': browserOwnerId,
+        'X-Browser-Service-Token': browserServiceToken,
+      },
+      viewport: { height: 760, width: 960 },
+    });
     await page.goto(`${pageOrigin}/viewer-wrapper?session=verify-agent-viewer&takeover=1`, {
       waitUntil: 'domcontentloaded',
     });
@@ -349,7 +359,13 @@ async function assertRemoteViewerPreservesKeyboardOrder() {
 
   const browser = await chromium.launch({ headless: true });
   try {
-    const page = await browser.newPage({ viewport: { height: 760, width: 960 } });
+    const page = await browser.newPage({
+      extraHTTPHeaders: {
+        'X-Browser-Owner-ID': browserOwnerId,
+        'X-Browser-Service-Token': browserServiceToken,
+      },
+      viewport: { height: 760, width: 960 },
+    });
     await page.goto(`${pageOrigin}/viewer-wrapper?session=${sessionId}`, {
       waitUntil: 'domcontentloaded',
     });
@@ -583,7 +599,14 @@ async function assertPopupNavigationStaysInRemoteSession() {
 
 const browserService = spawn(process.execPath, ['index.js'], {
   cwd: createBrowserServiceRuntimeDir(),
-  env: { ...process.env, BROWSER_SKILL_PACKS_DIR: skillPacksDir, PORT: String(browserPort) },
+  env: {
+    ...process.env,
+    BROWSER_ALLOW_PRIVATE_HOSTS: '127.0.0.1',
+    BROWSER_IFRAME_ALLOWED_ORIGINS: pageOrigin,
+    BROWSER_SKILL_PACKS_DIR: skillPacksDir,
+    BROWSER_SERVICE_TOKEN: browserServiceToken,
+    PORT: String(browserPort),
+  },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 
@@ -1087,6 +1110,18 @@ function createBrowserServiceRuntimeDir() {
   cpSync(
     path.resolve(browserServiceDir, 'package.json'),
     path.resolve(browserServiceRuntimeDir, 'package.json'),
+  );
+  cpSync(
+    path.resolve(browserServiceDir, 'bridge-session-manager.js'),
+    path.resolve(browserServiceRuntimeDir, 'bridge-session-manager.js'),
+  );
+  cpSync(
+    path.resolve(browserServiceDir, 'service-auth.js'),
+    path.resolve(browserServiceRuntimeDir, 'service-auth.js'),
+  );
+  cpSync(
+    path.resolve(browserServiceDir, 'iframe-policy.js'),
+    path.resolve(browserServiceRuntimeDir, 'iframe-policy.js'),
   );
   symlinkSync(
     path.resolve(dependencyServiceDir, 'node_modules'),

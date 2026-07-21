@@ -2,10 +2,15 @@
  * @vitest-environment happy-dom
  */
 import type { BrowserState } from '@lobechat/builtin-tool-browser';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import {
+  BROWSER_BRIDGE_SOURCE,
+  BROWSER_BRIDGE_VERSION,
+  BROWSER_HOST_SOURCE,
+} from '../../../../../../packages/builtin-tool-browser/src/bridge';
 import BrowserPanel, {
   installIframeSamePanelNavigationGuard,
 } from '../../../../../../packages/builtin-tool-browser/src/client/Portal/BrowserPanel';
@@ -37,7 +42,24 @@ vi.mock('antd-style', () => ({
 }));
 
 describe('BrowserPanel clean browser rendering', () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+    const happyDOM = (
+      window as typeof window & {
+        happyDOM: {
+          settings: {
+            disableIframePageLoading: boolean;
+            handleDisabledFileLoadingAsSuccess: boolean;
+          };
+        };
+      }
+    ).happyDOM;
+    happyDOM.settings.disableIframePageLoading = true;
+    happyDOM.settings.handleDisabledFileLoadingAsSuccess = true;
+  });
+
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -186,6 +208,376 @@ describe('BrowserPanel clean browser rendering', () => {
         'src',
         '/api/browser/proxy?session=topic-1',
       );
+    });
+  });
+
+  it('connects the visible iframe bridge, polls commands, and reports results', async () => {
+    let pollCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+
+      if (url === '/api/browser/bridge' && JSON.parse(String(_init?.body)).action === 'connect') {
+        return {
+          json: async () => ({ connected: true }),
+          ok: true,
+          status: 200,
+        };
+      }
+
+      if (url.startsWith('/api/browser/bridge?')) {
+        pollCount += 1;
+
+        if (pollCount === 1) {
+          return {
+            json: async () => ({
+              command: { action: 'inspect', epoch: 1, id: 'cmd-1', params: {} },
+            }),
+            ok: true,
+            status: 200,
+          };
+        }
+
+        return new Promise((_, reject) => {
+          _init?.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('The operation was aborted.', 'AbortError')),
+            { once: true },
+          );
+        });
+      }
+
+      if (url === '/api/browser/bridge' && JSON.parse(String(_init?.body)).action === 'result') {
+        return {
+          json: async () => ({ ok: true }),
+          ok: true,
+          status: 200,
+        };
+      }
+
+      if (
+        url === '/api/browser/bridge' &&
+        JSON.parse(String(_init?.body)).action === 'disconnect'
+      ) {
+        return {
+          json: async () => ({ ok: true }),
+          ok: true,
+          status: 200,
+        };
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { unmount } = render(
+      <BrowserPanel
+        sessionId="session-bridge"
+        state={{
+          embeddable: true,
+          iframeUrl: 'https://app.example/form',
+          mode: 'iframe',
+          title: 'Bridge Form',
+          url: 'https://app.example/form',
+        }}
+      />,
+    );
+
+    const iframe = screen.getByTitle('Bridge Form') as HTMLIFrameElement;
+    const iframeWindow = { postMessage: vi.fn() } as unknown as Window;
+    Object.defineProperty(iframe, 'contentWindow', { configurable: true, value: iframeWindow });
+
+    fireEvent.load(iframe);
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          source: BROWSER_BRIDGE_SOURCE,
+          type: 'ready',
+          version: BROWSER_BRIDGE_VERSION,
+        },
+        origin: 'https://evil.example',
+        source: iframeWindow,
+      }),
+    );
+    expect(
+      fetchMock.mock.calls.filter(
+        ([requestUrl, init]) =>
+          requestUrl === '/api/browser/bridge' &&
+          JSON.parse(String(init?.body)).action === 'connect',
+      ),
+    ).toHaveLength(0);
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          source: BROWSER_BRIDGE_SOURCE,
+          type: 'ready',
+          version: BROWSER_BRIDGE_VERSION,
+        },
+        origin: 'https://app.example',
+        source: window,
+      }),
+    );
+
+    expect(
+      fetchMock.mock.calls.filter(
+        ([requestUrl, init]) =>
+          requestUrl === '/api/browser/bridge' &&
+          JSON.parse(String(init?.body)).action === 'connect',
+      ),
+    ).toHaveLength(0);
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          source: BROWSER_BRIDGE_SOURCE,
+          type: 'ready',
+          version: BROWSER_BRIDGE_VERSION,
+        },
+        origin: 'https://app.example',
+        source: iframeWindow,
+      }),
+    );
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          source: BROWSER_BRIDGE_SOURCE,
+          type: 'ready',
+          version: BROWSER_BRIDGE_VERSION,
+        },
+        origin: 'https://app.example',
+        source: iframeWindow,
+      }),
+    );
+
+    let bridgeClientId = '';
+    await waitFor(() => {
+      const connectCall = fetchMock.mock.calls.find(
+        ([requestUrl, init]) =>
+          requestUrl === '/api/browser/bridge' &&
+          JSON.parse(String(init?.body)).action === 'connect',
+      );
+
+      expect(connectCall).toBeDefined();
+
+      const connectInit = connectCall?.[1] as RequestInit;
+      const body = JSON.parse(String(connectInit.body));
+      bridgeClientId = body.clientId;
+
+      expect(body).toEqual({
+        action: 'connect',
+        clientId: expect.any(String),
+        sessionId: 'session-bridge',
+        url: 'https://app.example/form',
+      });
+      expect(connectInit.cache).toBe('no-store');
+      expect(connectInit.headers).toEqual({ 'Content-Type': 'application/json' });
+      expect(connectInit.method).toBe('POST');
+    });
+    expect(
+      fetchMock.mock.calls.filter(
+        ([requestUrl, init]) =>
+          requestUrl === '/api/browser/bridge' &&
+          JSON.parse(String(init?.body)).action === 'connect',
+      ),
+    ).toHaveLength(1);
+
+    await waitFor(() => {
+      const pollCall = fetchMock.mock.calls.find(([requestUrl]) =>
+        String(requestUrl).startsWith('/api/browser/bridge?'),
+      );
+
+      expect(pollCall).toBeDefined();
+
+      const pollInit = pollCall?.[1] as RequestInit;
+      expect(String(pollCall?.[0])).toContain(`clientId=${encodeURIComponent(bridgeClientId)}`);
+      expect(String(pollCall?.[0])).toContain('sessionId=session-bridge');
+      expect(pollInit.cache).toBe('no-store');
+      expect(pollInit.method).toBe('GET');
+      expect(pollInit.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    await waitFor(() => {
+      expect((iframeWindow as any).postMessage).toHaveBeenCalledWith(
+        {
+          command: {
+            action: 'inspect',
+            epoch: 1,
+            id: 'cmd-1',
+            params: {},
+          },
+          clientId: bridgeClientId,
+          sessionId: 'session-bridge',
+          source: BROWSER_HOST_SOURCE,
+          type: 'command',
+          version: BROWSER_BRIDGE_VERSION,
+        },
+        'https://app.example',
+      );
+    });
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          clientId: bridgeClientId,
+          commandId: 'cmd-1',
+          epoch: 1,
+          result: { title: 'Form', url: 'https://app.example/form' },
+          source: BROWSER_BRIDGE_SOURCE,
+          type: 'result',
+          version: BROWSER_BRIDGE_VERSION,
+        },
+        origin: 'https://evil.example',
+        source: iframeWindow,
+      }),
+    );
+
+    expect(
+      fetchMock.mock.calls.filter(
+        ([requestUrl, init]) =>
+          requestUrl === '/api/browser/bridge' &&
+          JSON.parse(String(init?.body)).action === 'result',
+      ),
+    ).toHaveLength(0);
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          clientId: 'stale-client',
+          commandId: 'cmd-1',
+          epoch: 1,
+          result: { title: 'Old Form', url: 'https://app.example/old' },
+          source: BROWSER_BRIDGE_SOURCE,
+          type: 'result',
+          version: BROWSER_BRIDGE_VERSION,
+        },
+        origin: 'https://app.example',
+        source: iframeWindow,
+      }),
+    );
+
+    expect(
+      fetchMock.mock.calls.filter(
+        ([requestUrl, init]) =>
+          requestUrl === '/api/browser/bridge' &&
+          JSON.parse(String(init?.body)).action === 'result',
+      ),
+    ).toHaveLength(0);
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          clientId: bridgeClientId,
+          commandId: 'cmd-1',
+          epoch: 1,
+          result: { title: 'Form', url: 'https://app.example/form' },
+          source: BROWSER_BRIDGE_SOURCE,
+          type: 'result',
+          version: BROWSER_BRIDGE_VERSION,
+        },
+        origin: 'https://app.example',
+        source: iframeWindow,
+      }),
+    );
+
+    await waitFor(() => {
+      const resultCall = fetchMock.mock.calls.find(
+        ([requestUrl, init]) =>
+          requestUrl === '/api/browser/bridge' &&
+          JSON.parse(String(init?.body)).action === 'result',
+      );
+
+      expect(resultCall).toBeDefined();
+
+      const resultInit = resultCall?.[1] as RequestInit;
+      const body = JSON.parse(String(resultInit.body));
+
+      expect(body).toEqual({
+        action: 'result',
+        clientId: bridgeClientId,
+        commandId: 'cmd-1',
+        epoch: 1,
+        result: { title: 'Form', url: 'https://app.example/form' },
+        sessionId: 'session-bridge',
+      });
+      expect(resultInit.cache).toBe('no-store');
+      expect(resultInit.headers).toEqual({ 'Content-Type': 'application/json' });
+      expect(resultInit.method).toBe('POST');
+    });
+
+    unmount();
+
+    await waitFor(() => {
+      const disconnectCall = fetchMock.mock.calls.find(
+        ([requestUrl, init]) =>
+          requestUrl === '/api/browser/bridge' &&
+          JSON.parse(String(init?.body)).action === 'disconnect',
+      );
+
+      expect(disconnectCall).toBeDefined();
+
+      const disconnectInit = disconnectCall?.[1] as RequestInit;
+      const body = JSON.parse(String(disconnectInit.body));
+
+      expect(body).toEqual({
+        action: 'disconnect',
+        clientId: bridgeClientId,
+        sessionId: 'session-bridge',
+      });
+    });
+  });
+
+  it('shows bridge unavailable while keeping remote fallback for iframe pages without the sdk', async () => {
+    vi.useFakeTimers();
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({
+        embeddable: false,
+        mode: 'remote',
+        title: 'Remote Fallback',
+        url: 'https://app.example/form',
+      }),
+      ok: true,
+      status: 200,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <BrowserPanel
+        sessionId="session-no-sdk"
+        state={{
+          embeddable: true,
+          iframeUrl: 'https://app.example/form',
+          mode: 'iframe',
+          title: 'No SDK',
+          url: 'https://app.example/form',
+        }}
+      />,
+    );
+
+    const iframe = screen.getByTitle('No SDK') as HTMLIFrameElement;
+    Object.defineProperty(iframe, 'contentWindow', { configurable: true, value: {} });
+
+    fireEvent.load(iframe);
+    await act(async () => {
+      vi.advanceTimersByTime(1600);
+    });
+    expect(screen.getByText('Bridge unavailable.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Use Remote'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/browser/action', {
+      body: JSON.stringify({
+        action: 'navigate',
+        params: { mode: 'remote', url: 'https://app.example/form' },
+        sessionId: 'session-no-sdk',
+      }),
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
     });
   });
 
@@ -372,6 +764,38 @@ describe('BrowserPanel clean browser rendering', () => {
     expect(screen.queryByText('检测到人工介入')).not.toBeInTheDocument();
   });
 
+  it('keeps manual iframe clicks native without interrupting automation', () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <BrowserPanel
+        sessionId="session-iframe-manual"
+        state={{
+          embeddable: true,
+          iframeUrl: 'https://app.example/dashboard',
+          mode: 'iframe',
+          pageState: {
+            pageType: 'dashboard',
+            targetHighlight: { label: '筛选条件' },
+          },
+          taskState: 'ai_controlling',
+          title: 'Iframe Dashboard',
+          url: 'https://app.example/dashboard',
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByTitle('Iframe Dashboard'));
+
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      '/api/browser/action',
+      expect.objectContaining({
+        body: expect.stringContaining('"action":"interrupt"'),
+      }),
+    );
+  });
+
   it('pauses takeover when the remote viewer reports user input from inside the iframe', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       json: async () => ({
@@ -400,6 +824,10 @@ describe('BrowserPanel clean browser rendering', () => {
       />,
     );
 
+    const iframe = screen.getByTitle('Remote Viewer') as HTMLIFrameElement;
+    const viewerWindow = { postMessage: vi.fn() } as unknown as Window;
+    Object.defineProperty(iframe, 'contentWindow', { configurable: true, value: viewerWindow });
+
     window.dispatchEvent(
       new MessageEvent('message', {
         data: {
@@ -408,6 +836,22 @@ describe('BrowserPanel clean browser rendering', () => {
           source: 'lobe-browser-viewer',
           type: 'user-input',
         },
+        origin: window.location.origin,
+        source: window,
+      }),
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          inputType: 'click',
+          sessionId: 'session-message',
+          source: 'lobe-browser-viewer',
+          type: 'user-input',
+        },
+        origin: window.location.origin,
+        source: viewerWindow,
       }),
     );
 

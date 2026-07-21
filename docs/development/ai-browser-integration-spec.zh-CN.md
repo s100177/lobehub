@@ -18,6 +18,50 @@
 - 页面越结构化，AI 越能自动完成流程。
 - 风险越明确，自动化越安全。
 
+## 1.1 Browser Runtime v2 双模式架构
+
+右侧浏览器不是统一用截图模拟交互，而是按页面来源选择两种运行模式：
+
+| 模式     | 适用页面                                           | 用户看到的内容          | AI 操作对象                          |
+| -------- | -------------------------------------------------- | ----------------------- | ------------------------------------ |
+| `iframe` | 你控制、允许嵌入且已安装 Bridge 的业务系统         | 浏览器原生 iframe 页面  | 这个可见 iframe 的同一份 DOM         |
+| `remote` | 公网网站、拒绝 iframe 的页面、未接入 Bridge 的页面 | Playwright 页面实时画面 | browser-service 中的 Playwright 页面 |
+
+`iframe` 模式下不启动第二份隐藏 Playwright 页面，也不使用截图推断成功。用户点击、输入与 AI 的 `inspect`、`fill`、`click`、`submit`、`scroll`、`back`、`forward` 都作用于同一个可见页面。AI 只有收到该页面 Bridge 返回的真实结果后才能报告成功。
+
+业务系统必须完成以下接入：
+
+```ts
+import { installBrowserBridge } from '@lobechat/builtin-tool-browser/bridge';
+
+const cleanup = installBrowserBridge({
+  allowedParentOrigin: 'https://your-lobehub.example.com',
+});
+```
+
+- `allowedParentOrigin` 必须是承载右侧面板的 Lobe origin，不能写 `*`。
+- 业务系统自身的 origin 必须加入 browser-service 的 `BROWSER_IFRAME_ALLOWED_ORIGINS`。
+- 业务系统必须允许 Lobe 通过 CSP `frame-ancestors` 嵌入；如果设置 `X-Frame-Options: DENY/SAMEORIGIN`，应改用 `remote`。
+- Bridge 会校验父窗口 `source` 和 origin；Lobe 面板也会校验 iframe 的精确 `contentWindow`、origin 和协议版本。
+- 用户在 iframe 中原生点击或输入时，Bridge 会发送人工干预事件；AI 必须重新 `inspect` 后才能继续。
+- iframe 内导航只能在同一个受信 origin 内继续。跨 origin 页面不能继承 Bridge 权限，应切换到 `remote`。
+
+部署环境至少配置：
+
+```text
+BROWSER_SERVICE_TOKEN=<openssl rand -hex 32 的输出>
+BROWSER_IFRAME_ALLOWED_ORIGINS=https://business.example.com,http://192.168.1.50:8080
+BROWSER_ALLOW_PRIVATE_HOSTS=192.168.1.50
+```
+
+三个变量含义不同：
+
+- `BROWSER_SERVICE_TOKEN` 是 Lobe server 与 browser-service 之间的服务认证，所有控制接口在任何环境下都 fail-closed；只有 `/status` 保持公开用于健康检查。
+- `BROWSER_IFRAME_ALLOWED_ORIGINS` 是允许进入 iframe + Bridge 模式的业务系统 origin，包含 scheme 和端口，不含路径。
+- `BROWSER_ALLOW_PRIVATE_HOSTS` 是 Remote Playwright 可访问的私网 hostname/IP 白名单。默认空；只有确实需要 Remote 打开内网页面时才逐项添加。
+
+已知边界：普通第三方网页即使技术上能被 iframe 嵌入，只要没有安装 Bridge，AI 就不能操作它的 DOM。此时必须使用 `remote`，不能静默回退到另一份隐藏页面。
+
 ## 2. 接入对象
 
 适用于以下类型页面：
