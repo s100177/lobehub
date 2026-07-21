@@ -214,6 +214,13 @@ describe('BrowserPanel clean browser rendering', () => {
       expect(call).toBeDefined();
       clientId = JSON.parse(String(call?.[1]?.body)).clientId;
     });
+    expect(
+      fetchMock.mock.calls.filter(
+        ([requestUrl, requestInit]) =>
+          requestUrl === '/api/browser/bridge' &&
+          JSON.parse(String(requestInit?.body)).action === 'connect',
+      ),
+    ).toHaveLength(1);
     window.dispatchEvent(
       new MessageEvent('message', {
         data: {

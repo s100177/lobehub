@@ -5,6 +5,7 @@ const repoRoot = path.resolve(import.meta.dirname, '..');
 const defaultRealSmokeUrls = 'https://example.com/,https://www.iana.org/';
 const includeBusinessEvidence = process.env.BROWSER_RELEASE_GATE_INCLUDE_BUSINESS_EVIDENCE === '1';
 const includeDockerUiE2e = process.env.BROWSER_RELEASE_GATE_INCLUDE_DOCKER_E2E === '1';
+const includeIframeExperience = process.env.BROWSER_RELEASE_GATE_INCLUDE_IFRAME_EXPERIENCE === '1';
 
 const steps = [
   {
@@ -30,6 +31,13 @@ if (includeDockerUiE2e) {
   steps.push({
     args: ['scripts/verify-browser-docker-ui-e2e.mjs'],
     name: 'Docker deployment browser UI E2E verification',
+  });
+}
+
+if (includeIframeExperience) {
+  steps.push({
+    args: ['scripts/verify-browser-iframe-business-demo.mjs'],
+    name: 'Deployed iframe interaction experience verification',
   });
 }
 
@@ -65,33 +73,37 @@ for (const step of steps) {
   await runStep(step);
 }
 
-if (includeDockerUiE2e && includeBusinessEvidence) {
+const externalGates = [
+  {
+    enabled: includeDockerUiE2e,
+    name: 'Docker UI E2E',
+    setup:
+      'Set BROWSER_RELEASE_GATE_INCLUDE_DOCKER_E2E=1 with BROWSER_DOCKER_E2E_BASE_URL and BROWSER_DOCKER_E2E_DATABASE_URL.',
+  },
+  {
+    enabled: includeIframeExperience,
+    name: 'iframe interaction experience',
+    setup: 'Set BROWSER_RELEASE_GATE_INCLUDE_IFRAME_EXPERIENCE=1 with BROWSER_IFRAME_DEMO_URL.',
+  },
+  {
+    enabled: includeBusinessEvidence,
+    name: 'user-provided real business-system evidence',
+    setup: 'Set BROWSER_RELEASE_GATE_INCLUDE_BUSINESS_EVIDENCE=1 with BROWSER_BUSINESS_ENV_FILE.',
+  },
+];
+const passedExternalGates = externalGates.filter((gate) => gate.enabled);
+const pendingExternalGates = externalGates.filter((gate) => !gate.enabled);
+
+console.log(
+  `\nBrowser release gate passed for non-deployment checks${
+    passedExternalGates.length > 0
+      ? ` and ${passedExternalGates.map((gate) => gate.name).join(', ')}`
+      : ''
+  }.`,
+);
+if (pendingExternalGates.length > 0) {
   console.log(
-    '\nBrowser release gate passed for non-deployment checks, Docker UI E2E, and user-provided real business-system evidence.',
+    `Remaining external gates: ${pendingExternalGates.map((gate) => gate.name).join(', ')}.`,
   );
-} else if (includeDockerUiE2e) {
-  console.log('\nBrowser release gate passed for non-deployment checks and Docker UI E2E.');
-  console.log('Remaining external gate: user-provided real business-system evidence.');
-  console.log(
-    'Set BROWSER_RELEASE_GATE_INCLUDE_BUSINESS_EVIDENCE=1 with BROWSER_BUSINESS_ENV_FILE to include the real business-system evidence gate.',
-  );
-} else if (includeBusinessEvidence) {
-  console.log(
-    '\nBrowser release gate passed for non-deployment checks and user-provided real business-system evidence.',
-  );
-  console.log('Remaining external gate: Docker UI E2E.');
-  console.log(
-    'Set BROWSER_RELEASE_GATE_INCLUDE_DOCKER_E2E=1 with BROWSER_DOCKER_E2E_BASE_URL and BROWSER_DOCKER_E2E_DATABASE_URL to include the deployed UI gate.',
-  );
-} else {
-  console.log('\nBrowser release gate passed for non-deployment checks.');
-  console.log(
-    'Remaining external gates: Docker UI E2E and user-provided real business-system evidence.',
-  );
-  console.log(
-    'Set BROWSER_RELEASE_GATE_INCLUDE_DOCKER_E2E=1 with BROWSER_DOCKER_E2E_BASE_URL and BROWSER_DOCKER_E2E_DATABASE_URL to include the deployed UI gate.',
-  );
-  console.log(
-    'Set BROWSER_RELEASE_GATE_INCLUDE_BUSINESS_EVIDENCE=1 with BROWSER_BUSINESS_ENV_FILE to include the real business-system evidence gate.',
-  );
+  for (const gate of pendingExternalGates) console.log(gate.setup);
 }

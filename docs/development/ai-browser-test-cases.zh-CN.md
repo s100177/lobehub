@@ -247,6 +247,40 @@ Runtime v2 还必须覆盖：
 - browser-service 缺少 token 时控制接口返回 503，错误 token 返回 401。
 - 公网或未接入 Bridge 的页面使用 `remote`；私网 Remote 目标必须在 `BROWSER_ALLOW_PRIVATE_HOSTS` 中。
 
+### iframe 真实交互体验验收
+
+部署镜像必须设置 `ENABLE_BROWSER_E2E_TEST_PANEL=1`，并将当前 Lobe origin 加入
+`BROWSER_IFRAME_ALLOWED_ORIGINS`。然后执行：
+
+```bash
+BROWSER_IFRAME_DEMO_URL='http://host:3211/browser-e2e?mode=iframe&path=/browser-business-demo/expense-approval' \
+  LOBE_E2E_EMAIL='e2e@example.com' \
+  LOBE_E2E_PASSWORD='e2e-password' \
+  pnpm test:browser-iframe-experience
+```
+
+无需登录的部署可以省略账号密码。验收脚本必须真实启动 Chromium，并验证：
+
+- 用户填写表单后打开 `_blank` 右侧标签，再切回时输入内容和原 iframe DOM 均保留。
+- `_blank` 和 `window.open` 只创建右侧标签，浏览器 context 始终只有一个 page。
+- AI 通过真实 `/api/browser/action` 对当前可见 iframe 执行 `fill` 和 `click`。
+- AI click 触发页面自己的 React 事件处理器，高亮存在且不拦截鼠标。
+- 普通链接在当前 iframe 内导航，不增加右侧标签或系统页面。
+- 页面无未处理异常。
+
+成功后证据写入 `.omx/artifacts/browser-iframe-experience/`：
+
+- `iframe-experience.json`：断言结果、iframe 数量、浏览器 page 数量和最终 URL。
+- `iframe-experience.png`：最终右侧浏览器状态截图。
+
+部署发布门禁也可以包含这项验收：
+
+```bash
+BROWSER_RELEASE_GATE_INCLUDE_IFRAME_EXPERIENCE=1 \
+  BROWSER_IFRAME_DEMO_URL='http://host:3211/browser-e2e?mode=iframe&path=/browser-business-demo/expense-approval' \
+  pnpm test:browser-release-gate
+```
+
 不启动服务的基础验证：
 
 ```bash

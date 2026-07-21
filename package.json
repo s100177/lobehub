@@ -118,6 +118,7 @@
     "test:browser-business-demo-local": "node scripts/verify-browser-business-demo-local.mjs",
     "test:browser-business-evidence-bundle": "node scripts/verify-browser-business-evidence-bundle.mjs",
     "test:browser-docker-ui-e2e": "node scripts/verify-browser-docker-ui-e2e.mjs",
+    "test:browser-iframe-experience": "node scripts/verify-browser-iframe-business-demo.mjs",
     "test:browser-real-smoke": "node scripts/verify-browser-real-smoke.mjs",
     "test:browser-release-gate": "node scripts/verify-browser-release-gate.mjs",
     "test:browser-skill-packs": "node scripts/verify-browser-skill-packs.mjs",

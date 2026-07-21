@@ -2,11 +2,11 @@
 
 import { BrowserIdentifier, type BrowserState } from '@lobechat/builtin-tool-browser';
 import { BrowserPortal } from '@lobechat/builtin-tool-browser/client';
-import { useEffect, useMemo, useState } from 'react';
-
-const sessionId = `docker-ui-e2e-${Date.now()}`;
+import { useEffect, useId, useMemo, useState } from 'react';
 
 const BrowserE2EPanel = () => {
+  const reactId = useId();
+  const sessionId = `docker-ui-e2e-${reactId.replaceAll(':', '')}`;
   const [state, setState] = useState<BrowserState>();
   const [error, setError] = useState<string>();
 
@@ -58,10 +58,11 @@ const BrowserE2EPanel = () => {
     navigate().catch((err) => {
       setError(err instanceof Error ? err.message : String(err));
     });
-  }, [fixtureUrl]);
+  }, [fixtureUrl, sessionId]);
 
   return (
     <main
+      data-browser-e2e-session-id={sessionId}
       style={{
         background: '#eef2f7',
         color: '#0f172a',

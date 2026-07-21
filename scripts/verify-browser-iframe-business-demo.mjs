@@ -1,23 +1,32 @@
+import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { resolve } from 'node:path';
+import path from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { chromium } = require(
-  require.resolve('playwright', { paths: [resolve(process.cwd(), '..', 'browser-service')] }),
-);
+const { chromium } = require('@playwright/test');
 
 const baseUrl = process.argv[2] || process.env.BROWSER_IFRAME_DEMO_URL;
 if (!baseUrl) {
   console.error(
-    'Usage: node scripts/verify-browser-iframe-business-demo.mjs http://host:3211/browser-e2e?mode=iframe&path=/browser-business-demo/expense-approval',
+    'Usage: node scripts/verify-browser-iframe-business-demo.mjs "http://host:3211/browser-e2e?mode=iframe&path=/browser-business-demo/expense-approval"',
   );
   process.exit(1);
 }
 
-const browser = await chromium.launch({ headless: true });
+const evidenceDir = path.resolve(
+  process.env.BROWSER_IFRAME_EVIDENCE_DIR || '.omx/artifacts/browser-iframe-experience',
+);
+const targetPath = '/browser-business-demo/expense-approval';
+
+const browser = await chromium.launch({ headless: process.env.HEADLESS !== 'false' });
 
 try {
-  const page = await browser.newPage({ viewport: { height: 900, width: 1440 } });
+  const context = await browser.newContext({ viewport: { height: 960, width: 1440 } });
+  const page = await context.newPage();
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+
   const email = process.env.LOBE_E2E_EMAIL;
   const password = process.env.LOBE_E2E_PASSWORD;
   if (email && password) {
@@ -31,103 +40,156 @@ try {
   }
 
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('iframe', { timeout: 30_000 });
+  const e2eRoot = page.locator('main[data-browser-e2e-session-id]');
+  await e2eRoot.waitFor({ timeout: 30_000 });
+  const sessionId = await e2eRoot.getAttribute('data-browser-e2e-session-id');
+  assert(sessionId, 'Browser E2E session id was not exposed by the protected test panel');
 
-  const findBusinessFrame = () =>
-    page
-      .frames()
-      .find(
-        (item) =>
-          item !== page.mainFrame() && /browser-business-demo\/expense-approval/.test(item.url()),
-      );
+  const businessIframes = page.locator(`iframe[src*="${targetPath}"]`);
+  await businessIframes.first().waitFor({ state: 'visible', timeout: 30_000 });
+  const originalIframe = businessIframes.first();
+  const originalFrame = originalIframe.contentFrame();
+  await originalFrame.getByRole('heading', { name: '费用审批' }).waitFor({ timeout: 30_000 });
 
-  const readIframeLocation = async () =>
-    page.evaluate(() => {
-      const candidates = [...document.querySelectorAll('iframe')];
-      return candidates.find((item) =>
-        item.contentWindow?.location.href?.includes('/browser-business-demo/expense-approval'),
-      )?.contentWindow?.location.href;
-    });
+  await originalFrame.locator('#reason').fill('用户手动填写且必须保留');
+  await originalFrame.getByTestId('policy-blank-link').click();
+  await assertIframeCount(businessIframes, 2);
+  const tabs = page.getByRole('tab');
+  await tabs.nth(1).waitFor({ timeout: 15_000 });
+  assert.equal(context.pages().length, 1, 'target=_blank escaped into a system browser page');
+  assert.equal(
+    await originalFrame.locator('#reason').inputValue(),
+    '用户手动填写且必须保留',
+    'Opening a right-panel tab destroyed the original form state',
+  );
 
-  const frame = findBusinessFrame();
-  if (!frame) throw new Error('Business demo iframe was not found');
+  await tabs.first().click();
+  await originalIframe.waitFor({ state: 'visible' });
 
-  await frame.getByText('新标签打开报销制度').waitFor({ timeout: 30_000 });
-  await frame.getByText('新标签打开报销制度').click();
-  await page.waitForFunction(() => {
-    const iframe = [...document.querySelectorAll('iframe')].find((item) =>
-      item.contentWindow?.location.href?.includes('/browser-business-demo/expense-approval'),
-    );
-    try {
-      return iframe?.contentWindow?.location.href?.includes('view=policy');
-    } catch {
-      return false;
-    }
+  await callBrowserAction(page, sessionId, 'inspect', {});
+  const fillRequest = callBrowserAction(page, sessionId, 'fill', {
+    selector: '#department',
+    text: '研发部',
   });
+  const fillHighlight = originalFrame.locator('[data-lobe-browser-highlight="fill"]');
+  await fillHighlight.waitFor({ state: 'visible', timeout: 10_000 });
+  assert.equal(
+    await fillHighlight.evaluate((element) => getComputedStyle(element).pointerEvents),
+    'none',
+    'AI action highlight blocks user interaction',
+  );
+  await fillRequest;
+  assert.equal(
+    await originalFrame.locator('#department').inputValue(),
+    '研发部',
+    'AI fill did not change the visible iframe DOM',
+  );
 
-  const blankLinkLocation = await readIframeLocation();
-  if (!blankLinkLocation?.includes('/browser-business-demo/expense-approval?view=policy')) {
-    throw new Error(`Expected iframe to stay in-panel with policy view, got ${blankLinkLocation}`);
-  }
+  await callBrowserAction(page, sessionId, 'click', {
+    selector: '[data-testid="preview-expense"]',
+  });
+  await originalFrame.getByText('预览报销单（1）').waitFor({ timeout: 10_000 });
+  assert.equal(
+    await originalFrame.getByTestId('preview-expense').getAttribute('data-click-count'),
+    '1',
+    'AI click bypassed the business page click handler',
+  );
 
-  await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('iframe', { timeout: 30_000 });
-  await page.waitForFunction(() =>
-    [...document.querySelectorAll('iframe')].some((item) => {
+  await originalFrame.getByTestId('policy-window-open').click();
+  await assertIframeCount(businessIframes, 3);
+  await tabs.nth(2).waitFor({ timeout: 15_000 });
+  assert.equal(context.pages().length, 1, 'window.open escaped into a system browser page');
+
+  const activeIframe = businessIframes.last();
+  const activeFrame = activeIframe.contentFrame();
+  await activeFrame.getByTestId('policy-normal-link').click();
+  await page.waitForFunction(
+    (pathName) => {
+      const candidates = [...document.querySelectorAll(`iframe[src*="${pathName}"]`)];
+      const active = candidates.at(-1);
       try {
-        return item.contentWindow?.location.href?.includes(
-          '/browser-business-demo/expense-approval',
-        );
+        return active?.contentWindow?.location.search.includes('view=normal-link');
       } catch {
         return false;
       }
-    }),
+    },
+    targetPath,
+    { timeout: 15_000 },
   );
+  await assertIframeCount(businessIframes, 3);
+  assert.equal(context.pages().length, 1, 'Normal navigation created an external page');
+  assert.equal(pageErrors.length, 0, `Browser page errors:\n${pageErrors.join('\n')}`);
 
-  const refreshedFrame = findBusinessFrame();
-  if (!refreshedFrame) throw new Error('Business demo iframe was not found after reload');
+  mkdirSync(evidenceDir, { recursive: true });
+  const screenshotFile = path.join(evidenceDir, 'iframe-experience.png');
+  const reportFile = path.join(evidenceDir, 'iframe-experience.json');
+  await page.screenshot({ fullPage: true, path: screenshotFile });
 
-  await refreshedFrame.evaluate(() => {
-    const link = document.createElement('a');
-    link.href = '/browser-business-demo/expense-approval?view=normal-link';
-    link.id = 'normal-link-test';
-    link.textContent = '普通链接跳转测试';
-    document.body.prepend(link);
-  });
-  await refreshedFrame.locator('#normal-link-test').click();
-  await page.waitForFunction(() => {
-    const iframe = [...document.querySelectorAll('iframe')].find((item) =>
-      item.contentWindow?.location.href?.includes('/browser-business-demo/expense-approval'),
-    );
-    try {
-      return iframe?.contentWindow?.location.href?.includes('view=normal-link');
-    } catch {
-      return false;
-    }
-  });
-
-  const normalLinkLocation = await readIframeLocation();
-  if (!normalLinkLocation?.includes('/browser-business-demo/expense-approval?view=normal-link')) {
-    throw new Error(`Expected normal iframe link to navigate in-panel, got ${normalLinkLocation}`);
-  }
-
-  const pages = browser.contexts().flatMap((context) => context.pages());
-  if (pages.length !== 1) {
-    throw new Error(`Expected no popup/system page, but browser context has ${pages.length} pages`);
-  }
-
-  console.log(
-    JSON.stringify(
-      {
-        blankLinkLocation,
-        normalLinkLocation,
-        ok: true,
-        pages: pages.length,
-      },
-      null,
-      2,
-    ),
-  );
+  const report = {
+    aiClickHandlerCount: 1,
+    aiFilledDepartment: '研发部',
+    browserPageCount: context.pages().length,
+    iframeCount: await businessIframes.count(),
+    manualInputPreserved: true,
+    normalLinkUrl: await activeIframe.evaluate((iframe) => iframe.contentWindow?.location.href),
+    ok: true,
+    pageErrors,
+    rightPanelBlankTab: true,
+    rightPanelWindowOpenTab: true,
+    sessionId,
+  };
+  writeFileSync(reportFile, `${JSON.stringify(report, null, 2)}\n`);
+  console.log(JSON.stringify({ ...report, evidenceDir, screenshotFile }, null, 2));
 } finally {
   await browser.close();
+}
+
+async function callBrowserAction(page, sessionId, action, params) {
+  const retryableCodes = new Set([
+    'BRIDGE_CLIENT_REPLACED',
+    'BRIDGE_DISCONNECTED',
+    'BRIDGE_NOT_CONNECTED',
+  ]);
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const response = await page.evaluate(
+      async ({
+        action: requestedAction,
+        params: requestedParams,
+        sessionId: requestedSessionId,
+      }) => {
+        const result = await fetch('/api/browser/action', {
+          body: JSON.stringify({
+            action: requestedAction,
+            params: requestedParams,
+            sessionId: requestedSessionId,
+          }),
+          cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          method: 'POST',
+        });
+        return {
+          body: await result.json().catch(() => undefined),
+          ok: result.ok,
+          status: result.status,
+        };
+      },
+      { action, params, sessionId },
+    );
+
+    if (response.ok) return response.body;
+    if (!retryableCodes.has(response.body?.code) || attempt === 19) {
+      assert.fail(
+        `${action} failed with HTTP ${response.status}: ${JSON.stringify(response.body)}`,
+      );
+    }
+    await page.waitForTimeout(250);
+  }
+
+  assert.fail(`${action} did not reach an active iframe Bridge`);
+}
+
+async function assertIframeCount(locator, expected) {
+  await locator.nth(expected - 1).waitFor({ state: 'attached', timeout: 15_000 });
+  assert.equal(await locator.count(), expected, `Expected ${expected} retained iframe tabs`);
 }

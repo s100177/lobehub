@@ -763,7 +763,16 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   );
 
   const prepareBridgeConnection = useCallback(
-    (iframe: HTMLIFrameElement, expectedOrigin: string) => {
+    (iframe: HTMLIFrameElement, expectedOrigin: string, force = false) => {
+      const currentConnection = bridgeConnectionRef.current;
+      if (
+        !force &&
+        currentConnection?.iframeWindow === iframe.contentWindow &&
+        currentConnection.expectedOrigin === expectedOrigin
+      ) {
+        return;
+      }
+
       loadIdRef.current += 1;
       void cleanupBridgeConnection();
 
@@ -1068,7 +1077,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     if (isIframeMode) installIframeSamePanelNavigationGuard(iframe, openPanelTab);
     if (!isIframeMode || !expectedBridgeOrigin || tabId !== activeTabId) return;
     if (tabId) loadedIframeTabsRef.current.add(tabId);
-    prepareBridgeConnection(iframe, expectedBridgeOrigin);
+    prepareBridgeConnection(iframe, expectedBridgeOrigin, true);
   };
 
   return (

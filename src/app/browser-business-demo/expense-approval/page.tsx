@@ -17,9 +17,22 @@ const inputStyle = {
 } satisfies CSSProperties;
 
 const Page = () => {
+  const [clickCount, setClickCount] = useState(0);
   const [submitted, setSubmitted] = useState(false);
+  const [view, setView] = useState<string>();
 
   useEffect(() => {
+    const currentView = new URLSearchParams(window.location.search).get('view') || undefined;
+    setView(currentView);
+    document.title =
+      currentView === 'policy'
+        ? '报销制度'
+        : currentView === 'window-open'
+          ? '费用说明'
+          : currentView === 'normal-link'
+            ? '报销制度详情'
+            : '费用审批';
+
     if (window.parent === window) return;
 
     return installBrowserBridge();
@@ -38,6 +51,28 @@ const Page = () => {
         padding: 32,
       }}
     >
+      {view ? (
+        <aside
+          data-testid="demo-view-state"
+          style={{
+            background: '#0f172a',
+            color: '#fff',
+            fontSize: 14,
+            fontWeight: 800,
+            padding: '10px 14px',
+            position: 'sticky',
+            textAlign: 'center',
+            top: 0,
+            zIndex: 2,
+          }}
+        >
+          {view === 'policy'
+            ? '报销制度：差旅费用需填写部门和事由'
+            : view === 'window-open'
+              ? '费用说明：预览不会提交审批'
+              : '普通链接已在当前标签完成导航'}
+        </aside>
+      ) : null}
       <section
         style={{
           background: 'rgba(255, 255, 255, 0.86)',
@@ -70,6 +105,7 @@ const Page = () => {
             报销金额 ¥128.00。请补齐部门并在提交审批前停下。
           </p>
           <a
+            data-testid="policy-blank-link"
             href="/browser-business-demo/expense-approval?view=policy"
             target="_blank"
             style={{
@@ -80,6 +116,33 @@ const Page = () => {
           >
             新标签打开报销制度
           </a>
+          <a
+            data-testid="policy-normal-link"
+            href="/browser-business-demo/expense-approval?view=normal-link"
+            style={{ color: '#1d4ed8', fontWeight: 800, width: 'max-content' }}
+          >
+            当前标签查看报销制度
+          </a>
+          <button
+            data-testid="policy-window-open"
+            type="button"
+            style={{
+              background: 'transparent',
+              border: 0,
+              color: '#1d4ed8',
+              cursor: 'pointer',
+              fontSize: 16,
+              fontWeight: 800,
+              padding: 0,
+              textAlign: 'start',
+              width: 'max-content',
+            }}
+            onClick={() =>
+              window.open('/browser-business-demo/expense-approval?view=window-open', '_blank')
+            }
+          >
+            新标签查看费用说明
+          </button>
         </header>
 
         <form
@@ -149,6 +212,26 @@ const Page = () => {
               表单已提交。自动化 evidence 测试不应触发这个状态。
             </p>
           ) : null}
+
+          <button
+            data-click-count={clickCount}
+            data-testid="preview-expense"
+            type="button"
+            style={{
+              background: '#0f766e',
+              border: 0,
+              borderRadius: 16,
+              color: '#fff',
+              cursor: 'pointer',
+              fontSize: 16,
+              fontWeight: 800,
+              padding: '14px 18px',
+              width: 'max-content',
+            }}
+            onClick={() => setClickCount((count) => count + 1)}
+          >
+            预览报销单（{clickCount}）
+          </button>
 
           <button
             className="risk"
