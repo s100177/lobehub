@@ -97,7 +97,7 @@ describe('BrowserPanel clean browser rendering', () => {
     expect(iframe.getAttribute('sandbox')).not.toContain('allow-popups');
   });
 
-  it('keeps target blank links inside same-origin iframe pages', () => {
+  it('routes target blank links through the same-panel tab callback', () => {
     const documentStub = document.implementation.createHTMLDocument('Business');
     documentStub.body.innerHTML = '<a id="policy" href="/policy" target="_blank">Policy</a>';
     const iframeWindow = {
@@ -109,11 +109,9 @@ describe('BrowserPanel clean browser rendering', () => {
       contentWindow: iframeWindow,
     } as unknown as HTMLIFrameElement;
 
-    expect(installIframeSamePanelNavigationGuard(iframe)).toBe(true);
-    expect(documentStub.getElementById('policy')?.getAttribute('target')).toBe('_self');
-    expect(documentStub.getElementById('policy')?.getAttribute('data-lobe-original-target')).toBe(
-      '_blank',
-    );
+    const openTab = vi.fn();
+    expect(installIframeSamePanelNavigationGuard(iframe, openTab)).toBe(true);
+    expect(documentStub.getElementById('policy')?.getAttribute('target')).toBe('_blank');
 
     const link = documentStub.getElementById('policy')!;
     const clickEvent = new MouseEvent('click', {
@@ -125,7 +123,8 @@ describe('BrowserPanel clean browser rendering', () => {
     link.dispatchEvent(clickEvent);
 
     expect(clickEvent.defaultPrevented).toBe(true);
-    expect(iframeWindow.location.href).toBe('http://localhost/policy');
+    expect(openTab).toHaveBeenCalledWith('http://localhost/policy', 'Policy');
+    expect(iframeWindow.location.href).toBe('http://localhost/business');
   });
 
   it('keeps window.open calls inside same-origin iframe pages', () => {
@@ -138,12 +137,584 @@ describe('BrowserPanel clean browser rendering', () => {
       contentWindow: iframeWindow,
     } as unknown as HTMLIFrameElement;
 
-    expect(installIframeSamePanelNavigationGuard(iframe)).toBe(true);
+    const openTab = vi.fn();
+    expect(installIframeSamePanelNavigationGuard(iframe, openTab)).toBe(true);
 
     const openedWindow = (iframeWindow as unknown as Window).open('/details');
 
     expect(openedWindow).toBe(iframeWindow);
-    expect(iframeWindow.location.href).toBe('http://localhost/details');
+    expect(openTab).toHaveBeenCalledWith('http://localhost/details', undefined);
+    expect(iframeWindow.location.href).toBe('http://localhost/business');
+  });
+
+  it('opens authenticated bridge navigation in a right-panel tab', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (url === '/api/browser/bridge' && body?.action === 'connect') {
+        return { json: async () => ({ connected: true }), ok: true, status: 200 };
+      }
+      if (url.startsWith('/api/browser/bridge?')) {
+        return new Promise((_, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('The operation was aborted.', 'AbortError')),
+            { once: true },
+          );
+        });
+      }
+      if (url === '/api/browser/bridge' && body?.action === 'disconnect') {
+        return { json: async () => ({ ok: true }), ok: true, status: 200 };
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <BrowserPanel
+        sessionId="session-tabs"
+        state={{
+          embeddable: true,
+          iframeUrl: 'https://app.example/form',
+          mode: 'iframe',
+          title: 'Form',
+          url: 'https://app.example/form',
+        }}
+      />,
+    );
+    const iframe = screen.getByTitle('Form') as HTMLIFrameElement;
+    iframe.dataset.preservedState = 'original-form-state';
+    const iframeWindow = { postMessage: vi.fn() } as unknown as Window;
+    Object.defineProperty(iframe, 'contentWindow', { configurable: true, value: iframeWindow });
+    fireEvent.load(iframe);
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          source: BROWSER_BRIDGE_SOURCE,
+          title: 'Expense form',
+          type: 'ready',
+          url: 'https://app.example/form?draft=42',
+          version: BROWSER_BRIDGE_VERSION,
+        },
+        origin: 'https://app.example',
+        source: iframeWindow,
+      }),
+    );
+
+    expect(await screen.findByText('Expense form')).toBeInTheDocument();
+    expect(screen.getByText('https://app.example/form?draft=42')).toBeInTheDocument();
+    expect(iframe).toHaveAttribute('src', 'https://app.example/form');
+
+    let clientId = '';
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([requestUrl, requestInit]) =>
+          requestUrl === '/api/browser/bridge' &&
+          JSON.parse(String(requestInit?.body)).action === 'connect',
+      );
+      expect(call).toBeDefined();
+      clientId = JSON.parse(String(call?.[1]?.body)).clientId;
+    });
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          clientId,
+          source: BROWSER_BRIDGE_SOURCE,
+          title: 'Policy',
+          type: 'open-tab',
+          url: 'https://app.example/policy',
+          version: BROWSER_BRIDGE_VERSION,
+        },
+        origin: 'https://app.example',
+        source: iframeWindow,
+      }),
+    );
+
+    expect(await screen.findByRole('tab', { name: /Policy/ })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    const policyIframe = document.querySelector('iframe[title="Policy"]');
+    expect(policyIframe).toHaveAttribute('src', 'https://app.example/policy');
+    fireEvent.click(screen.getByRole('tab', { name: /Expense form/ }));
+    const preservedIframe = document.querySelector('iframe[title="Expense form"]');
+    expect(preservedIframe).toBe(iframe);
+    expect(preservedIframe).toHaveAttribute('data-preserved-state', 'original-form-state');
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            source: BROWSER_BRIDGE_SOURCE,
+            title: 'Expense form',
+            type: 'ready',
+            url: 'https://app.example/form?draft=42',
+            version: BROWSER_BRIDGE_VERSION,
+          },
+          origin: 'https://app.example',
+          source: iframeWindow,
+        }),
+      );
+    });
+    await waitFor(() => {
+      const connectCalls = fetchMock.mock.calls.filter(
+        ([requestUrl, requestInit]) =>
+          requestUrl === '/api/browser/bridge' &&
+          JSON.parse(String(requestInit?.body)).action === 'connect',
+      );
+      expect(connectCalls).toHaveLength(2);
+      expect(JSON.parse(String(connectCalls[1][1]?.body)).clientId).not.toBe(clientId);
+    });
+  });
+
+  it('waits for server confirmation before opening an AI-created iframe tab', async () => {
+    let resolveResult: (() => void) | undefined;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (input === '/api/browser/bridge' && body?.action === 'connect') {
+        return { json: async () => ({ connected: true }), ok: true, status: 200 };
+      }
+      if (String(input).startsWith('/api/browser/bridge?')) {
+        return new Promise((_, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('The operation was aborted.', 'AbortError')),
+            { once: true },
+          );
+        });
+      }
+      if (input === '/api/browser/bridge' && body?.action === 'result') {
+        await new Promise<void>((resolve) => {
+          resolveResult = resolve;
+        });
+        return { json: async () => ({ ok: true }), ok: true, status: 200 };
+      }
+      if (input === '/api/browser/bridge' && body?.action === 'disconnect') {
+        return { json: async () => ({ ok: true }), ok: true, status: 200 };
+      }
+      if (input === '/api/browser/action' && body?.action === 'navigate') {
+        return {
+          json: async () => ({
+            embeddable: false,
+            mode: 'remote',
+            title: 'External',
+            url: body.params.url,
+          }),
+          ok: true,
+          status: 200,
+        };
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <BrowserPanel
+        sessionId="session-ai-tab"
+        state={{
+          embeddable: true,
+          iframeUrl: 'https://app.example/form',
+          mode: 'iframe',
+          title: 'Form',
+          url: 'https://app.example/form',
+        }}
+      />,
+    );
+    const iframe = document.querySelector('iframe[title="Form"]') as HTMLIFrameElement;
+    const iframeWindow = { postMessage: vi.fn() } as unknown as Window;
+    Object.defineProperty(iframe, 'contentWindow', { configurable: true, value: iframeWindow });
+    fireEvent.load(iframe);
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          source: BROWSER_BRIDGE_SOURCE,
+          type: 'ready',
+          url: 'https://app.example/form',
+          version: BROWSER_BRIDGE_VERSION,
+        },
+        origin: 'https://app.example',
+        source: iframeWindow,
+      }),
+    );
+    let clientId = '';
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([requestUrl, requestInit]) =>
+          requestUrl === '/api/browser/bridge' &&
+          JSON.parse(String(requestInit?.body)).action === 'connect',
+      );
+      expect(call).toBeDefined();
+      clientId = JSON.parse(String(call?.[1]?.body)).clientId;
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            clientId,
+            commandId: 'click-policy',
+            source: BROWSER_BRIDGE_SOURCE,
+            title: 'Policy',
+            type: 'open-tab',
+            url: 'https://app.example/policy',
+            version: BROWSER_BRIDGE_VERSION,
+          },
+          origin: 'https://app.example',
+          source: iframeWindow,
+        }),
+      );
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            clientId,
+            commandId: 'click-policy',
+            epoch: 1,
+            result: { title: 'Policy', url: 'https://app.example/policy' },
+            source: BROWSER_BRIDGE_SOURCE,
+            type: 'result',
+            version: BROWSER_BRIDGE_VERSION,
+          },
+          origin: 'https://app.example',
+          source: iframeWindow,
+        }),
+      );
+    });
+    expect(screen.queryByRole('tab', { name: /Policy/ })).not.toBeInTheDocument();
+    await waitFor(() => expect(resolveResult).toBeDefined());
+    await act(async () => resolveResult?.());
+    expect(await screen.findByRole('tab', { name: /Policy/ })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+  });
+
+  it('rejects cross-origin iframe tab requests instead of embedding an untrusted page', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (input === '/api/browser/bridge' && body?.action === 'connect') {
+        return { json: async () => ({ connected: true }), ok: true, status: 200 };
+      }
+      if (String(input).startsWith('/api/browser/bridge?')) {
+        return new Promise((_, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('The operation was aborted.', 'AbortError')),
+            { once: true },
+          );
+        });
+      }
+      if (input === '/api/browser/bridge' && body?.action === 'disconnect') {
+        return { json: async () => ({ ok: true }), ok: true, status: 200 };
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <BrowserPanel
+        sessionId="session-cross-origin"
+        state={{
+          embeddable: true,
+          iframeUrl: 'https://app.example/form',
+          mode: 'iframe',
+          title: 'Form',
+          url: 'https://app.example/form',
+        }}
+      />,
+    );
+    const iframe = document.querySelector('iframe[title="Form"]') as HTMLIFrameElement;
+    const iframeWindow = { postMessage: vi.fn() } as unknown as Window;
+    Object.defineProperty(iframe, 'contentWindow', { configurable: true, value: iframeWindow });
+    fireEvent.load(iframe);
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          source: BROWSER_BRIDGE_SOURCE,
+          type: 'ready',
+          url: 'https://app.example/form',
+          version: BROWSER_BRIDGE_VERSION,
+        },
+        origin: 'https://app.example',
+        source: iframeWindow,
+      }),
+    );
+    let clientId = '';
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([requestUrl, requestInit]) =>
+          requestUrl === '/api/browser/bridge' &&
+          JSON.parse(String(requestInit?.body)).action === 'connect',
+      );
+      expect(call).toBeDefined();
+      clientId = JSON.parse(String(call?.[1]?.body)).clientId;
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            clientId,
+            source: BROWSER_BRIDGE_SOURCE,
+            title: 'External',
+            type: 'open-tab',
+            url: 'https://external.example/page',
+            version: BROWSER_BRIDGE_VERSION,
+          },
+          origin: 'https://app.example',
+          source: iframeWindow,
+        }),
+      );
+    });
+
+    expect(await screen.findByText(/untrusted origin/i)).toBeInTheDocument();
+    expect(document.querySelector('iframe[src="https://external.example/page"]')).toBeNull();
+
+    fireEvent.click(screen.getByText('Use Remote'));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith('/api/browser/action', {
+        body: JSON.stringify({
+          action: 'navigate',
+          params: { mode: 'remote', url: 'https://external.example/page' },
+          sessionId: 'session-cross-origin',
+        }),
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      }),
+    );
+  });
+
+  it('shows live AI action feedback without adding a click-blocking layer', async () => {
+    let resolveResult: (() => void) | undefined;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (input === '/api/browser/bridge' && body?.action === 'connect') {
+        return { json: async () => ({ connected: true }), ok: true, status: 200 };
+      }
+      if (String(input).startsWith('/api/browser/bridge?')) {
+        return new Promise((_, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('The operation was aborted.', 'AbortError')),
+            { once: true },
+          );
+        });
+      }
+      if (input === '/api/browser/bridge' && body?.action === 'result') {
+        await new Promise<void>((resolve) => {
+          resolveResult = resolve;
+        });
+        return { json: async () => ({ ok: true }), ok: true, status: 200 };
+      }
+      if (input === '/api/browser/bridge' && body?.action === 'disconnect') {
+        return { json: async () => ({ ok: true }), ok: true, status: 200 };
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <BrowserPanel
+        sessionId="session-live-action"
+        state={{
+          embeddable: true,
+          iframeUrl: 'https://app.example/form',
+          mode: 'iframe',
+          taskState: 'acting',
+          title: 'Form',
+          url: 'https://app.example/form',
+          viewport: { height: 800, width: 1200 },
+        }}
+      />,
+    );
+    const iframe = document.querySelector('iframe[title="Form"]') as HTMLIFrameElement;
+    const iframeWindow = { postMessage: vi.fn() } as unknown as Window;
+    Object.defineProperty(iframe, 'contentWindow', { configurable: true, value: iframeWindow });
+    fireEvent.load(iframe);
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          source: BROWSER_BRIDGE_SOURCE,
+          type: 'ready',
+          url: 'https://app.example/form',
+          version: BROWSER_BRIDGE_VERSION,
+        },
+        origin: 'https://app.example',
+        source: iframeWindow,
+      }),
+    );
+    let clientId = '';
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([requestUrl, requestInit]) =>
+          requestUrl === '/api/browser/bridge' &&
+          JSON.parse(String(requestInit?.body)).action === 'connect',
+      );
+      expect(call).toBeDefined();
+      clientId = JSON.parse(String(call?.[1]?.body)).clientId;
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            action: 'fill',
+            clientId,
+            commandId: 'fill-department',
+            phase: 'start',
+            source: BROWSER_BRIDGE_SOURCE,
+            target: {
+              height: 40,
+              label: '报销部门',
+              selector: '#department',
+              width: 240,
+              x: 80,
+              y: 120,
+            },
+            type: 'action-state',
+            version: BROWSER_BRIDGE_VERSION,
+          },
+          origin: 'https://app.example',
+          source: iframeWindow,
+        }),
+      );
+    });
+
+    const target = await screen.findByLabelText('Current browser target box');
+    expect(target).toHaveTextContent('AI 正在输入：报销部门');
+    expect(target).toHaveStyle({ pointerEvents: 'none' });
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            action: 'fill',
+            clientId,
+            commandId: 'fill-department',
+            phase: 'success',
+            source: BROWSER_BRIDGE_SOURCE,
+            type: 'action-state',
+            version: BROWSER_BRIDGE_VERSION,
+          },
+          origin: 'https://app.example',
+          source: iframeWindow,
+        }),
+      );
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            clientId,
+            commandId: 'fill-department',
+            epoch: 1,
+            result: { filled: true },
+            source: BROWSER_BRIDGE_SOURCE,
+            type: 'result',
+            version: BROWSER_BRIDGE_VERSION,
+          },
+          origin: 'https://app.example',
+          source: iframeWindow,
+        }),
+      );
+    });
+
+    await waitFor(() => expect(resolveResult).toBeDefined());
+    expect(target).toHaveTextContent('AI 正在输入：报销部门');
+    await act(async () => resolveResult?.());
+    expect(await screen.findByText('AI 已完成：报销部门')).toBeInTheDocument();
+  });
+
+  it('caps iframe tabs to keep page resources bounded', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (input === '/api/browser/bridge' && body?.action === 'connect') {
+        return { json: async () => ({ connected: true }), ok: true, status: 200 };
+      }
+      if (String(input).startsWith('/api/browser/bridge?')) {
+        return new Promise((_, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('The operation was aborted.', 'AbortError')),
+            { once: true },
+          );
+        });
+      }
+      if (input === '/api/browser/bridge' && body?.action === 'disconnect') {
+        return { json: async () => ({ ok: true }), ok: true, status: 200 };
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <BrowserPanel
+        sessionId="session-tab-limit"
+        state={{
+          embeddable: true,
+          iframeUrl: 'https://app.example/form',
+          mode: 'iframe',
+          title: 'Form',
+          url: 'https://app.example/form',
+        }}
+      />,
+    );
+    let activeIframe = document.querySelector('iframe[title="Form"]') as HTMLIFrameElement;
+    let activeWindow = { postMessage: vi.fn() } as unknown as Window;
+    Object.defineProperty(activeIframe, 'contentWindow', {
+      configurable: true,
+      value: activeWindow,
+    });
+    fireEvent.load(activeIframe);
+
+    for (let index = 1; index <= 8; index += 1) {
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              source: BROWSER_BRIDGE_SOURCE,
+              type: 'ready',
+              url: `https://app.example/${index === 1 ? 'form' : `page-${index - 1}`}`,
+              version: BROWSER_BRIDGE_VERSION,
+            },
+            origin: 'https://app.example',
+            source: activeWindow,
+          }),
+        );
+      });
+      let clientId = '';
+      await waitFor(() => {
+        const connectCalls = fetchMock.mock.calls.filter(
+          ([requestUrl, requestInit]) =>
+            requestUrl === '/api/browser/bridge' &&
+            JSON.parse(String(requestInit?.body)).action === 'connect',
+        );
+        const call = connectCalls.at(-1);
+        expect(call).toBeDefined();
+        clientId = JSON.parse(String(call?.[1]?.body)).clientId;
+      });
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              clientId,
+              source: BROWSER_BRIDGE_SOURCE,
+              title: `Page ${index}`,
+              type: 'open-tab',
+              url: `https://app.example/page-${index}`,
+              version: BROWSER_BRIDGE_VERSION,
+            },
+            origin: 'https://app.example',
+            source: activeWindow,
+          }),
+        );
+      });
+      if (index === 8) break;
+      activeIframe = document.querySelector(`iframe[title="Page ${index}"]`) as HTMLIFrameElement;
+      activeWindow = { postMessage: vi.fn() } as unknown as Window;
+      Object.defineProperty(activeIframe, 'contentWindow', {
+        configurable: true,
+        value: activeWindow,
+      });
+      fireEvent.load(activeIframe);
+    }
+
+    expect(document.querySelectorAll('iframe')).toHaveLength(8);
+    expect(await screen.findByText(/up to 8 iframe tabs/i)).toBeInTheDocument();
+    expect(document.querySelector('iframe[src="https://app.example/page-8"]')).toBeNull();
   });
 
   it('renders the remote viewer when remote mode is selected', () => {

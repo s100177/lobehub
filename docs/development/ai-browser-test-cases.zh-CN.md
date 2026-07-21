@@ -237,6 +237,12 @@ Runtime v2 还必须覆盖：
 - iframe Bridge 只接受预期 parent window + origin 的命令，拒绝伪造消息。
 - AI `fill/click` 改变的就是用户当前看到的 iframe DOM，不存在隐藏 Playwright fallback。
 - Bridge 断开或动作失败时返回真实错误，不能报告成功。
+- 用户点击直接走 iframe 原生 DOM，不等待 Host 或 Playwright；AI click 也必须触发页面自己的事件监听器。
+- `target="_blank"` / `window.open` 在右侧创建同源标签，切换后原 iframe DOM、输入和滚动状态不丢失。
+- 隐藏标签不接收 AI 命令；重新激活时使用新的 Bridge client 建连，旧 client 结果被拒绝。
+- 跨 origin 新标签被拒绝并提示 Remote；超过 8 个标签时提示先关闭标签。
+- AI 动作先显示页面内目标高亮和面板状态，高亮层不拦截鼠标。
+- AI 动作触发新标签时，服务端结果确认前不得切换；确认失败时不得制造成功视觉状态。
 - client 重连后旧 document epoch 的结果返回 `BRIDGE_STALE_RESULT`。
 - browser-service 缺少 token 时控制接口返回 503，错误 token 返回 401。
 - 公网或未接入 Bridge 的页面使用 `remote`；私网 Remote 目标必须在 `BROWSER_ALLOW_PRIVATE_HOSTS` 中。

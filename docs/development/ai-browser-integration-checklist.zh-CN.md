@@ -14,6 +14,9 @@
 - [ ] 每个核心页面都能判断是否登录。
 - [ ] iframe 业务页已安装 Browser Bridge，并固定 `allowedParentOrigin`。
 - [ ] iframe 业务页 CSP `frame-ancestors` 允许 Lobe origin。
+- [ ] 业务页的普通链接、`target="_blank"`、`window.open`、SPA 路由和表单事件已在右侧面板逐项验证。
+- [ ] AI click/fill 使用页面真实事件，不依赖隐藏 Playwright 或直接 URL 跳转。
+- [ ] AI 操作高亮没有遮挡鼠标，标签切换不会丢失业务表单和页面内存状态。
 - [ ] 业务页 origin 已加入 `BROWSER_IFRAME_ALLOWED_ORIGINS`。
 - [ ] 需要 Remote 访问的私网 host 已逐项加入 `BROWSER_ALLOW_PRIVATE_HOSTS`。
 - [ ] `BROWSER_SERVICE_TOKEN` 已生成并同时注入 Lobe 与 browser-service。

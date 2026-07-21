@@ -13,39 +13,33 @@ import {
 } from '../../bridge';
 import type { BrowserPageState, BrowserState, BrowserTaskState } from '../../types';
 
-const guardedIframeDocuments = new WeakSet<Document>();
+const guardedIframeDocuments = new WeakMap<Document, { openPanelTab: OpenPanelTab }>();
 
-export const installIframeSamePanelNavigationGuard = (iframe: HTMLIFrameElement) => {
+type OpenPanelTab = (url: string, title?: string) => void;
+
+export const installIframeSamePanelNavigationGuard = (
+  iframe: HTMLIFrameElement,
+  openPanelTab: OpenPanelTab,
+) => {
   try {
     const iframeWindow = iframe.contentWindow;
     const iframeDocument = iframe.contentDocument || iframeWindow?.document;
     if (!iframeWindow || !iframeDocument) return false;
-    if (guardedIframeDocuments.has(iframeDocument)) return true;
+    const existingGuard = guardedIframeDocuments.get(iframeDocument);
+    if (existingGuard) {
+      existingGuard.openPanelTab = openPanelTab;
+      return true;
+    }
+    const guard = { openPanelTab };
+    guardedIframeDocuments.set(iframeDocument, guard);
 
-    guardedIframeDocuments.add(iframeDocument);
-
-    const navigateInsideIframe = (href: string | URL | undefined | null) => {
+    const openInsidePanel = (href: string | URL | undefined | null, title?: string) => {
       if (!href) return null;
 
       const targetUrl = new URL(String(href), iframeWindow.location.href || iframeDocument.baseURI);
-      iframeWindow.location.href = targetUrl.toString();
+      guard.openPanelTab(targetUrl.toString(), title);
       return iframeWindow;
     };
-
-    const normalizeLinks = () => {
-      for (const link of iframeDocument.querySelectorAll('a[href][target="_blank"]')) {
-        link.setAttribute('target', '_self');
-        link.setAttribute('data-lobe-original-target', '_blank');
-      }
-    };
-
-    normalizeLinks();
-
-    const observer = new MutationObserver(normalizeLinks);
-    observer.observe(iframeDocument.documentElement, {
-      childList: true,
-      subtree: true,
-    });
 
     iframeDocument.addEventListener(
       'click',
@@ -68,12 +62,23 @@ export const installIframeSamePanelNavigationGuard = (iframe: HTMLIFrameElement)
         if (!opensNewContext) return;
 
         event.preventDefault();
-        navigateInsideIframe(link.getAttribute('href') || link.href);
+        openInsidePanel(
+          link.getAttribute('href') || link.href,
+          link.textContent?.trim() || undefined,
+        );
       },
       true,
     );
 
-    iframeWindow.open = ((url?: string | URL) => navigateInsideIframe(url)) as typeof window.open;
+    iframeWindow.open = ((url?: string | URL, target?: string) => {
+      if (target?.toLowerCase() === '_self') {
+        if (url)
+          iframeWindow.location.href = new URL(String(url), iframeWindow.location.href).toString();
+        return iframeWindow;
+      }
+
+      return openInsidePanel(url);
+    }) as typeof window.open;
 
     return true;
   } catch {
@@ -130,6 +135,38 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
 
     background: #fff;
   `,
+  iframeHidden: css`
+    pointer-events: none;
+    position: absolute;
+    visibility: hidden;
+  `,
+  loadBar: css`
+    pointer-events: none;
+
+    position: absolute;
+    z-index: 6;
+    inset-block-start: 0;
+    inset-inline-start: 0;
+
+    width: 42%;
+    height: 2px;
+
+    background: ${cssVar.colorPrimary};
+
+    animation: browser-load 1s ease-in-out infinite;
+
+    @keyframes browser-load {
+      0% {
+        transform: translateX(-100%);
+        opacity: 0.45;
+      }
+
+      100% {
+        transform: translateX(340%);
+        opacity: 1;
+      }
+    }
+  `,
   modeBadge: css`
     flex: none;
 
@@ -168,6 +205,90 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
     white-space: pre-wrap;
 
     background: ${cssVar.colorFillQuaternary};
+  `,
+  tab: css`
+    cursor: pointer;
+
+    overflow: hidden;
+    display: flex;
+    flex: 0 1 180px;
+    gap: 6px;
+    align-items: center;
+
+    min-width: 92px;
+    max-width: 180px;
+    height: 30px;
+    padding-inline: 9px 5px;
+    border: 0;
+    border-radius: 6px 6px 0 0;
+
+    font-size: 12px;
+    color: ${cssVar.colorTextSecondary};
+
+    background: ${cssVar.colorFillQuaternary};
+
+    &[data-active='true'] {
+      color: ${cssVar.colorText};
+      background: ${cssVar.colorBgContainer};
+    }
+  `,
+  tabActivate: css`
+    cursor: pointer;
+
+    overflow: hidden;
+    flex: 1;
+
+    min-width: 0;
+    height: 100%;
+    padding: 0;
+    border: 0;
+
+    font: inherit;
+    color: inherit;
+    text-align: start;
+
+    background: transparent;
+  `,
+  tabClose: css`
+    cursor: pointer;
+
+    flex: none;
+
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+
+    font-size: 16px;
+    line-height: 18px;
+    color: ${cssVar.colorTextSecondary};
+
+    background: transparent;
+
+    &:hover {
+      color: ${cssVar.colorText};
+      background: ${cssVar.colorFillQuaternary};
+    }
+  `,
+  tabLabel: css`
+    overflow: hidden;
+    flex: 1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  `,
+  tabs: css`
+    overflow-x: auto;
+    display: flex;
+    flex: none;
+    gap: 2px;
+    align-items: end;
+
+    min-height: 32px;
+    padding-inline: 8px;
+    border-block-end: 1px solid ${cssVar.colorBorderSecondary};
+
+    background: ${cssVar.colorBgElevated};
   `,
   targetBox: css`
     pointer-events: none;
@@ -297,6 +418,20 @@ interface BridgeConnection {
   timeoutId?: number;
 }
 
+interface BrowserPanelTab {
+  id: string;
+  srcUrl: string;
+  title: string;
+  url: string;
+}
+
+interface ActiveBridgeAction {
+  action: string;
+  commandId: string;
+  phase: 'error' | 'start' | 'success';
+  target?: BrowserPageState['targetHighlight'];
+}
+
 const controllingStates = new Set<BrowserTaskState>(['ai_controlling', 'acting', 'verifying']);
 
 const hasTargetBox = (
@@ -313,11 +448,17 @@ const hasTargetBox = (
   (target?.height ?? 0) > 0;
 
 const BRIDGE_TIMEOUT_MS = 1500;
+const MAX_IFRAME_TABS = 8;
 
 const createBridgeClientId = () =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `bridge-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+const createBrowserTabId = () =>
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 const getOrigin = (url: string | undefined) => {
   if (!url) return;
@@ -341,15 +482,52 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     state.bridgeStatus,
   );
   const [isSwitching, setIsSwitching] = useState(false);
+  const [isPageLoading, setIsPageLoading] = useState(false);
+  const [activeBridgeAction, setActiveBridgeAction] = useState<ActiveBridgeAction>();
+  const [remoteCandidateUrl, setRemoteCandidateUrl] = useState<string>();
   const [switchError, setSwitchError] = useState<string>();
+  const initialTabIdRef = useRef(createBrowserTabId());
+  const [tabs, setTabs] = useState<BrowserPanelTab[]>(() => [
+    {
+      id: initialTabIdRef.current,
+      srcUrl: state.iframeUrl || state.url || '',
+      title: state.title || 'Browser',
+      url: state.iframeUrl || state.url || '',
+    },
+  ]);
+  const [activeTabId, setActiveTabId] = useState(initialTabIdRef.current);
+  const activeTabIdRef = useRef(activeTabId);
+  const tabsRef = useRef(tabs);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const iframeRefs = useRef(new Map<string, HTMLIFrameElement>());
+  const loadedIframeTabsRef = useRef(new Set<string>());
+  const pendingCommandTabsRef = useRef(new Map<string, { title?: string; url: string }>());
   const bridgeConnectionRef = useRef<BridgeConnection | undefined>(undefined);
   const loadIdRef = useRef(0);
+
+  useEffect(() => {
+    activeTabIdRef.current = activeTabId;
+  }, [activeTabId]);
+
+  useEffect(() => {
+    tabsRef.current = tabs;
+  }, [tabs]);
 
   useEffect(() => {
     setLocalState(state);
     setBridgeStatus(state.bridgeStatus);
     setSwitchError(undefined);
+    setRemoteCandidateUrl(undefined);
+    if (state.mode === 'iframe') {
+      const nextUrl = state.iframeUrl || state.url;
+      setTabs((previous) =>
+        previous.map((tab) =>
+          tab.id === activeTabIdRef.current && nextUrl
+            ? { ...tab, srcUrl: nextUrl, title: state.title || tab.title, url: nextUrl }
+            : tab,
+        ),
+      );
+    }
   }, [state]);
 
   const currentState = localState;
@@ -357,18 +535,79 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   const taskState = currentState?.taskState;
   const isControlling = taskState ? controllingStates.has(taskState) : false;
   const { iframeUrl, mode = 'remote', result, title, url } = currentState || {};
-  const displayUrl = iframeUrl || url;
   const isIframeMode = mode === 'iframe';
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) || tabs[0];
+  const displayTitle = isIframeMode ? activeTab?.title || title : title;
+  const displayUrl = isIframeMode ? activeTab?.url || iframeUrl || url : iframeUrl || url;
   const expectedBridgeOrigin = isIframeMode ? getOrigin(displayUrl) : undefined;
+  const trustedIframeOrigin = isIframeMode ? getOrigin(iframeUrl || url) : undefined;
+
+  const openPanelTab = useCallback(
+    (nextUrl: string, nextTitle?: string) => {
+      if (!trustedIframeOrigin || getOrigin(nextUrl) !== trustedIframeOrigin) {
+        setRemoteCandidateUrl(nextUrl);
+        setSwitchError('This link uses an untrusted origin. Open it in Remote mode.');
+        return;
+      }
+
+      const currentTabs = tabsRef.current;
+      const existing = currentTabs.find((tab) => tab.url === nextUrl);
+      if (existing) {
+        setActiveTabId(existing.id);
+        return;
+      }
+      if (currentTabs.length >= MAX_IFRAME_TABS) {
+        setSwitchError(`You can keep up to ${MAX_IFRAME_TABS} iframe tabs open. Close one first.`);
+        return;
+      }
+
+      const id = createBrowserTabId();
+      setTabs((previous) => [
+        ...previous,
+        { id, srcUrl: nextUrl, title: nextTitle || new URL(nextUrl).hostname, url: nextUrl },
+      ]);
+      setActiveTabId(id);
+      setIsPageLoading(true);
+      setActiveBridgeAction(undefined);
+    },
+    [trustedIframeOrigin],
+  );
+
+  const closePanelTab = useCallback(
+    (tabId: string) => {
+      if (tabs.length === 1) return;
+      const tabIndex = tabs.findIndex((tab) => tab.id === tabId);
+      const remaining = tabs.filter((tab) => tab.id !== tabId);
+      loadedIframeTabsRef.current.delete(tabId);
+      iframeRefs.current.delete(tabId);
+      setTabs(remaining);
+      if (activeTabId === tabId) {
+        setActiveTabId(remaining[Math.max(0, tabIndex - 1)]?.id || remaining[0].id);
+      }
+    },
+    [activeTabId, tabs],
+  );
 
   const cleanupBridgeConnection = useCallback(async () => {
     const connection = bridgeConnectionRef.current;
     if (!connection) return;
 
     bridgeConnectionRef.current = undefined;
+    pendingCommandTabsRef.current.clear();
 
     if (connection.timeoutId) window.clearTimeout(connection.timeoutId);
     connection.pollAbortController?.abort();
+    if (typeof connection.iframeWindow?.postMessage === 'function') {
+      connection.iframeWindow.postMessage(
+        {
+          clientId: connection.clientId,
+          source: BROWSER_HOST_SOURCE,
+          type: 'disconnected',
+          version: BROWSER_BRIDGE_VERSION,
+        },
+        connection.expectedOrigin,
+      );
+    }
 
     try {
       await fetch('/api/browser/bridge', {
@@ -389,10 +628,10 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   const postBridgeResult = useCallback(
     async (payload: { commandId: string; epoch: number; error?: unknown; result?: unknown }) => {
       const connection = bridgeConnectionRef.current;
-      if (!connection) return;
+      if (!connection) return false;
 
       try {
-        await fetch('/api/browser/bridge', {
+        const response = await fetch('/api/browser/bridge', {
           body: JSON.stringify({
             action: 'result',
             clientId: connection.clientId,
@@ -403,8 +642,9 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
           headers: { 'Content-Type': 'application/json' },
           method: 'POST',
         });
+        return response.ok;
       } catch {
-        // The server owns retry/error handling for bridge actions.
+        return false;
       }
     },
     [sessionId],
@@ -522,6 +762,55 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     [sessionId, startBridgePolling],
   );
 
+  const prepareBridgeConnection = useCallback(
+    (iframe: HTMLIFrameElement, expectedOrigin: string) => {
+      loadIdRef.current += 1;
+      void cleanupBridgeConnection();
+
+      const loadId = loadIdRef.current;
+      const connection: BridgeConnection = {
+        clientId: createBridgeClientId(),
+        expectedOrigin,
+        iframeWindow: iframe.contentWindow,
+        loadId,
+        timeoutId: window.setTimeout(() => {
+          const activeConnection = bridgeConnectionRef.current;
+          if (!activeConnection || activeConnection.loadId !== loadId) return;
+
+          setBridgeStatus('unavailable');
+          setLocalState((previous) =>
+            previous ? { ...previous, bridgeStatus: 'unavailable' } : previous,
+          );
+        }, BRIDGE_TIMEOUT_MS),
+      };
+
+      bridgeConnectionRef.current = connection;
+      setBridgeStatus('waiting');
+      setLocalState((previous) => (previous ? { ...previous, bridgeStatus: 'waiting' } : previous));
+    },
+    [cleanupBridgeConnection],
+  );
+
+  useEffect(() => {
+    if (!isIframeMode) return;
+    const iframe = iframeRefs.current.get(activeTabId);
+    iframeRef.current = iframe || null;
+    setIsPageLoading(false);
+    setActiveBridgeAction(undefined);
+
+    if (iframe && expectedBridgeOrigin && loadedIframeTabsRef.current.has(activeTabId)) {
+      prepareBridgeConnection(iframe, expectedBridgeOrigin);
+    } else {
+      void cleanupBridgeConnection();
+    }
+  }, [
+    activeTabId,
+    cleanupBridgeConnection,
+    expectedBridgeOrigin,
+    isIframeMode,
+    prepareBridgeConnection,
+  ]);
+
   const interruptAutomation = useCallback(
     async (inputType: string) => {
       try {
@@ -580,19 +869,82 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
       if (event.data?.source !== BROWSER_BRIDGE_SOURCE) return;
       if (event.data?.version !== BROWSER_BRIDGE_VERSION) return;
       if (event.data?.type === 'ready') {
-        const readyUrl = typeof event.data.url === 'string' ? event.data.url : displayUrl;
+        const currentTab = tabsRef.current.find((tab) => tab.id === activeTabIdRef.current);
+        const readyUrl = typeof event.data.url === 'string' ? event.data.url : currentTab?.url;
         if (!readyUrl || getOrigin(readyUrl) !== expectedBridgeOrigin) return;
+        setTabs((previous) =>
+          previous.map((tab) =>
+            tab.id === activeTabIdRef.current
+              ? {
+                  ...tab,
+                  title:
+                    typeof event.data.title === 'string' && event.data.title
+                      ? event.data.title
+                      : tab.title,
+                  url: readyUrl,
+                }
+              : tab,
+          ),
+        );
         void connectBridge(iframeWindow, event.origin, readyUrl, loadIdRef.current);
       }
       if (event.data?.type === 'result' && typeof event.data?.commandId === 'string') {
         const connection = bridgeConnectionRef.current;
         if (!connection?.connected || event.data.clientId !== connection.clientId) return;
-        void postBridgeResult({
+        const resultPromise = postBridgeResult({
           commandId: event.data.commandId,
           epoch: event.data.epoch,
           error: event.data.error,
           result: event.data.result,
         });
+        const commandId = event.data.commandId;
+        const actionFailed = Boolean(event.data.error);
+        void resultPromise.then((delivered) => {
+          setActiveBridgeAction((previous) =>
+            previous && previous.commandId === commandId
+              ? {
+                  ...previous,
+                  phase: delivered && !actionFailed ? 'success' : 'error',
+                }
+              : previous,
+          );
+          const pendingTab = pendingCommandTabsRef.current.get(commandId);
+          pendingCommandTabsRef.current.delete(commandId);
+          if (!pendingTab || !delivered || actionFailed) return;
+          openPanelTab(pendingTab.url, pendingTab.title);
+        });
+      }
+      if (event.data?.type === 'action-state' && typeof event.data?.commandId === 'string') {
+        const connection = bridgeConnectionRef.current;
+        if (!connection?.connected || event.data.clientId !== connection.clientId) return;
+        const phase = event.data.phase;
+        if (phase !== 'start' && phase !== 'success' && phase !== 'error') return;
+        if (phase !== 'success') {
+          setActiveBridgeAction({
+            action: event.data.action,
+            commandId: event.data.commandId,
+            phase,
+            target: event.data.target,
+          });
+        }
+      }
+      if (event.data?.type === 'navigation-state' && typeof event.data?.url === 'string') {
+        const connection = bridgeConnectionRef.current;
+        if (!connection?.connected || event.data.clientId !== connection.clientId) return;
+        setIsPageLoading(event.data.phase === 'start');
+      }
+      if (event.data?.type === 'open-tab' && typeof event.data?.url === 'string') {
+        const connection = bridgeConnectionRef.current;
+        if (!connection?.connected || event.data.clientId !== connection.clientId) return;
+        const pendingTab = {
+          title: typeof event.data.title === 'string' ? event.data.title : undefined,
+          url: event.data.url,
+        };
+        if (typeof event.data.commandId === 'string') {
+          pendingCommandTabsRef.current.set(event.data.commandId, pendingTab);
+        } else {
+          openPanelTab(pendingTab.url, pendingTab.title);
+        }
       }
       if (event.data?.type === 'user-intervention') {
         const connection = bridgeConnectionRef.current;
@@ -623,8 +975,8 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     cleanupBridgeConnection,
     connectBridge,
     expectedBridgeOrigin,
-    displayUrl,
     isIframeMode,
+    openPanelTab,
     postBridgeResult,
     sessionId,
   ]);
@@ -636,7 +988,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   }
 
   const modeLabel = isIframeMode ? 'Iframe' : 'Remote';
-  const targetHighlight = currentState.pageState?.targetHighlight;
+  const targetHighlight = activeBridgeAction?.target || currentState.pageState?.targetHighlight;
   const targetBoxVisible =
     isIframeMode &&
     isControlling &&
@@ -657,6 +1009,16 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
     targetHighlight?.selector ||
     currentState.pageState?.primaryActions?.[0]?.text ||
     currentState.actionEvents?.find((event) => event.target)?.target;
+  const actionLabel =
+    activeBridgeAction?.phase === 'error'
+      ? 'AI 操作失败'
+      : activeBridgeAction?.phase === 'success'
+        ? 'AI 已完成'
+        : activeBridgeAction?.action === 'fill'
+          ? 'AI 正在输入'
+          : activeBridgeAction?.action === 'submit'
+            ? 'AI 准备提交'
+            : 'AI 正在操作';
   const bridgeUnavailable = isIframeMode && bridgeStatus === 'unavailable';
 
   const pauseByIntervention = () => {
@@ -666,7 +1028,8 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
   };
 
   const switchToRemote = async () => {
-    if (!url || isSwitching) return;
+    const remoteUrl = remoteCandidateUrl || displayUrl || url;
+    if (!remoteUrl || isSwitching) return;
 
     setIsSwitching(true);
     setSwitchError(undefined);
@@ -674,7 +1037,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
       const res = await fetch('/api/browser/action', {
         body: JSON.stringify({
           action: 'navigate',
-          params: { mode: 'remote', url },
+          params: { mode: 'remote', url: remoteUrl },
           sessionId,
         }),
         cache: 'no-store',
@@ -685,6 +1048,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
       if (!res.ok) throw new Error(data?.error || `Remote switch failed with HTTP ${res.status}`);
 
       setLocalState({ ...data, sessionId });
+      setRemoteCandidateUrl(undefined);
     } catch (err) {
       setSwitchError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -694,32 +1058,17 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
 
   const handleIframeLoad = (event: SyntheticEvent<HTMLIFrameElement>) => {
     const iframe = event.currentTarget;
+    const tabId = iframe.dataset.browserTabId;
 
-    if (isIframeMode) installIframeSamePanelNavigationGuard(iframe);
-    if (!isIframeMode || !expectedBridgeOrigin) return;
-
-    loadIdRef.current += 1;
-    void cleanupBridgeConnection();
-
-    const connection: BridgeConnection = {
-      clientId: createBridgeClientId(),
-      expectedOrigin: expectedBridgeOrigin,
-      iframeWindow: iframe.contentWindow,
-      loadId: loadIdRef.current,
-      timeoutId: window.setTimeout(() => {
-        const activeConnection = bridgeConnectionRef.current;
-        if (!activeConnection || activeConnection.loadId !== loadIdRef.current) return;
-
-        setBridgeStatus('unavailable');
-        setLocalState((previous) =>
-          previous ? { ...previous, bridgeStatus: 'unavailable' } : previous,
-        );
-      }, BRIDGE_TIMEOUT_MS),
-    };
-
-    bridgeConnectionRef.current = connection;
-    setBridgeStatus('waiting');
-    setLocalState((previous) => (previous ? { ...previous, bridgeStatus: 'waiting' } : previous));
+    if (tabId === activeTabId) {
+      iframeRef.current = iframe;
+      setIsPageLoading(false);
+      setActiveBridgeAction(undefined);
+    }
+    if (isIframeMode) installIframeSamePanelNavigationGuard(iframe, openPanelTab);
+    if (!isIframeMode || !expectedBridgeOrigin || tabId !== activeTabId) return;
+    if (tabId) loadedIframeTabsRef.current.add(tabId);
+    prepareBridgeConnection(iframe, expectedBridgeOrigin);
   };
 
   return (
@@ -727,13 +1076,13 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
       <div className={styles.toolbar}>
         <div className={styles.modeBadge}>{modeLabel}</div>
         <div className={styles.urlBar}>
-          <span>{title || 'Browser'}</span>
+          <span>{displayTitle || 'Browser'}</span>
           {displayUrl && <span className={styles.urlText}>{displayUrl}</span>}
         </div>
         {isIframeMode && (
           <button
             className={styles.actionButton}
-            disabled={!url || isSwitching}
+            disabled={!(remoteCandidateUrl || displayUrl || url) || isSwitching}
             type="button"
             onClick={switchToRemote}
           >
@@ -741,6 +1090,41 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
           </button>
         )}
       </div>
+      {isIframeMode && tabs.length > 1 && (
+        <div aria-label="Browser tabs" className={styles.tabs} role="tablist">
+          {tabs.map((tab) => (
+            <div className={styles.tab} data-active={tab.id === activeTabId} key={tab.id}>
+              <button
+                aria-selected={tab.id === activeTabId}
+                className={styles.tabActivate}
+                role="tab"
+                title={tab.title}
+                type="button"
+                onClick={() => {
+                  if (tab.id === activeTabId) return;
+                  setActiveTabId(tab.id);
+                  setIsPageLoading(true);
+                  setActiveBridgeAction(undefined);
+                }}
+              >
+                <span className={styles.tabLabel}>{tab.title}</span>
+              </button>
+              <button
+                aria-label={`Close ${tab.title}`}
+                className={styles.tabClose}
+                title={`Close ${tab.title}`}
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  closePanelTab(tab.id);
+                }}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       {(switchError || bridgeUnavailable) && (
         <div className={styles.notice}>{switchError || 'Bridge unavailable.'}</div>
       )}
@@ -752,6 +1136,7 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
           onKeyDownCapture={pauseByIntervention}
           onWheelCapture={pauseByIntervention}
         >
+          {isPageLoading && <div aria-label="Browser page loading" className={styles.loadBar} />}
           {targetBoxVisible && (
             <div
               aria-label="Current browser target box"
@@ -759,32 +1144,53 @@ const BrowserPanel = memo<BrowserPanelProps>(({ state, showResult, sessionId }) 
               style={targetBoxStyle}
             >
               {targetLabel && (
-                <span className={styles.targetBoxLabel}>AI 正在操作：{targetLabel}</span>
+                <span className={styles.targetBoxLabel}>
+                  {actionLabel}：{targetLabel}
+                </span>
               )}
             </div>
           )}
           {isControlling && targetLabel && !targetBoxVisible && (
             <div aria-label="Current browser target" className={styles.targetHighlight}>
-              AI 正在操作：{targetLabel}
+              {actionLabel}：{targetLabel}
             </div>
           )}
-          <iframe
-            className={styles.iframe}
-            // The browser panel needs same-origin scripts for interactive iframe pages; remote mode is still used for blocked sites.
-            // Do not allow popups to escape the sandbox; external browsing must use the explicit Open action.
-            ref={iframeRef}
-            // eslint-disable-next-line @eslint-react/dom/no-unsafe-iframe-sandbox
-            sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"
-            title={title ?? 'Browser'}
-            src={
-              isIframeMode
-                ? displayUrl
-                : `/api/browser/proxy?session=${encodeURIComponent(sessionId)}${
-                    isControlling ? '&takeover=1' : ''
-                  }`
-            }
-            onLoad={handleIframeLoad}
-          />
+          {isIframeMode ? (
+            tabs.map((tab) => (
+              <iframe
+                className={`${styles.iframe} ${tab.id === activeTabId ? '' : styles.iframeHidden}`}
+                data-browser-tab-id={tab.id}
+                key={tab.id}
+                // The browser panel needs same-origin scripts for interactive iframe pages; remote mode is still used for blocked sites.
+                // Do not allow popups to escape the sandbox; external browsing must use the explicit Open action.
+                // eslint-disable-next-line @eslint-react/dom/no-unsafe-iframe-sandbox
+                sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"
+                src={tab.srcUrl}
+                title={tab.title}
+                ref={(node) => {
+                  if (node) {
+                    iframeRefs.current.set(tab.id, node);
+                    if (tab.id === activeTabId) iframeRef.current = node;
+                  } else {
+                    iframeRefs.current.delete(tab.id);
+                  }
+                }}
+                onLoad={handleIframeLoad}
+              />
+            ))
+          ) : (
+            <iframe
+              className={styles.iframe}
+              ref={iframeRef}
+              // eslint-disable-next-line @eslint-react/dom/no-unsafe-iframe-sandbox
+              sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"
+              title={displayTitle ?? 'Browser'}
+              src={`/api/browser/proxy?session=${encodeURIComponent(sessionId)}${
+                isControlling ? '&takeover=1' : ''
+              }`}
+              onLoad={handleIframeLoad}
+            />
+          )}
         </div>
       ) : (
         <div className={styles.empty}>Navigate to a URL first. Ask the AI to open a webpage.</div>

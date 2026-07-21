@@ -30,7 +30,35 @@ export type BrowserBridgeMessage =
   | {
       capabilities: BrowserBridgeAction[];
       source: typeof BROWSER_BRIDGE_SOURCE;
+      title: string;
       type: 'ready';
+      url: string;
+      version: typeof BROWSER_BRIDGE_VERSION;
+    }
+  | {
+      action: BrowserBridgeAction;
+      clientId: string;
+      commandId: string;
+      phase: 'error' | 'start' | 'success';
+      source: typeof BROWSER_BRIDGE_SOURCE;
+      target?: BrowserBridgeTarget;
+      type: 'action-state';
+      version: typeof BROWSER_BRIDGE_VERSION;
+    }
+  | {
+      clientId: string;
+      commandId?: string;
+      source: typeof BROWSER_BRIDGE_SOURCE;
+      title?: string;
+      type: 'open-tab';
+      url: string;
+      version: typeof BROWSER_BRIDGE_VERSION;
+    }
+  | {
+      clientId: string;
+      phase: 'complete' | 'start';
+      source: typeof BROWSER_BRIDGE_SOURCE;
+      type: 'navigation-state';
       url: string;
       version: typeof BROWSER_BRIDGE_VERSION;
     }
@@ -55,6 +83,15 @@ export type BrowserBridgeMessage =
 
 interface BrowserBridgeOptions {
   allowedParentOrigin?: string;
+}
+
+export interface BrowserBridgeTarget {
+  height: number;
+  label: string;
+  selector: string;
+  width: number;
+  x: number;
+  y: number;
 }
 
 const riskPatterns: { pattern: RegExp; risk: BrowserRiskType }[] = [
@@ -103,6 +140,82 @@ const requireElement = (selector: unknown): Element => {
   if (!isVisible(element)) throw new Error(`Element "${selector}" is not visible in the iframe`);
   return element;
 };
+
+const describeElement = (element: Element): BrowserBridgeTarget => {
+  const rect = element.getBoundingClientRect();
+  const label =
+    element.textContent?.trim() ||
+    element.getAttribute('aria-label') ||
+    element.getAttribute('title') ||
+    element.getAttribute('placeholder') ||
+    element.getAttribute('name') ||
+    selectorFor(element);
+
+  return {
+    height: rect.height,
+    label,
+    selector: selectorFor(element),
+    width: rect.width,
+    x: rect.x,
+    y: rect.y,
+  };
+};
+
+const showActionHighlight = (element: Element, action: BrowserBridgeAction) => {
+  const overlay = document.createElement('div');
+  const label = document.createElement('span');
+  const updatePosition = () => {
+    const rect = element.getBoundingClientRect();
+    Object.assign(overlay.style, {
+      height: `${rect.height}px`,
+      left: `${rect.left}px`,
+      top: `${rect.top}px`,
+      width: `${rect.width}px`,
+    });
+  };
+
+  overlay.dataset.lobeBrowserHighlight = action;
+  Object.assign(overlay.style, {
+    background: 'rgb(37 99 235 / 8%)',
+    border: '2px solid #2563eb',
+    borderRadius: '6px',
+    boxShadow: '0 0 0 3px rgb(37 99 235 / 14%)',
+    boxSizing: 'border-box',
+    pointerEvents: 'none',
+    position: 'fixed',
+    transition: 'opacity 120ms ease',
+    zIndex: '2147483647',
+  });
+  label.textContent =
+    action === 'fill' ? 'AI 正在输入' : action === 'submit' ? 'AI 准备提交' : 'AI 正在点击';
+  Object.assign(label.style, {
+    background: '#1d4ed8',
+    borderRadius: '4px',
+    bottom: 'calc(100% + 6px)',
+    color: '#fff',
+    font: '600 12px/1.4 sans-serif',
+    left: '0',
+    maxWidth: '240px',
+    overflow: 'hidden',
+    padding: '4px 7px',
+    position: 'absolute',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  });
+  overlay.append(label);
+  document.documentElement.append(overlay);
+  updatePosition();
+  window.addEventListener('resize', updatePosition);
+  window.addEventListener('scroll', updatePosition, true);
+
+  return () => {
+    window.removeEventListener('resize', updatePosition);
+    window.removeEventListener('scroll', updatePosition, true);
+    overlay.remove();
+  };
+};
+
+const waitForActionPreview = () => new Promise<void>((resolve) => window.setTimeout(resolve, 120));
 
 const inspect = (): BrowserState => {
   const fields: BrowserPageField[] = Array.from(document.querySelectorAll('input,textarea,select'))
@@ -239,11 +352,6 @@ const runCommand = async (command: BrowserBridgeCommand): Promise<BrowserState> 
   }
 
   if (action === 'click') {
-    const link = element.closest('a[href]');
-    if (link instanceof HTMLAnchorElement) {
-      window.location.assign(link.href);
-      return inspectAfterPotentialNavigation();
-    }
     (element as HTMLElement).click();
     return inspectAfterPotentialNavigation();
   }
@@ -271,17 +379,33 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
     );
 
   let commandInProgress = false;
+  let activeCommandId: string | undefined;
   let hostClientId: string | undefined;
   let readyTimer: number | undefined;
   const originalWindowOpen = window.open;
   const sendReady = () =>
     send({
       capabilities: ['click', 'fill', 'submit', 'scroll', 'inspect', 'back', 'forward'],
+      title: document.title,
       type: 'ready',
       url: window.location.href,
     });
+  const startReadyAnnouncements = () => {
+    if (readyTimer) window.clearInterval(readyTimer);
+    sendReady();
+    readyTimer = window.setInterval(sendReady, 500);
+  };
   const onMessage = async (event: MessageEvent) => {
     if (event.source !== window.parent || event.origin !== parentOrigin) return;
+    if (
+      event.data?.source === BROWSER_HOST_SOURCE &&
+      event.data?.type === 'disconnected' &&
+      event.data.clientId === hostClientId
+    ) {
+      hostClientId = undefined;
+      startReadyAnnouncements();
+      return;
+    }
     if (event.data?.source === BROWSER_HOST_SOURCE && event.data?.type === 'connected') {
       if (typeof event.data.clientId !== 'string' || !event.data.clientId) return;
       hostClientId = event.data.clientId;
@@ -299,9 +423,36 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
 
     const command = event.data.command as BrowserBridgeCommand;
     const commandClientId = hostClientId;
+    let removeHighlight: (() => void) | undefined;
     try {
       commandInProgress = true;
+      activeCommandId = command.id;
+      const selector = command.params?.selector;
+      const targetElement =
+        typeof selector === 'string' && selector ? requireElement(selector) : undefined;
+      const target = targetElement ? describeElement(targetElement) : undefined;
+      send({
+        action: command.action,
+        clientId: commandClientId,
+        commandId: command.id,
+        phase: 'start',
+        target,
+        type: 'action-state',
+      });
+      if (targetElement) {
+        targetElement.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+        removeHighlight = showActionHighlight(targetElement, command.action);
+        await waitForActionPreview();
+      }
       const result = await runCommand(command);
+      send({
+        action: command.action,
+        clientId: commandClientId,
+        commandId: command.id,
+        phase: 'success',
+        target,
+        type: 'action-state',
+      });
       send({
         clientId: commandClientId,
         commandId: command.id,
@@ -311,6 +462,13 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
         type: 'result',
       });
     } catch (error) {
+      send({
+        action: command.action,
+        clientId: commandClientId,
+        commandId: command.id,
+        phase: 'error',
+        type: 'action-state',
+      });
       send({
         clientId: commandClientId,
         commandId: command.id,
@@ -323,6 +481,8 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
         type: 'result',
       });
     } finally {
+      removeHighlight?.();
+      activeCommandId = undefined;
       commandInProgress = false;
     }
   };
@@ -346,7 +506,34 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
     if (!opensNewContext) return;
 
     event.preventDefault();
-    window.location.assign(link.href);
+    if (hostClientId) {
+      send({
+        clientId: hostClientId,
+        commandId: activeCommandId,
+        title: link.textContent?.trim() || undefined,
+        type: 'open-tab',
+        url: link.href,
+      });
+    } else {
+      window.location.assign(link.href);
+    }
+  };
+  const reportNavigation = (event: MouseEvent) => {
+    if (event.defaultPrevented || event.button !== 0 || !hostClientId) return;
+    const target = event.target;
+    const link = target instanceof Element ? target.closest('a[href]') : null;
+    if (!(link instanceof HTMLAnchorElement) || !link.href) return;
+
+    send({ clientId: hostClientId, phase: 'start', type: 'navigation-state', url: link.href });
+    window.setTimeout(() => {
+      if (hostClientId)
+        send({
+          clientId: hostClientId,
+          phase: 'complete',
+          type: 'navigation-state',
+          url: window.location.href,
+        });
+    }, 250);
   };
   const onUserInput = () => {
     if (!commandInProgress && hostClientId)
@@ -354,15 +541,26 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
   };
 
   window.addEventListener('message', onMessage);
-  window.open = ((url?: string | URL) => {
-    if (url) window.location.assign(String(url));
+  window.open = ((url?: string | URL, target?: string) => {
+    if (!url) return window;
+    const resolvedUrl = new URL(String(url), window.location.href).toString();
+    if (target?.toLowerCase() === '_self' || !hostClientId) {
+      window.location.assign(resolvedUrl);
+    } else {
+      send({
+        clientId: hostClientId,
+        commandId: activeCommandId,
+        type: 'open-tab',
+        url: resolvedUrl,
+      });
+    }
     return window;
   }) as typeof window.open;
   document.addEventListener('click', keepLinkInsideFrame, true);
   document.addEventListener('click', onUserClick, true);
+  document.addEventListener('click', reportNavigation);
   document.addEventListener('input', onUserInput, true);
-  sendReady();
-  readyTimer = window.setInterval(sendReady, 500);
+  startReadyAnnouncements();
 
   return () => {
     window.removeEventListener('message', onMessage);
@@ -370,6 +568,7 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
     if (readyTimer) window.clearInterval(readyTimer);
     document.removeEventListener('click', keepLinkInsideFrame, true);
     document.removeEventListener('click', onUserClick, true);
+    document.removeEventListener('click', reportNavigation);
     document.removeEventListener('input', onUserInput, true);
   };
 };
