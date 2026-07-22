@@ -65,5 +65,27 @@ describe('isCanUseFC', () => {
 
       expect(isCanUseFC('deepseek-v4-pro', 'deepseek')).toBe(true);
     });
+
+    it('uses known model capability for a compatible provider with incomplete metadata', () => {
+      mockAiInfraState({
+        builtinAiModelList: [
+          {
+            abilities: { functionCall: true },
+            id: 'deepseek-v4-pro',
+            providerId: 'deepseek',
+          },
+        ],
+        enabledAiModels: [
+          {
+            abilities: {},
+            id: 'deepseek-v4-pro',
+            providerId: 'rayinai',
+          },
+        ],
+        isInitAiProviderRuntimeState: true,
+      });
+
+      expect(isCanUseFC('deepseek-v4-pro', 'rayinai')).toBe(true);
+    });
   });
 });

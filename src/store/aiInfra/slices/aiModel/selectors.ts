@@ -47,9 +47,21 @@ const getEnabledModelById = (id: string, provider: string) => (s: AIProviderStor
   s.enabledAiModels?.find((i) => i.id === id && (provider ? provider === i.providerId : true));
 
 const isModelSupportToolUse = (id: string, provider: string) => (s: AIProviderStoreState) => {
-  const model = getModelCard(id, provider)(s);
+  const enabledModel = getEnabledModelById(id, provider)(s);
+  const configuredCapability = enabledModel?.abilities?.functionCall;
 
-  return model?.abilities?.functionCall || false;
+  // A provider/model row can come from a custom OpenAI-compatible provider and
+  // omit capability metadata. Preserve explicit declarations, but let missing
+  // metadata inherit the known model capability from model-bank. The model-id
+  // fallback is intentional: compatible providers commonly expose the same
+  // upstream model under their own provider identifier.
+  if (typeof configuredCapability === 'boolean') return configuredCapability;
+
+  const builtinModel =
+    s.builtinAiModelList?.find((item) => item.id === id && item.providerId === provider) ||
+    s.builtinAiModelList?.find((item) => item.id === id);
+
+  return builtinModel?.abilities?.functionCall || false;
 };
 
 const isModelSupportFiles = (id: string, provider: string) => (s: AIProviderStoreState) => {

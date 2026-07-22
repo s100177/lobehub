@@ -222,6 +222,84 @@ describe('aiModelSelectors', () => {
       );
     });
 
+    it('should inherit builtin tool support when an enabled model omits the capability', () => {
+      const state: AIProviderStoreState = {
+        ...mockState,
+        builtinAiModelList: [
+          {
+            abilities: { functionCall: true },
+            id: 'deepseek-v4-pro',
+            providerId: 'deepseek',
+            type: 'chat',
+          },
+        ],
+        enabledAiModels: [
+          {
+            abilities: {},
+            id: 'deepseek-v4-pro',
+            providerId: 'deepseek',
+            type: 'chat',
+          },
+        ],
+      };
+
+      expect(aiModelSelectors.isModelSupportToolUse('deepseek-v4-pro', 'deepseek')(state)).toBe(
+        true,
+      );
+    });
+
+    it('should inherit known model capability for a compatible custom provider', () => {
+      const state: AIProviderStoreState = {
+        ...mockState,
+        builtinAiModelList: [
+          {
+            abilities: { functionCall: true },
+            id: 'deepseek-v4-pro',
+            providerId: 'deepseek',
+            type: 'chat',
+          },
+        ],
+        enabledAiModels: [
+          {
+            abilities: {},
+            id: 'deepseek-v4-pro',
+            providerId: 'rayinai',
+            type: 'chat',
+          },
+        ],
+      };
+
+      expect(aiModelSelectors.isModelSupportToolUse('deepseek-v4-pro', 'rayinai')(state)).toBe(
+        true,
+      );
+    });
+
+    it('should preserve an explicit provider capability override', () => {
+      const state: AIProviderStoreState = {
+        ...mockState,
+        builtinAiModelList: [
+          {
+            abilities: { functionCall: true },
+            id: 'deepseek-v4-pro',
+            providerId: 'deepseek',
+            type: 'chat',
+          },
+        ],
+        enabledAiModels: [
+          {
+            abilities: { functionCall: false },
+            id: 'deepseek-v4-pro',
+            providerId: 'rayinai',
+            type: 'chat',
+          },
+        ],
+      };
+
+      expect(aiModelSelectors.isModelSupportToolUse('deepseek-v4-pro', 'rayinai')(state)).toBe(
+        false,
+      );
+    });
+
     it('should check vision support', () => {
       expect(aiModelSelectors.isModelSupportVision('model1', 'provider1')(mockState)).toBe(true);
       expect(aiModelSelectors.isModelSupportVision('model4', 'provider2')(mockState)).toBe(false);
