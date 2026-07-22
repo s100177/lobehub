@@ -86,7 +86,7 @@ vi.mock('./Inspector', () => ({
   default: () => <div>inspector</div>,
 }));
 
-describe('AssistantGroup Tool browser portal auto-open', () => {
+describe('AssistantGroup Tool rendering', () => {
   beforeEach(() => {
     openToolUIMock.mockClear();
     mockIsPluginUIOpen = false;
@@ -107,13 +107,11 @@ describe('AssistantGroup Tool browser portal auto-open', () => {
     };
   });
 
-  it('opens the browser portal when a completed browser tool result is present', async () => {
+  it('leaves browser portal coordination to the always-mounted assistant group', async () => {
     render(<Tool assistantMessageId="assistant-message-1" id="tool-call-1" />);
 
     await waitFor(() => {
-      expect(openToolUIMock).toHaveBeenCalledWith('tool-message-1', 'lobe-browser', {
-        apiName: 'navigate',
-      });
+      expect(openToolUIMock).not.toHaveBeenCalled();
     });
   });
 

@@ -8,6 +8,7 @@ import express from 'express';
 import { chromium } from 'playwright';
 
 import { BridgeError, BridgeSessionManager } from './bridge-session-manager.js';
+import { getFillControlAction } from './form-control.js';
 import { createIframePolicy } from './iframe-policy.js';
 import { createServiceAuthMiddleware } from './service-auth.js';
 
@@ -1725,8 +1726,13 @@ async function performSafeClick(page, selector, timeout = 5000) {
 }
 
 async function performSafeFill(page, selector, text, timeout = 5000) {
+  await page.waitForSelector(selector, { state: 'visible', timeout });
+  const tagName = await page.$eval(selector, (element) => element.tagName);
+  if (getFillControlAction(tagName) === 'select') {
+    return performSafeSelect(page, selector, text ?? '', timeout);
+  }
+
   try {
-    await page.waitForSelector(selector, { state: 'visible', timeout });
     await page.fill(selector, text ?? '');
   } catch (err) {
     const fallback = await fillElementWithDomFallback(page, selector, text);

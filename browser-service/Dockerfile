@@ -1,11 +1,13 @@
-FROM mcr.microsoft.com/playwright:v1.61.1-jammy
+ARG BROWSER_SERVICE_BASE_IMAGE=mcr.microsoft.com/playwright:v1.61.1-jammy
+FROM ${BROWSER_SERVICE_BASE_IMAGE}
 
+USER root
 WORKDIR /app
 
 COPY package.json ./
 RUN npm install --omit=dev
 
-COPY bridge-session-manager.js iframe-policy.js index.js service-auth.js ./
+COPY bridge-session-manager.js form-control.js iframe-policy.js index.js service-auth.js ./
 
 ENV PORT=3100
 ENV NODE_ENV=production

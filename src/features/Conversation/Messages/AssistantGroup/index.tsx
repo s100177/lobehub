@@ -41,6 +41,7 @@ import {
 } from '../Contexts/message-action-context';
 import SignalCallbacks from '../SignalCallbacks';
 import FileListViewer from '../User/components/FileListViewer';
+import BrowserPortalAutoOpen from './BrowserPortalAutoOpen';
 import Group from './components/Group';
 import type { WorkflowExpandLevelDefault } from './components/WorkflowCollapse';
 
@@ -214,6 +215,7 @@ const GroupMessage = memo<GroupMessageProps>(
         onAvatarClick={onAvatarClick}
         onMouseEnter={onMouseEnter}
       >
+        <BrowserPortalAutoOpen blocks={[...(children ?? []), ...(taskCompletions ?? [])]} />
         {/*
           Wrap main chain + signal callbacks + post-task summary in a tight
           flex stack so the SignalCallbacks accordion sits visually inside

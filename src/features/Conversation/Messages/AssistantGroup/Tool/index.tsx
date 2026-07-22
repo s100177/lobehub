@@ -1,16 +1,14 @@
-import { BrowserIdentifier } from '@lobechat/builtin-tool-browser/client';
 import { getBuiltinRender } from '@lobechat/builtin-tools/renders';
 import { getBuiltinStreaming } from '@lobechat/builtin-tools/streamings';
 import { LOADING_FLAT } from '@lobechat/const';
 import { AccordionItem, Flexbox, Skeleton } from '@lobehub/ui';
 import { Divider } from 'antd';
 import isEqual from 'fast-deep-equal';
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 
 import SafeBoundary from '@/components/ErrorBoundary';
 import dynamic from '@/libs/next/dynamic';
 import { useChatStore } from '@/store/chat';
-import { chatPortalSelectors } from '@/store/chat/selectors';
 import { operationSelectors } from '@/store/chat/slices/operation/selectors';
 import { useToolStore } from '@/store/tool';
 import { toolSelectors } from '@/store/tool/selectors';
@@ -49,17 +47,12 @@ const Tool = memo<GroupToolProps>(({ assistantMessageId, disableEditing, id }) =
   const result = tool?.result;
   const type = tool?.type;
   const toolMessageId = tool?.result_msg_id;
-  const autoOpenedToolMessageRef = useRef<string | undefined>(undefined);
 
   // Get renderDisplayControl from manifest. `result.state` lets an API whose
   // output shape varies by target refine it — CC `Read` expands once the result
   // turns out to be an image, and stays collapsed for source text.
   const renderDisplayControl = useToolStore(
     toolSelectors.getRenderDisplayControl(identifier, apiName, result?.state),
-  );
-  const openToolUI = useChatStore((s) => s.openToolUI);
-  const isBrowserToolUIOpen = useChatStore(
-    chatPortalSelectors.isPluginUIOpen(toolMessageId || ''),
   );
   const [showDebug, setShowDebug] = useState(false);
   const [showToolRender, setShowToolRender] = useState(false);
@@ -110,17 +103,20 @@ const Tool = memo<GroupToolProps>(({ assistantMessageId, disableEditing, id }) =
   const canToggleCustomToolRender = hasCustomRender && !isPending && !isReject && !isAbort;
 
   // Handle expand state changes
-  const handleExpand = useCallback((expand?: boolean) => {
-    // Block collapse action when alwaysExpand is set
-    if (isAlwaysExpand && expand === false) {
-      return;
-    }
-    // When collapsing, also turn off debug mode so the accordion can actually collapse
-    if (expand === false) {
-      setShowDebug(false);
-    }
-    setShowToolRender(!!expand);
-  }, [isAlwaysExpand]);
+  const handleExpand = useCallback(
+    (expand?: boolean) => {
+      // Block collapse action when alwaysExpand is set
+      if (isAlwaysExpand && expand === false) {
+        return;
+      }
+      // When collapsing, also turn off debug mode so the accordion can actually collapse
+      if (expand === false) {
+        setShowDebug(false);
+      }
+      setShowToolRender(!!expand);
+    },
+    [isAlwaysExpand],
+  );
 
   useEffect(() => {
     if (!needExpand) return;
@@ -129,17 +125,6 @@ const Tool = memo<GroupToolProps>(({ assistantMessageId, disableEditing, id }) =
 
     return () => clearTimeout(timeout);
   }, [handleExpand, needExpand]);
-
-  useEffect(() => {
-    if (identifier !== BrowserIdentifier || !toolMessageId || isBrowserToolUIOpen) return;
-
-    const state = result?.state as { sessionId?: string; url?: string } | undefined;
-    if (!state?.sessionId && !state?.url) return;
-    if (autoOpenedToolMessageRef.current === toolMessageId) return;
-
-    autoOpenedToolMessageRef.current = toolMessageId;
-    openToolUI(toolMessageId, identifier, { apiName });
-  }, [apiName, identifier, isBrowserToolUIOpen, openToolUI, result?.state, toolMessageId]);
 
   if (!tool) return null;
 
