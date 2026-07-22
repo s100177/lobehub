@@ -6,7 +6,6 @@ on:
       - s100177/stable
     paths-ignore:
       - '**.md'
-      - '.github/**'
   workflow_dispatch:
     inputs:
       tag:
@@ -43,7 +42,9 @@ jobs:
         id: tags
         shell: bash
         run: |
-          TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag || github.ref_name }}"
+          RAW_TAG="${{ inputs.tag || github.ref_name }}"
+          IMAGE_TAG="${RAW_TAG//\//-}"
+          TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
           # If pushing to default branch, also tag as latest
           if [ "${{ github.ref_name }}" = "s100177/stable" ]; then
             TAGS="$TAGS,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
