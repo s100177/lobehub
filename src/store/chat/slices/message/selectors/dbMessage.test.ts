@@ -1,7 +1,44 @@
 import { type UIChatMessage } from '@lobechat/types';
 import { describe, expect, it } from 'vitest';
 
-import { selectCurrentTurnTodosFromMessages, selectTodosFromMessages } from './dbMessage';
+import {
+  selectActivatedToolIdsFromMessages,
+  selectCurrentTurnTodosFromMessages,
+  selectTodosFromMessages,
+} from './dbMessage';
+
+describe('selectActivatedToolIdsFromMessages', () => {
+  it('restores a browser activation from grouped history on the next turn', () => {
+    const messages = [
+      {
+        children: [
+          {
+            content: '',
+            id: 'assistant-1',
+            tools: [
+              {
+                apiName: 'activateTools',
+                id: 'call-1',
+                identifier: 'lobe-activator',
+                result: {
+                  content: 'Successfully activated tools',
+                  id: 'tool-1',
+                  state: { activatedTools: [{ identifier: 'lobe-browser', name: 'Browser' }] },
+                },
+              },
+            ],
+          },
+        ],
+        content: '',
+        id: 'group-1',
+        role: 'assistantGroup',
+      },
+      { content: 'switch to remote mode', id: 'user-2', role: 'user' },
+    ] as UIChatMessage[];
+
+    expect(selectActivatedToolIdsFromMessages(messages)).toEqual(['lobe-browser']);
+  });
+});
 
 describe('selectTodosFromMessages', () => {
   const createLobeAgentToolMessage = (todos: {

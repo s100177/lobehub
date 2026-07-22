@@ -1,5 +1,7 @@
-import { extractActivatedSkillsFromMessages } from '@lobechat/agent-runtime';
-import { LobeActivatorIdentifier } from '@lobechat/builtin-tool-activator';
+import {
+  extractActivatedSkillsFromMessages,
+  extractActivatedToolIdsFromMessages,
+} from '@lobechat/agent-runtime';
 import {
   type StepActivatedSkill,
   type StepContextTodos,
@@ -166,28 +168,7 @@ const inboxActiveTopicDbMessages = (state: ChatStoreState) => {
  */
 export const selectActivatedToolIdsFromMessages = (
   messages: UIChatMessage[],
-): string[] | undefined => {
-  const ids = new Set<string>();
-
-  for (const msg of messages) {
-    if (
-      msg.role === 'tool' &&
-      msg.plugin?.identifier === LobeActivatorIdentifier &&
-      msg.pluginState?.activatedTools
-    ) {
-      const activatedTools = msg.pluginState.activatedTools as Array<{ identifier?: string }>;
-      if (Array.isArray(activatedTools)) {
-        for (const tool of activatedTools) {
-          if (tool.identifier) {
-            ids.add(tool.identifier);
-          }
-        }
-      }
-    }
-  }
-
-  return ids.size > 0 ? [...ids] : undefined;
-};
+): string[] | undefined => extractActivatedToolIdsFromMessages(messages);
 
 /**
  * Return the most recently activated remote desktop device id.

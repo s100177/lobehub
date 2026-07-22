@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   collectFromMessages,
   extractActivatedSkillsFromMessages,
+  extractActivatedToolIdsFromMessages,
   findInMessages,
 } from './messageSelectors';
 
@@ -97,6 +98,83 @@ describe('collectFromMessages', () => {
     });
 
     expect(result).toEqual(['tool']);
+  });
+});
+
+describe('extractActivatedToolIdsFromMessages', () => {
+  it('extracts and deduplicates tools from flat activator results', () => {
+    const messages = [
+      createToolMessage({
+        plugin: { apiName: 'activateTools', arguments: '{}', identifier: 'lobe-activator' },
+        pluginState: {
+          activatedTools: [{ identifier: 'lobe-browser' }, { identifier: 'lobe-browser' }],
+        },
+      }),
+    ];
+
+    expect(extractActivatedToolIdsFromMessages(messages)).toEqual(['lobe-browser']);
+  });
+
+  it('restores tools folded into assistantGroup history on the next turn', () => {
+    const messages = [
+      createMessage({
+        children: [
+          {
+            content: '',
+            id: 'msg-asst-1',
+            tools: [
+              {
+                apiName: 'activateTools',
+                id: 'call-1',
+                identifier: 'lobe-activator',
+                result: {
+                  content: 'activated',
+                  id: 'msg-tool-1',
+                  state: { activatedTools: [{ identifier: 'lobe-browser' }] },
+                },
+              },
+            ],
+          },
+        ],
+        role: 'assistantGroup',
+      } as any),
+      createMessage({ content: 'switch to remote mode', role: 'user' }),
+    ];
+
+    expect(extractActivatedToolIdsFromMessages(messages)).toEqual(['lobe-browser']);
+  });
+
+  it('restores tools nested in compressed conversation history', () => {
+    const messages = [
+      createMessage({
+        compressedMessages: [
+          createMessage({
+            children: [
+              {
+                content: '',
+                id: 'msg-asst-1',
+                tools: [
+                  {
+                    apiName: 'activateTools',
+                    id: 'call-1',
+                    identifier: 'lobe-activator',
+                    result: {
+                      content: 'activated',
+                      id: 'msg-tool-1',
+                      state: { activatedTools: [{ identifier: 'lobe-browser' }] },
+                    },
+                  },
+                ],
+              },
+            ],
+            role: 'assistantGroup',
+          } as any),
+        ],
+        role: 'compressedGroup',
+      } as any),
+    ];
+
+    expect(extractActivatedToolIdsFromMessages(messages)).toEqual(['lobe-browser']);
   });
 });
 

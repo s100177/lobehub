@@ -154,6 +154,31 @@ const collectToolInvocations = (msg: UIChatMessage): ToolInvocation[] => {
 };
 
 /**
+ * Accumulate tools enabled by the activator across flat and grouped history.
+ * Conversation rehydration folds completed tool rows into assistantGroup nodes,
+ * so reading only top-level role=tool messages drops activations on the next turn.
+ */
+export const extractActivatedToolIdsFromMessages = (
+  messages: UIChatMessage[],
+): string[] | undefined => {
+  const ids = new Set<string>();
+
+  for (const msg of messages) {
+    for (const invocation of collectToolInvocations(msg)) {
+      if (invocation.identifier !== ACTIVATOR_IDENTIFIER) continue;
+      if (invocation.apiName !== 'activateTools') continue;
+      if (!Array.isArray(invocation.state?.activatedTools)) continue;
+
+      for (const tool of invocation.state.activatedTools as Array<{ identifier?: string }>) {
+        if (tool.identifier) ids.add(tool.identifier);
+      }
+    }
+  }
+
+  return ids.size > 0 ? [...ids] : undefined;
+};
+
+/**
  * Accumulate activated skills from all activateSkill / activateTools tool
  * messages. Skills once activated remain active for the rest of the
  * conversation; the skill id (or name, for filesystem/builtin activations that
