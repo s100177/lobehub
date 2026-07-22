@@ -636,10 +636,14 @@ export class StreamingExecutorActionImpl {
       // Compute step context from current db messages before each step
       // Use dbMessagesMap which contains persisted state (including pluginState.todos)
       const currentDBMessages = this.#get().dbMessagesMap[messageKey] || [];
+      // New turns execute from displayMessages, whose completed tool calls are folded into
+      // assistantGroup nodes. Merge that authoritative runtime history so dynamic tool
+      // activations survive when the raw DB cache is not hydrated for this message key yet.
+      const activationMessages = [...currentDBMessages, ...state.messages];
       // Use selectTodosFromMessages selector (shared with UI display)
       const todos = selectTodosFromMessages(currentDBMessages);
       // Accumulate activated tool IDs from lobe-activator messages
-      const activatedToolIds = selectActivatedToolIdsFromMessages(currentDBMessages)?.filter(
+      const activatedToolIds = selectActivatedToolIdsFromMessages(activationMessages)?.filter(
         (id) => scope === 'page' || id !== PageAgentIdentifier,
       );
       // Accumulate activated skills from activateSkill messages

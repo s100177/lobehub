@@ -210,6 +210,72 @@ describe('StreamingExecutor actions', () => {
       streamSpy.mockRestore();
     });
 
+    it('should preserve activated tools from grouped runtime history when the DB cache is empty', async () => {
+      act(() => {
+        useChatStore.setState({ executeClientAgent: realExecAgentRuntime });
+      });
+
+      const groupedActivation = {
+        children: [
+          {
+            content: '',
+            id: 'assistant-child',
+            tools: [
+              {
+                apiName: 'activateTools',
+                id: 'activate-browser',
+                identifier: 'lobe-activator',
+                result: {
+                  content: 'activated',
+                  id: 'activation-result',
+                  state: { activatedTools: [{ identifier: 'lobe-browser' }] },
+                },
+              },
+            ],
+          },
+        ],
+        content: '',
+        id: 'assistant-group',
+        role: 'assistantGroup',
+        sessionId: TEST_IDS.SESSION_ID,
+        topicId: TEST_IDS.TOPIC_ID,
+      } as UIChatMessage;
+      const userMessage = {
+        id: TEST_IDS.USER_MESSAGE_ID,
+        role: 'user',
+        content: 'Switch to remote mode',
+        sessionId: TEST_IDS.SESSION_ID,
+        topicId: TEST_IDS.TOPIC_ID,
+      } as UIChatMessage;
+      const stepSpy = vi.spyOn(agentRuntime.AgentRuntime.prototype, 'step');
+      vi.spyOn(chatService, 'createAssistantMessageStream').mockImplementation(
+        async ({ onFinish }) => {
+          await onFinish?.(TEST_CONTENT.AI_RESPONSE, {} as any);
+        },
+      );
+
+      const { result } = renderHook(() => useChatStore());
+      const key = messageMapKey({
+        agentId: TEST_IDS.SESSION_ID,
+        topicId: TEST_IDS.TOPIC_ID,
+      });
+      act(() => {
+        useChatStore.setState({ dbMessagesMap: { [key]: [] } });
+      });
+
+      await act(async () => {
+        await result.current.executeClientAgent({
+          context: { agentId: TEST_IDS.SESSION_ID, topicId: TEST_IDS.TOPIC_ID },
+          messages: [groupedActivation, userMessage],
+          parentMessageId: userMessage.id,
+          parentMessageType: 'user',
+        });
+      });
+
+      expect(stepSpy).toHaveBeenCalled();
+      expect(stepSpy.mock.calls[0][1].stepContext?.activatedToolIds).toContain('lobe-browser');
+    });
+
     it('should stop agent runtime loop when operation is cancelled before step execution', async () => {
       act(() => {
         useChatStore.setState({ executeClientAgent: realExecAgentRuntime });
