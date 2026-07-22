@@ -200,6 +200,28 @@ describe('aiModelSelectors', () => {
       expect(aiModelSelectors.isModelSupportToolUse('model4', 'provider2')(mockState)).toBe(false);
     });
 
+    it('should fall back to the builtin model card for tool use support', () => {
+      const state: AIProviderStoreState = {
+        ...mockState,
+        builtinAiModelList: [
+          {
+            abilities: { functionCall: true },
+            id: 'builtin-tools-model',
+            providerId: 'builtin-provider',
+            type: 'chat',
+          },
+        ],
+        enabledAiModels: [],
+      };
+
+      expect(
+        aiModelSelectors.isModelSupportToolUse('builtin-tools-model', 'builtin-provider')(state),
+      ).toBe(true);
+      expect(aiModelSelectors.isModelSupportToolUse('missing', 'builtin-provider')(state)).toBe(
+        false,
+      );
+    });
+
     it('should check vision support', () => {
       expect(aiModelSelectors.isModelSupportVision('model1', 'provider1')(mockState)).toBe(true);
       expect(aiModelSelectors.isModelSupportVision('model4', 'provider2')(mockState)).toBe(false);

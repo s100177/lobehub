@@ -49,5 +49,21 @@ describe('isCanUseFC', () => {
 
       expect(isCanUseFC('gpt-4', 'openai')).toBe(false);
     });
+
+    it('uses builtin capability metadata when the enabled model row is absent', () => {
+      mockAiInfraState({
+        builtinAiModelList: [
+          {
+            abilities: { functionCall: true },
+            id: 'deepseek-v4-pro',
+            providerId: 'deepseek',
+          },
+        ],
+        enabledAiModels: [],
+        isInitAiProviderRuntimeState: true,
+      });
+
+      expect(isCanUseFC('deepseek-v4-pro', 'deepseek')).toBe(true);
+    });
   });
 });

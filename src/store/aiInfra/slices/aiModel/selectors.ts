@@ -29,7 +29,7 @@ const isEmptyAiProviderModelList = (s: AIProviderStoreState) => totalAiProviderM
 const getModelCard = (model: string, provider: string) => (s: AIProviderStoreState) =>
   s.enabledAiModels?.find(
     (item) => item.id === model && (provider ? item.providerId === provider : true),
-  ) || s.builtinAiModelList.find((item) => item.id === model && item.providerId === provider);
+  ) || s.builtinAiModelList?.find((item) => item.id === model && item.providerId === provider);
 
 const hasRemoteModels = (s: AIProviderStoreState) =>
   s.aiProviderModelList.some((m) => m.source === AiModelSourceEnum.Remote);
@@ -47,7 +47,7 @@ const getEnabledModelById = (id: string, provider: string) => (s: AIProviderStor
   s.enabledAiModels?.find((i) => i.id === id && (provider ? provider === i.providerId : true));
 
 const isModelSupportToolUse = (id: string, provider: string) => (s: AIProviderStoreState) => {
-  const model = getEnabledModelById(id, provider)(s);
+  const model = getModelCard(id, provider)(s);
 
   return model?.abilities?.functionCall || false;
 };
