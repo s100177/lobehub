@@ -14,7 +14,7 @@ export class BridgeError extends Error {
 export class BridgeSessionManager {
   constructor({
     commandTimeoutMs = 15_000,
-    connectionWaitMs = 3000,
+    connectionWaitMs = 15_000,
     idleMs = 300_000,
     maxSessions = 20,
   } = {}) {

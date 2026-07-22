@@ -114,6 +114,37 @@ describe('BridgeSessionManager', () => {
     assert.deepEqual(await resultPromise, { clicked: true });
   });
 
+  it('allows enough time for a streamed tool result to mount the visible iframe', async () => {
+    const manager = new BridgeSessionManager({ commandTimeoutMs: 500, connectionWaitMs: 100 });
+    manager.register('topic-1', { ownerId: 'user-1', url: 'https://app.example/form' });
+
+    const resultPromise = manager.enqueue('topic-1', {
+      action: 'inspect',
+      ownerId: 'user-1',
+      params: {},
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    manager.connect('topic-1', {
+      clientId: 'client-1',
+      ownerId: 'user-1',
+      url: 'https://app.example/form',
+    });
+    const command = await manager.poll('topic-1', {
+      clientId: 'client-1',
+      ownerId: 'user-1',
+    });
+    manager.complete('topic-1', {
+      clientId: 'client-1',
+      commandId: command.id,
+      epoch: command.epoch,
+      ownerId: 'user-1',
+      result: { title: 'Form' },
+    });
+
+    assert.equal(command.action, 'inspect');
+    assert.deepEqual(await resultPromise, { title: 'Form' });
+  });
+
   it('does not reuse an old iframe client after navigation starts a new session', async () => {
     const manager = new BridgeSessionManager({ connectionWaitMs: 10 });
     manager.register('topic-1', { ownerId: 'user-1', url: 'https://app.example/old' });

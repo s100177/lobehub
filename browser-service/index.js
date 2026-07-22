@@ -20,6 +20,10 @@ const STREAM_ACTIVE_INTERVAL_MS = Number.parseInt(
 );
 const STREAM_IDLE_INTERVAL_MS = Number.parseInt(process.env.STREAM_IDLE_INTERVAL_MS || '1200', 10);
 const STREAM_ACTIVE_WINDOW_MS = Number.parseInt(process.env.STREAM_ACTIVE_WINDOW_MS || '5000', 10);
+const BRIDGE_CONNECTION_WAIT_MS = Number.parseInt(
+  process.env.BRIDGE_CONNECTION_WAIT_MS || '15000',
+  10,
+);
 const VIEWPORT = { width: 1280, height: 800 };
 const SKILL_PACKS_DIR = process.env.BROWSER_SKILL_PACKS_DIR;
 const USER_AGENT =
@@ -41,6 +45,7 @@ const sessionModes = new Map();
 const sessionOwners = new Map();
 const bridgeSessions = new BridgeSessionManager({
   commandTimeoutMs: Number.parseInt(process.env.BRIDGE_COMMAND_TIMEOUT_MS || '15000', 10),
+  connectionWaitMs: BRIDGE_CONNECTION_WAIT_MS,
   idleMs: SESSION_IDLE_MS,
   maxSessions: MAX_SESSIONS,
 });
