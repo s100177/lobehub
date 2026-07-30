@@ -64,6 +64,38 @@ export interface ServerCallLlmContextBuildResult {
   shouldReplayAssistantReasoning: boolean;
 }
 
+const hasNonSystemMessage = (messages: ChatStreamPayload['messages']): boolean =>
+  messages.some((message) => message.role !== 'system');
+
+/**
+ * Context engineering must never erase the entire actionable turn. Keep the
+ * current user goal plus a bounded recent tool window so the model can resume
+ * without replaying an unbounded agent trace.
+ */
+export const recoverActionableMessages = (
+  processedMessages: ChatStreamPayload['messages'],
+  sourceMessages: ChatStreamPayload['messages'],
+): ChatStreamPayload['messages'] => {
+  if (hasNonSystemMessage(processedMessages) || !hasNonSystemMessage(sourceMessages)) {
+    return processedMessages;
+  }
+
+  const systemMessages = processedMessages.filter((message) => message.role === 'system');
+  const lastUserIndex = sourceMessages.findLastIndex((message) => message.role === 'user');
+  const latestUser = lastUserIndex >= 0 ? sourceMessages[lastUserIndex] : undefined;
+
+  let tailStart = Math.max(lastUserIndex + 1, sourceMessages.length - 6);
+  while (tailStart > lastUserIndex + 1 && sourceMessages[tailStart]?.role === 'tool') {
+    tailStart -= 1;
+  }
+
+  const recentMessages = sourceMessages
+    .slice(tailStart)
+    .filter((message) => message.role !== 'system');
+
+  return [...systemMessages, ...(latestUser ? [latestUser] : []), ...recentMessages];
+};
+
 export const buildServerCallLlmContext = async ({
   ctx,
   llmPayload,
@@ -499,7 +531,7 @@ export const buildServerCallLlmContext = async ({
     ...(onboardingContext && { onboardingContext }),
   };
 
-  const processedMessages = await agentRuntimeTracer.startActiveSpan(
+  const engineeredMessages = await agentRuntimeTracer.startActiveSpan(
     CONTEXT_ENGINEERING_SPAN_NAME,
     {
       attributes: buildContextEngineeringAttributes({
@@ -552,6 +584,20 @@ export const buildServerCallLlmContext = async ({
     toolsConfig: _toolsConfig,
     ...contextEngineInputLite
   } = contextEngineInput;
+  const processedMessages = recoverActionableMessages(
+    engineeredMessages,
+    messagesForContext as ChatStreamPayload['messages'],
+  );
+
+  if (processedMessages !== engineeredMessages) {
+    log(
+      '[%s:%d] Context engineering removed every non-system message; recovered %d source messages',
+      operationId,
+      stepIndex,
+      processedMessages.length - engineeredMessages.length,
+    );
+  }
+
   ctx.tracingContextEngine?.(
     { ...contextEngineInputLite, toolCount: _toolsConfig?.tools?.length ?? 0 },
     processedMessages,

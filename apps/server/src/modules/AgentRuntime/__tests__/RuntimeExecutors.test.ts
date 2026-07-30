@@ -1991,6 +1991,50 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
         );
       });
 
+      it('recovers the current goal when context engineering drops every actionable message', async () => {
+        engineSpy.mockResolvedValueOnce([
+          { content: 'You are a coding agent', role: 'system' },
+        ] as any);
+
+        const ctxWithConfig: RuntimeExecutorContext = {
+          ...ctx,
+          agentConfig: {
+            plugins: [],
+            systemRole: 'You are a coding agent',
+          },
+        };
+        const executors = createRuntimeExecutors(ctxWithConfig);
+        const state = createMockState();
+
+        await executors.call_llm!(
+          {
+            payload: {
+              messages: [
+                { content: 'Upgrade the ODD interface', role: 'user' },
+                {
+                  content: '',
+                  role: 'assistant',
+                  tools: [{ id: 'read-1', type: 'builtin' }],
+                },
+                { content: 'File contents', role: 'tool' },
+              ],
+              model: 'gpt-4',
+              provider: 'openai',
+            },
+            type: 'call_llm' as const,
+          },
+          state,
+        );
+
+        const chatMessages = mockChat.mock.calls[0][0].messages;
+        expect(chatMessages).toEqual([
+          expect.objectContaining({ role: 'system' }),
+          expect.objectContaining({ content: 'Upgrade the ODD interface', role: 'user' }),
+          expect.objectContaining({ role: 'assistant' }),
+          expect.objectContaining({ content: 'File contents', role: 'tool' }),
+        ]);
+      });
+
       it('should pass model knowledge cutoff into serverMessagesEngine', async () => {
         const ctxWithConfig: RuntimeExecutorContext = {
           ...ctx,

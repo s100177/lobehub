@@ -207,6 +207,26 @@ describe('createGatewayEventHandler', () => {
     });
   });
 
+  describe('stream_retry', () => {
+    it('surfaces retry progress and clears it when model output resumes', async () => {
+      const store = createMockStore();
+      const handler = createHandler(store);
+
+      handler(makeEvent('stream_retry', { attempt: 2, delayMs: 1000, maxAttempts: 3 }));
+
+      expect(store.updateOperationMetadata).toHaveBeenCalledWith('op-1', {
+        llmRetry: { attempt: 2, delayMs: 1000, maxAttempts: 3 },
+      });
+
+      handler(makeEvent('stream_chunk', { chunkType: 'text', content: 'recovered' }));
+      await flush();
+
+      expect(store.updateOperationMetadata).toHaveBeenCalledWith('op-1', {
+        llmRetry: undefined,
+      });
+    });
+  });
+
   describe('stream_chunk', () => {
     it('should accumulate text content and pass operationId context', async () => {
       const store = createMockStore();

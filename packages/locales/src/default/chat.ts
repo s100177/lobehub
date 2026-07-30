@@ -559,8 +559,10 @@ export default {
 
   // Op status tray (floating panel above the chat input during a run)
   'opStatusTray.status.compressing': 'Compressing context',
+  'opStatusTray.status.executing': 'Task in progress',
   'opStatusTray.status.generating': 'Generating',
   'opStatusTray.status.reasoning': 'Thinking',
+  'opStatusTray.status.retrying': 'Model response failed, retrying {{attempt}}/{{max}}',
   'opStatusTray.status.searching': 'Searching',
   'opStatusTray.status.toolCalling': 'Calling tools',
   'opStatusTray.cost': 'cost',

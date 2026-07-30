@@ -453,6 +453,18 @@ export const createGatewayEventHandler = (
     }
 
     switch (event.type) {
+      case 'stream_retry': {
+        const data = toRecord(event.data);
+        get().updateOperationMetadata(operationId, {
+          llmRetry: {
+            attempt: typeof data?.attempt === 'number' ? data.attempt : undefined,
+            delayMs: typeof data?.delayMs === 'number' ? data.delayMs : undefined,
+            maxAttempts: typeof data?.maxAttempts === 'number' ? data.maxAttempts : undefined,
+          },
+        });
+        break;
+      }
+
       case 'stream_start': {
         enqueue(async () => {
           const data = event.data as HeteroStreamStartData | undefined;
@@ -517,7 +529,10 @@ export const createGatewayEventHandler = (
           // Reset accumulators for the new stream
           accumulatedContent = '';
           accumulatedReasoning = '';
-          get().updateOperationMetadata(operationId, { visibleLoadingDone: false });
+          get().updateOperationMetadata(operationId, {
+            llmRetry: undefined,
+            visibleLoadingDone: false,
+          });
 
           // Native gateway streams carry `assistantMessage.id` directly on
           // stream_start and the shell-insert above guarantees a valid chunk
@@ -574,6 +589,8 @@ export const createGatewayEventHandler = (
         enqueue(() => {
           const data = event.data as StreamChunkData | undefined;
           if (!data) return;
+
+          get().updateOperationMetadata(operationId, { llmRetry: undefined });
 
           if (data.chunkType === 'text' && data.content) {
             // Text after reasoning marks the end of the thinking pass — see

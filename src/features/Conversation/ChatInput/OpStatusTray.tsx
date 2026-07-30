@@ -16,11 +16,6 @@ import { calculateOperationUsageMetrics } from '@/utils/operationUsageMetrics';
 
 import { contextSelectors, dataSelectors, useConversationStore } from '../store';
 import { type ActivityKey, resolveOperationActivity } from '../utils/operationActivity';
-import { parseStatusPhrases, pickRotatingStatusPhrase } from './OpStatusTray/logic';
-
-// Cycle the generating phrase like a carousel so a long-running task doesn't
-// stare back with the same line the whole time.
-const STATUS_PHRASE_ROTATION_MS = 4000;
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
   container: css`
@@ -253,8 +248,8 @@ const OpStatusTray = memo<OpStatusTrayProps>(({ seamless, topAttached }) => {
     let activity: ActivityKey | undefined;
     let earliestStart: number | undefined;
     let latestActivityStart = -1;
-    let statusSeed: string | undefined;
     let stepCount = 0;
+    let llmRetry: { attempt?: number; maxAttempts?: number } | undefined;
     const runtimeOperationIds: string[] = [];
 
     for (const op of ops) {
@@ -273,17 +268,17 @@ const OpStatusTray = memo<OpStatusTrayProps>(({ seamless, topAttached }) => {
 
       runtimeOperationIds.push(op.id);
       stepCount = Math.max(stepCount, normalizeStepCount(op.metadata.stepCount));
+      if (op.metadata.llmRetry) llmRetry = op.metadata.llmRetry;
 
       if (earliestStart === undefined || op.metadata.startTime < earliestStart) {
         earliestStart = op.metadata.startTime;
-        statusSeed = op.id;
       }
     }
     return {
       activity: activity ?? 'generating',
+      llmRetry,
       operationIdsKey: runtimeOperationIds.join('|'),
       startTime: earliestStart,
-      statusSeed,
       steps: stepCount,
     };
   });
@@ -316,22 +311,13 @@ const OpStatusTray = memo<OpStatusTrayProps>(({ seamless, topAttached }) => {
   const costLabel = t('chat:opStatusTray.cost');
   const stepLabel = t('chat:opStatusTray.steps');
   const tokenLabel = t('chat:opStatusTray.tokens', { defaultValue: 'tokens' });
-  const generatingPhrases = parseStatusPhrases(
-    t('opStatusTray:generatingPhrases', {
-      defaultValue: [],
-      returnObjects: true,
-    }),
-  );
-  const rotationStep = Math.floor(elapsed / STATUS_PHRASE_ROTATION_MS);
-  const randomGeneratingStatus =
-    pickRotatingStatusPhrase(
-      generatingPhrases,
-      operationState.statusSeed ?? String(operationState.startTime),
-      rotationStep,
-    ) ?? t('chat:opStatusTray.status.generating');
-  const statusText =
-    operationState.activity === 'generating'
-      ? randomGeneratingStatus
+  const statusText = operationState.llmRetry
+    ? t('chat:opStatusTray.status.retrying', {
+        attempt: operationState.llmRetry.attempt ?? '?',
+        max: operationState.llmRetry.maxAttempts ?? '?',
+      })
+    : operationState.activity === 'generating'
+      ? t('chat:opStatusTray.status.executing')
       : t(`chat:opStatusTray.status.${operationState.activity}`);
 
   // Zero-valued metrics render nothing; steps only matter for long-running
