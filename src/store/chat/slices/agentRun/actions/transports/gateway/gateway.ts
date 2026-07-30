@@ -79,7 +79,7 @@ type Setter = StoreSetter<ChatStore>;
 
 const GATEWAY_STATUS_POLL_INITIAL_DELAY_MS = 1500;
 const GATEWAY_STATUS_POLL_INTERVAL_MS = 2000;
-const GATEWAY_STATUS_POLL_MAX_DURATION_MS = 120_000;
+const GATEWAY_STATUS_POLL_MAX_DURATION_MS = 6 * 60 * 60 * 1000;
 
 // ─── Types ───
 
@@ -736,6 +736,15 @@ export class GatewayActionImpl {
 
     const stopCompletionMonitor = this.monitorServerOperationCompletion({
       localOperationId: gatewayOpId,
+      onProgress: agentGatewayUrl
+        ? undefined
+        : async ({ stepCount }) => {
+            if (stepCount !== undefined) {
+              this.#get().updateOperationMetadata(gatewayOpId, { stepCount });
+            }
+            const messages = await messageService.getMessages(execContext);
+            this.#get().replaceMessages(messages, { context: execContext });
+          },
       onTerminal: ({ succeeded }) =>
         finalizeGatewayRun({ source: 'poll', succeeded, terminalReceived: false }),
       serverOperationId: result.operationId,
@@ -913,6 +922,15 @@ export class GatewayActionImpl {
 
     const stopCompletionMonitor = this.monitorServerOperationCompletion({
       localOperationId: gatewayOpId,
+      onProgress: agentGatewayUrl
+        ? undefined
+        : async ({ stepCount }) => {
+            if (stepCount !== undefined) {
+              this.#get().updateOperationMetadata(gatewayOpId, { stepCount });
+            }
+            const messages = await messageService.getMessages(context);
+            this.#get().replaceMessages(messages, { context });
+          },
       onTerminal: ({ succeeded }) =>
         finalizeReconnectedRun({ source: 'poll', succeeded, terminalReceived: false }),
       serverOperationId: operationId,
@@ -990,10 +1008,11 @@ export class GatewayActionImpl {
 
   private monitorServerOperationCompletion = (params: {
     localOperationId: string;
+    onProgress?: (params: { lastModified?: string; stepCount?: number }) => void | Promise<void>;
     onTerminal: (params: { succeeded: boolean }) => void | Promise<void>;
     serverOperationId: string;
   }): (() => void) => {
-    const { localOperationId, onTerminal, serverOperationId } = params;
+    const { localOperationId, onProgress, onTerminal, serverOperationId } = params;
     const startedAt = Date.now();
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1033,6 +1052,15 @@ export class GatewayActionImpl {
           stop();
           await onTerminal({ succeeded: false });
           return;
+        }
+
+        // A newly-created runtime can report `idle` while its first step is
+        // already persisting assistant output. Treat every known non-terminal
+        // state as progress so no-Gateway clients keep their message list live.
+        if (status) {
+          const lastModified = status?.currentState?.lastModified;
+          const stepCount = status?.currentState?.stepCount;
+          await onProgress?.({ lastModified, stepCount });
         }
       } catch (err) {
         console.warn('[Gateway] operation-status polling failed:', err);

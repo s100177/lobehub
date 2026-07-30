@@ -1077,6 +1077,7 @@ describe('GatewayActionImpl', () => {
       });
       const replaceMessages = vi.fn();
       const internalUpdateTopicLoading = vi.fn();
+      const updateOperationMetadata = vi.fn();
       const startOperation = vi.fn(() => {
         state.operations['gw-op-local'] = {
           id: 'gw-op-local',
@@ -1097,6 +1098,7 @@ describe('GatewayActionImpl', () => {
         onOperationCancel: vi.fn(),
         replaceMessages,
         startOperation,
+        updateOperationMetadata,
       })) as any;
       const set = vi.fn((updater: any) => {
         if (typeof updater === 'function') Object.assign(state, updater(state));
@@ -1123,14 +1125,40 @@ describe('GatewayActionImpl', () => {
         topicId: 'topic-1',
         userMessageId: 'usr-1',
       });
-      vi.mocked(aiAgentService.getOperationStatus).mockResolvedValue({
-        currentState: { status: 'done' },
-        hasError: false,
-        isActive: false,
-        isCompleted: true,
-        operationId: 'server-op-1',
-      });
-      vi.mocked(messageService.getMessages).mockResolvedValue([{ id: 'ast-1' }] as any);
+      vi.mocked(aiAgentService.getOperationStatus)
+        .mockResolvedValueOnce({
+          currentState: {
+            lastModified: '2026-07-30T09:37:00.000Z',
+            status: 'idle',
+            stepCount: 0,
+          },
+          hasError: false,
+          isActive: false,
+          isCompleted: false,
+          operationId: 'server-op-1',
+        })
+        .mockResolvedValueOnce({
+          currentState: {
+            lastModified: '2026-07-30T09:37:00.000Z',
+            status: 'running',
+            stepCount: 2,
+          },
+          hasError: false,
+          isActive: true,
+          isCompleted: false,
+          operationId: 'server-op-1',
+        })
+        .mockResolvedValueOnce({
+          currentState: { status: 'done' },
+          hasError: false,
+          isActive: false,
+          isCompleted: true,
+          operationId: 'server-op-1',
+        });
+      vi.mocked(messageService.getMessages)
+        .mockResolvedValueOnce([{ content: '正在调用 Python 工具', id: 'ast-1' }] as any)
+        .mockResolvedValueOnce([{ content: 'Python 工具已返回第一步结果', id: 'ast-1' }] as any)
+        .mockResolvedValueOnce([{ content: '任务完成', id: 'ast-1' }] as any);
 
       const action = new GatewayActionImpl(set as any, get, undefined);
 
@@ -1147,7 +1175,26 @@ describe('GatewayActionImpl', () => {
       expect(messageService.getMessages).toHaveBeenCalledWith(
         expect.objectContaining({ topicId: 'topic-1' }),
       );
-      expect(replaceMessages).toHaveBeenCalledWith([{ id: 'ast-1' }], {
+      expect(replaceMessages).toHaveBeenCalledWith(
+        [{ content: '正在调用 Python 工具', id: 'ast-1' }],
+        {
+          context: expect.objectContaining({ topicId: 'topic-1' }),
+        },
+      );
+      expect(updateOperationMetadata).toHaveBeenCalledWith('gw-op-local', { stepCount: 0 });
+      expect(completeOperation).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(2000);
+
+      expect(replaceMessages).toHaveBeenLastCalledWith(
+        [{ content: 'Python 工具已返回第一步结果', id: 'ast-1' }],
+        { context: expect.objectContaining({ topicId: 'topic-1' }) },
+      );
+      expect(completeOperation).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(2000);
+
+      expect(replaceMessages).toHaveBeenLastCalledWith([{ content: '任务完成', id: 'ast-1' }], {
         context: expect.objectContaining({ topicId: 'topic-1' }),
       });
       expect(completeOperation).toHaveBeenCalledWith('gw-op-local');
@@ -1317,6 +1364,7 @@ describe('GatewayActionImpl', () => {
       const replaceMessages = vi.fn();
       const internalUpdateTopicLoading = vi.fn();
       const connectToGateway = vi.fn();
+      const updateOperationMetadata = vi.fn();
       const startOperation = vi.fn(() => {
         state.operations['gw-op-reconnect'] = {
           id: 'gw-op-reconnect',
@@ -1335,6 +1383,7 @@ describe('GatewayActionImpl', () => {
         onOperationCancel: vi.fn(),
         replaceMessages,
         startOperation,
+        updateOperationMetadata,
         updateTopicStatus: vi.fn(),
       })) as any;
       const set = vi.fn();
@@ -1342,16 +1391,24 @@ describe('GatewayActionImpl', () => {
       (globalThis as any).window = {
         global_serverConfigStore: { getState: () => ({ serverConfig: {} }) },
       };
-      vi.mocked(aiAgentService.getOperationStatus).mockResolvedValue({
-        currentState: { status: 'done' },
-        hasError: false,
-        isActive: false,
-        isCompleted: true,
-        operationId: 'server-op-1',
-      });
-      vi.mocked(messageService.getMessages).mockResolvedValue([
-        { content: '后台任务完成', id: 'ast-1' },
-      ] as any);
+      vi.mocked(aiAgentService.getOperationStatus)
+        .mockResolvedValueOnce({
+          currentState: { status: 'idle', stepCount: 0 },
+          hasError: false,
+          isActive: false,
+          isCompleted: false,
+          operationId: 'server-op-1',
+        })
+        .mockResolvedValueOnce({
+          currentState: { status: 'done' },
+          hasError: false,
+          isActive: false,
+          isCompleted: true,
+          operationId: 'server-op-1',
+        });
+      vi.mocked(messageService.getMessages)
+        .mockResolvedValueOnce([{ content: '后台正在运行工具', id: 'ast-1' }] as any)
+        .mockResolvedValueOnce([{ content: '后台任务完成', id: 'ast-1' }] as any);
 
       const action = new GatewayActionImpl(set as any, get, undefined);
 
@@ -1367,10 +1424,18 @@ describe('GatewayActionImpl', () => {
       expect(aiAgentService.getOperationStatus).toHaveBeenCalledWith({
         operationId: 'server-op-1',
       });
+      expect(replaceMessages).toHaveBeenCalledWith([{ content: '后台正在运行工具', id: 'ast-1' }], {
+        context: expect.objectContaining({ agentId: 'agent-1', topicId: 'topic-1' }),
+      });
+      expect(updateOperationMetadata).toHaveBeenCalledWith('gw-op-reconnect', { stepCount: 0 });
+      expect(completeOperation).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(2000);
+
       expect(messageService.getMessages).toHaveBeenCalledWith(
         expect.objectContaining({ agentId: 'agent-1', topicId: 'topic-1' }),
       );
-      expect(replaceMessages).toHaveBeenCalledWith([{ content: '后台任务完成', id: 'ast-1' }], {
+      expect(replaceMessages).toHaveBeenLastCalledWith([{ content: '后台任务完成', id: 'ast-1' }], {
         context: expect.objectContaining({ agentId: 'agent-1', topicId: 'topic-1' }),
       });
       expect(completeOperation).toHaveBeenCalledWith('gw-op-reconnect');

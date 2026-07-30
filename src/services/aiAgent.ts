@@ -121,7 +121,9 @@ export interface GetOperationStatusParams {
 export interface AgentOperationStatus {
   currentState?: {
     error?: any;
+    lastModified?: string;
     status?: string;
+    stepCount?: number;
   };
   hasError?: boolean;
   isActive?: boolean;
