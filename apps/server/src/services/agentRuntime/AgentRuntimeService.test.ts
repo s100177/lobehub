@@ -491,6 +491,9 @@ describe('AgentRuntimeService', () => {
       // Mock runtime.step
       const mockRuntime = { step: vi.fn().mockResolvedValue(mockStepResult) };
       vi.spyOn(service as any, 'createAgentRuntime').mockReturnValue({ runtime: mockRuntime });
+      const progressSpy = vi
+        .spyOn((service as any).completionLifecycle, 'recordProgress')
+        .mockResolvedValue(undefined);
 
       const result = await service.executeStep(mockParams);
 
@@ -519,6 +522,28 @@ describe('AgentRuntimeService', () => {
 
       expect(mockCoordinator.saveStepResult).toHaveBeenCalled();
       expect(mockQueueService.scheduleMessage).toHaveBeenCalled();
+      expect(progressSpy).toHaveBeenNthCalledWith(1, 'test-operation-1', {
+        cost: undefined,
+        llmCalls: undefined,
+        stepCount: 1,
+        toolCalls: undefined,
+        totalCost: undefined,
+        totalInputTokens: undefined,
+        totalOutputTokens: undefined,
+        totalTokens: undefined,
+        usage: undefined,
+      });
+      expect(progressSpy).toHaveBeenNthCalledWith(2, 'test-operation-1', {
+        cost: undefined,
+        llmCalls: undefined,
+        stepCount: 2,
+        toolCalls: undefined,
+        totalCost: undefined,
+        totalInputTokens: undefined,
+        totalOutputTokens: undefined,
+        totalTokens: undefined,
+        usage: undefined,
+      });
     });
 
     it('should resume async tools with the last pending tool result as parentMessageId', async () => {

@@ -95,6 +95,14 @@ const ContentLoading = memo<ContentLoadingProps>(({ id, startTime: startTimeOver
     return undefined;
   };
   const operationLabel = getOperationLabel();
+  const llmRetry = runningOp?.metadata?.llmRetry as
+    { attempt?: number; maxAttempts?: number } | undefined;
+  const loadingLabel = llmRetry
+    ? t('opStatusTray.status.retrying', {
+        attempt: llmRetry.attempt ?? '?',
+        max: llmRetry.maxAttempts ?? '?',
+      })
+    : operationLabel;
 
   const showElapsedTime = elapsedSeconds >= ELAPSED_TIME_THRESHOLD / 1000;
 
@@ -111,10 +119,10 @@ const ContentLoading = memo<ContentLoadingProps>(({ id, startTime: startTimeOver
     );
   }
 
-  if (operationLabel) {
+  if (loadingLabel) {
     return (
       <Flexbox horizontal align={'center'} gap={4}>
-        <span className={shinyTextStyles.shinyText}>{operationLabel}...</span>
+        <span className={shinyTextStyles.shinyText}>{loadingLabel}...</span>
         {showElapsedTime && (
           <span className={elapsedTimeStyles.elapsedTime}>({elapsedSeconds}s)</span>
         )}

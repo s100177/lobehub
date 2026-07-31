@@ -48,6 +48,16 @@ export interface RuntimeExecutorContext {
   hookDispatcher?: HookDispatcher;
   loadAgentState?: (operationId: string) => Promise<AgentState | null>;
   messageModel: MessageModel;
+  /** Non-fatal observability hook fired before an LLM retry backoff. */
+  onLLMRetry?: (retry: {
+    attempt: number;
+    delayMs: number;
+    errorType: string;
+    kind: string;
+    maxAttempts: number;
+  }) => Promise<void>;
+  /** Non-fatal observability hook fired when an LLM retry recovers. */
+  onLLMRetryRecovered?: () => Promise<void>;
   operationId: string;
   serverDB: LobeChatDatabase;
   stepIndex: number;

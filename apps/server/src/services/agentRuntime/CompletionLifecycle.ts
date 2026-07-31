@@ -3,6 +3,7 @@ import debug from 'debug';
 
 import {
   AgentOperationModel,
+  type RecordOperationProgressParams,
   type RecordOperationStartParams,
 } from '@/database/models/agentOperation';
 import { MessageModel } from '@/database/models/message';
@@ -149,6 +150,15 @@ export class CompletionLifecycle {
           this.workspaceId,
         ),
       );
+    }
+  }
+
+  /** Persist a running heartbeat without allowing observability failures to stop execution. */
+  async recordProgress(operationId: string, params: RecordOperationProgressParams): Promise<void> {
+    try {
+      await this.agentOperationModel.recordProgress(operationId, params);
+    } catch (error) {
+      log('[%s] Failed to record operation progress (non-fatal): %O', operationId, error);
     }
   }
 

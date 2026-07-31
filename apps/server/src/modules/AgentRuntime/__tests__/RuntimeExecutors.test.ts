@@ -4916,6 +4916,8 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
 
     it('should retry llm execution, emit stream_retry, and commit only the successful attempt', async () => {
       vi.useFakeTimers();
+      const onLLMRetry = vi.fn().mockResolvedValue(undefined);
+      const onLLMRetryRecovered = vi.fn().mockResolvedValue(undefined);
 
       const toolCallPayload = [
         {
@@ -4942,7 +4944,7 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
 
       vi.mocked(initModelRuntimeFromDB).mockResolvedValue({ chat: mockChat } as any);
 
-      const executors = createRuntimeExecutors(ctx);
+      const executors = createRuntimeExecutors({ ...ctx, onLLMRetry, onLLMRetryRecovered });
       const state = createMockState();
       const instruction = {
         payload: {
@@ -4975,6 +4977,10 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
             data: expect.objectContaining({ attempt: 2, delayMs: 1000, maxAttempts: 6 }),
           }),
         );
+        expect(onLLMRetry).toHaveBeenCalledWith(
+          expect.objectContaining({ attempt: 2, delayMs: 1000, maxAttempts: 6 }),
+        );
+        expect(onLLMRetryRecovered).toHaveBeenCalledTimes(1);
       } finally {
         vi.useRealTimers();
       }

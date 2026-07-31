@@ -210,6 +210,74 @@ describe('AgentOperationModel', () => {
     });
   });
 
+  describe('recordProgress', () => {
+    it('refreshes running aggregates without setting terminal fields', async () => {
+      const model = new AgentOperationModel(serverDB, userId);
+      const operationId = 'op-progress-1';
+
+      await model.recordStart({ operationId });
+      const before = await model.findById(operationId);
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await model.recordProgress(operationId, {
+        cost: { total: 0.05 },
+        llmCalls: 2,
+        stepCount: 3,
+        toolCalls: 1,
+        totalCost: 0.05,
+        totalInputTokens: 120,
+        totalOutputTokens: 30,
+        totalTokens: 150,
+        usage: { llm: { apiCalls: 2 } },
+      });
+
+      const row = await model.findById(operationId);
+      expect(row).toMatchObject({
+        completionReason: null,
+        llmCalls: 2,
+        status: 'running',
+        stepCount: 3,
+        toolCalls: 1,
+        totalCost: 0.05,
+        totalInputTokens: 120,
+        totalOutputTokens: 30,
+        totalTokens: 150,
+      });
+      expect(row?.completedAt).toBeNull();
+      expect(row?.updatedAt.getTime()).toBeGreaterThan(before!.updatedAt.getTime());
+    });
+
+    it('does not overwrite a terminal operation with a late heartbeat', async () => {
+      const model = new AgentOperationModel(serverDB, userId);
+      const operationId = 'op-progress-terminal';
+
+      await model.recordStart({ operationId });
+      await model.recordCompletion(operationId, {
+        completedAt: new Date(),
+        completionReason: 'done',
+        status: 'done',
+        stepCount: 4,
+      });
+      await model.recordProgress(operationId, { stepCount: 5 });
+
+      const row = await model.findById(operationId);
+      expect(row?.status).toBe('done');
+      expect(row?.stepCount).toBe(4);
+    });
+
+    it("does not update another user's operation", async () => {
+      const ownerModel = new AgentOperationModel(serverDB, userId);
+      const attackerModel = new AgentOperationModel(serverDB, otherUserId);
+      const operationId = 'op-progress-cross-user';
+
+      await ownerModel.recordStart({ operationId });
+      await attackerModel.recordProgress(operationId, { stepCount: 99 });
+
+      const row = await ownerModel.findById(operationId);
+      expect(row?.stepCount).toBeNull();
+    });
+  });
+
   describe('getMaxDurationSeconds', () => {
     it('returns the longest wall-clock duration, ignoring in-flight and other users', async () => {
       const model = new AgentOperationModel(serverDB, userId);

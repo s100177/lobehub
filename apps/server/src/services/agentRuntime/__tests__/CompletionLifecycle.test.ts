@@ -102,6 +102,28 @@ describe('CompletionLifecycle.extractErrorMessage', () => {
   });
 });
 
+describe('CompletionLifecycle.recordProgress', () => {
+  it('delegates progress persistence to AgentOperationModel', async () => {
+    const lifecycle = buildLifecycle();
+    const recordProgress = vi
+      .spyOn((lifecycle as any).agentOperationModel, 'recordProgress')
+      .mockResolvedValue(undefined);
+
+    await lifecycle.recordProgress('op-1', { stepCount: 2, toolCalls: 1 });
+
+    expect(recordProgress).toHaveBeenCalledWith('op-1', { stepCount: 2, toolCalls: 1 });
+  });
+
+  it('keeps progress persistence failures non-fatal', async () => {
+    const lifecycle = buildLifecycle();
+    vi.spyOn((lifecycle as any).agentOperationModel, 'recordProgress').mockRejectedValue(
+      new Error('database unavailable'),
+    );
+
+    await expect(lifecycle.recordProgress('op-1', { stepCount: 2 })).resolves.toBeUndefined();
+  });
+});
+
 describe('CompletionLifecycle.buildLifecycleEvent', () => {
   const callBuild = (state: unknown, reason = 'completed') =>
     (buildLifecycle() as any).buildLifecycleEvent('op-1', state, reason);

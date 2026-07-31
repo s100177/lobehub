@@ -37,6 +37,7 @@ import {
 import debug from 'debug';
 import urlJoin from 'url-join';
 
+import type { RecordOperationProgressParams } from '@/database/models/agentOperation';
 import { AgentOperationModel } from '@/database/models/agentOperation';
 import { MessageModel } from '@/database/models/message';
 import { type LobeChatDatabase } from '@/database/type';
@@ -116,6 +117,7 @@ const ASYNC_TOOL_VERIFY_MAX_DELAY_MS = 240_000;
 
 const STEP_LOCK_TTL_SECONDS = 120;
 const STEP_LOCK_HEARTBEAT_MS = 30_000;
+const OPERATION_PROGRESS_HEARTBEAT_MS = 30_000;
 
 /**
  * Exponential backoff delay for the Nth (1-based) watchdog re-check:
@@ -371,6 +373,29 @@ export class AgentRuntimeService {
     const timerWithUnref = timer as { unref?: () => void };
     timerWithUnref.unref?.();
 
+    return () => clearInterval(timer);
+  }
+
+  private operationProgressFromState(state: Partial<AgentState>): RecordOperationProgressParams {
+    return {
+      cost: state.cost as unknown as Record<string, unknown> | undefined,
+      llmCalls: state.usage?.llm?.apiCalls,
+      stepCount: state.stepCount,
+      toolCalls: state.usage?.tools?.totalCalls,
+      totalCost: state.cost?.total,
+      totalInputTokens: state.usage?.llm?.tokens?.input,
+      totalOutputTokens: state.usage?.llm?.tokens?.output,
+      totalTokens: state.usage?.llm?.tokens?.total,
+      usage: state.usage as unknown as Record<string, unknown> | undefined,
+    };
+  }
+
+  private startOperationProgressHeartbeat(operationId: string): () => void {
+    const timer = setInterval(() => {
+      void this.completionLifecycle.recordProgress(operationId, {});
+    }, OPERATION_PROGRESS_HEARTBEAT_MS);
+
+    (timer as { unref?: () => void }).unref?.();
     return () => clearInterval(timer);
   }
 
@@ -796,6 +821,7 @@ export class AgentRuntimeService {
     // runtime.step() call site stays as the authoritative start for the
     // success path.
     const stepStartAt = Date.now();
+    let stopOperationProgressHeartbeat: (() => void) | undefined;
 
     // OTel invoke_agent span. Wraps the entire step body so child spans
     // (chat / execute_tool / context_engineering) auto-nest via the active
@@ -821,6 +847,12 @@ export class AgentRuntimeService {
         if (!agentState) {
           throw new Error(`Agent state not found for operation ${operationId}`);
         }
+
+        await this.completionLifecycle.recordProgress(
+          operationId,
+          this.operationProgressFromState(agentState),
+        );
+        stopOperationProgressHeartbeat = this.startOperationProgressHeartbeat(operationId);
 
         const stepStartUiMessages = await this.queryUiMessages(agentState);
         await this.streamManager.publishStreamEvent(operationId, {
@@ -1095,6 +1127,10 @@ export class AgentRuntimeService {
           executionTime: Date.now() - startAt,
           stepIndex, // placeholder
         });
+        await this.completionLifecycle.recordProgress(
+          operationId,
+          this.operationProgressFromState(stepResult.newState),
+        );
 
         // Decide whether to schedule next step
         const shouldContinue = this.shouldContinueExecution(
@@ -1463,6 +1499,7 @@ export class AgentRuntimeService {
       throw error;
     } finally {
       invokeAgentSpan.end();
+      stopOperationProgressHeartbeat?.();
       stopStepLockHeartbeat();
       await this.coordinator.releaseStepLock(operationId, stepIndex, stepLockOwner);
     }
@@ -2646,6 +2683,29 @@ export class AgentRuntimeService {
       hookDispatcher,
       loadAgentState: this.coordinator.loadAgentState.bind(this.coordinator),
       messageModel: this.messageModel,
+      onLLMRetry: async (retry) => {
+        await this.completionLifecycle.recordProgress(operationId, {
+          error: {
+            message: `Model response failed (${retry.errorType})`,
+            retryable: true,
+            type: retry.errorType,
+          },
+          metadata: {
+            llmRetry: { ...retry, occurredAt: new Date().toISOString(), stepIndex },
+          },
+          stepCount: stepIndex,
+        });
+      },
+      onLLMRetryRecovered: async () => {
+        await this.completionLifecycle.recordProgress(operationId, {
+          error: null,
+          metadata: {
+            llmRetry: null,
+            llmRetryRecoveredAt: new Date().toISOString(),
+          },
+          stepCount: stepIndex,
+        });
+      },
       operationId,
       serverDB: this.serverDB,
       stepIndex,

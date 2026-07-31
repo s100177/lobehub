@@ -589,6 +589,16 @@ export const callLlm =
 
               log('[%s:%d] call_llm completed', operationId, stepIndex);
 
+              if (attempt > 1) {
+                await ctx.onLLMRetryRecovered?.().catch((error) => {
+                  log(
+                    '[%s] Failed to record LLM retry recovery (non-fatal): %O',
+                    operationLogId,
+                    error,
+                  );
+                });
+              }
+
               // ===== 1. First save original usage to message.metadata =====
               // Determine final content - use serialized parts if has images, otherwise plain text
               const finalContent = streamSink.hasContentImages
@@ -779,7 +789,7 @@ export const callLlm =
                   data: {
                     attempt: attempt + 1,
                     delayMs,
-                    errorType: classified.code,
+                    errorType: classified.code ?? classified.kind,
                     kind: classified.kind,
                     maxAttempts,
                   },
@@ -792,6 +802,22 @@ export const callLlm =
                   stepIndex,
                   type: 'stream_retry',
                 });
+
+                await ctx
+                  .onLLMRetry?.({
+                    attempt: attempt + 1,
+                    delayMs,
+                    errorType: classified.code ?? classified.kind,
+                    kind: classified.kind,
+                    maxAttempts,
+                  })
+                  .catch((retryRecordError) => {
+                    log(
+                      '[%s] Failed to record LLM retry state (non-fatal): %O',
+                      operationLogId,
+                      retryRecordError,
+                    );
+                  });
 
                 await sleep(delayMs);
 

@@ -76,6 +76,23 @@ export interface RecordOperationCompletionParams {
   usage?: Record<string, unknown> | null;
 }
 
+export type RecordOperationProgressParams = Pick<
+  RecordOperationCompletionParams,
+  | 'cost'
+  | 'error'
+  | 'llmCalls'
+  | 'processingTimeMs'
+  | 'stepCount'
+  | 'toolCalls'
+  | 'totalCost'
+  | 'totalInputTokens'
+  | 'totalOutputTokens'
+  | 'totalTokens'
+  | 'usage'
+> & {
+  metadata?: Record<string, unknown>;
+};
+
 export class AgentOperationModel {
   private readonly db: LobeChatDatabase;
   private readonly userId: string;
@@ -159,6 +176,44 @@ export class AgentOperationModel {
       .update(agentOperations)
       .set(updates)
       .where(and(eq(agentOperations.id, operationId), this.ownership()));
+  }
+
+  /**
+   * Refresh an in-flight operation's heartbeat and last-known aggregates.
+   * The running-status guard prevents a delayed step from overwriting a row
+   * that has already reached a terminal or parked state.
+   */
+  async recordProgress(operationId: string, params: RecordOperationProgressParams): Promise<void> {
+    const updates: Partial<NewAgentOperation> = { updatedAt: new Date() };
+
+    if (params.processingTimeMs !== undefined) updates.processingTimeMs = params.processingTimeMs;
+    if (params.stepCount !== undefined) updates.stepCount = params.stepCount;
+    if (params.totalCost !== undefined) updates.totalCost = params.totalCost;
+    if (params.totalTokens !== undefined) updates.totalTokens = params.totalTokens;
+    if (params.totalInputTokens !== undefined) updates.totalInputTokens = params.totalInputTokens;
+    if (params.totalOutputTokens !== undefined)
+      updates.totalOutputTokens = params.totalOutputTokens;
+    if (params.llmCalls !== undefined) updates.llmCalls = params.llmCalls;
+    if (params.toolCalls !== undefined) updates.toolCalls = params.toolCalls;
+    if (params.cost !== undefined) updates.cost = params.cost;
+    if (params.usage !== undefined) updates.usage = params.usage;
+    if (params.error !== undefined) updates.error = params.error;
+    if (params.metadata !== undefined) {
+      updates.metadata = sql`
+        COALESCE(${agentOperations.metadata}, '{}'::jsonb) || ${JSON.stringify(params.metadata)}::jsonb
+      ` as unknown as Record<string, unknown>;
+    }
+
+    await this.db
+      .update(agentOperations)
+      .set(updates)
+      .where(
+        and(
+          eq(agentOperations.id, operationId),
+          eq(agentOperations.status, 'running'),
+          this.ownership(),
+        ),
+      );
   }
 
   async findById(operationId: string) {
