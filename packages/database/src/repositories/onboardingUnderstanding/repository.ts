@@ -1,6 +1,7 @@
 import type {
   CollectionError,
   ConfirmOnboardingUnderstandingInput,
+  OnboardingSessionSnapshot,
   OnboardingUnderstandingMessageMetadata,
   OnboardingUnderstandingSession,
   UnderstandingProviderState,
@@ -133,6 +134,7 @@ interface FailWritingInput {
 }
 
 interface SessionMutation<Result> {
+  clearTaskRecommendations?: boolean;
   nextSession: OnboardingUnderstandingSession | undefined;
   result: Result;
   write: boolean;
@@ -235,6 +237,7 @@ const mutateTopicSession = async <Result>(
   topicId: string,
   mutate: (
     session: OnboardingUnderstandingSession | undefined,
+    onboardingSession: OnboardingSessionSnapshot,
   ) => Promise<SessionMutation<Result>> | SessionMutation<Result>,
 ): Promise<Result> => {
   const [topic] = await tx
@@ -247,7 +250,7 @@ const mutateTopicSession = async <Result>(
   if (!onboardingSession) throw new UnderstandingSessionNotFoundError(topicId);
   const persisted = onboardingSession.understanding;
   const session = persisted ? parseSession(persisted) : undefined;
-  const mutation = await mutate(session);
+  const mutation = await mutate(session, onboardingSession);
 
   if (mutation.write) {
     await tx
@@ -257,6 +260,7 @@ const mutateTopicSession = async <Result>(
           ...topic.metadata,
           onboardingSession: {
             ...onboardingSession,
+            ...(mutation.clearTaskRecommendations ? { taskRecommendations: undefined } : {}),
             understanding: mutation.nextSession
               ? parseSession(mutation.nextSession)
               : mutation.nextSession,
@@ -735,10 +739,26 @@ export class OnboardingUnderstandingRepository {
       }),
     );
 
+  /**
+   * Removes transient Understanding and task recommendation state for an onboarding restart.
+   *
+   * Use when:
+   * - The owning user explicitly restarts onboarding
+   * - A newer onboarding version invalidates generated session data
+   *
+   * Expects:
+   * - An active personal topic owned by the repository user
+   *
+   * Returns:
+   * - The removed Understanding session when one existed, for external source cleanup
+   */
   removeForReset = async (topicId: string): Promise<OnboardingUnderstandingSession | undefined> =>
     this.db.transaction((tx) =>
-      mutateTopicSession(tx, this.userId, topicId, async (session) => {
-        if (!session) return { nextSession: undefined, result: undefined, write: false };
+      mutateTopicSession(tx, this.userId, topicId, async (session, onboardingSession) => {
+        const hasTaskRecommendations = !!onboardingSession.taskRecommendations;
+        if (!session && !hasTaskRecommendations) {
+          return { nextSession: undefined, result: undefined, write: false };
+        }
         const writingThreadIds = (
           await tx
             .select({ id: threads.id, metadata: threads.metadata })
@@ -753,7 +773,12 @@ export class OnboardingUnderstandingRepository {
             .delete(threads)
             .where(and(inArray(threads.id, writingThreadIds), threadOwnership(this.userId)));
         }
-        return { nextSession: undefined, result: session, write: true };
+        return {
+          clearTaskRecommendations: true,
+          nextSession: undefined,
+          result: session,
+          write: true,
+        };
       }),
     );
 
