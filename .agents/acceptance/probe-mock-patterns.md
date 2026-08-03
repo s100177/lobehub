@@ -467,6 +467,126 @@ Then assert on `aside.innerText` line count plus a count of text-free rounded bo
 collapsing to \~8 text-free rows is the nav-panel fallback, while fixed items present
 with only the list area shimmering is ordinary data loading.
 
+### Boot-phase UI cannot be observed by CDP polling — sample in-page, and mirror the timer
+
+**Situation:** asserting whether a transient boot-phase surface (a splash, a skeleton,
+a first-paint gate) appears between React's first commit and the app painting.
+
+**Doesn't work:** polling `Runtime.evaluate` from a CDP driver, even at a 50ms step.
+The desktop renderer's boot spends multi-second stretches in a single synchronous
+task, and every `Runtime.evaluate` queues behind it — the driver observes the state
+before the window and again after it, and reports the phase "never happened". CPU
+throttling makes it worse: it stretches the blocking task and the probe equally.
+
+**Works:** inject a pure observer with `Page.addScriptToEvaluateOnNewDocument` and
+sample from inside the page. Note `document.documentElement` does not exist yet in an
+on-new-document script, so a `MutationObserver` cannot be attached there — use
+`setInterval(check, 8)`. Record the largest gap between consecutive ticks: that gap
+is the main thread's longest blocking task, and a boot window with no intermediate
+sample is a blocked window, not a missing state.
+
+When the behavior under test is time-thresholded, also **mirror the product's own
+timer**: at the moment the observer first sees `#root` gain a child, schedule the same
+`setTimeout(…, N)` the component uses and record when it actually fires. On a blocked
+main thread it fires far later than `N` — which is the difference between "the
+threshold logic is wrong" and "the threshold never had a chance to run", and no
+screenshot can tell those apart.
+
+**When the driver has no CDP (claude-in-chrome, the debug proxy), deliver the same
+sampler through Vite instead**: a temporary `[AGENT-TEST]` block at the top of
+`src/spa/entry.{web,desktop}.tsx` runs at bundle-eval — early enough for every
+post-React phase — and needs no `Page.addScriptToEvaluateOnNewDocument`. Two things
+to get right in the phase predicate: scope any `[role="status"][aria-label="Loading"]`
+check with `.closest('#loading-screen')` so the **static HTML shell's own logo** is not
+counted as the React `BrandTextLoading` (they share the same role/label, and conflating
+them turns a clean boot into a false "the logo flashed"); and record the max gap between
+consecutive ticks — LobeHub's boot routinely shows a single 0.6–1.1s blocking task, so a
+phase with no sample inside it is a blocked window, not a missing state.
+
+### A global `indexedDB.open` stall holds the boot on web but kills the Electron renderer
+
+**Situation:** needing to freeze the boot at a pre-app phase long enough to capture it,
+by keeping the SWR cache hydration from ever completing.
+
+**Doesn't work on desktop:** replacing `indexedDB.open` with a never-settling stub
+breaks the Electron renderer outright — the local database adapter registered in
+`entry.desktop.tsx` needs IndexedDB, so the entry dies before React renders and the
+HTML loading screen stays up forever. The symptom reads as "the phase under test never
+appears", i.e. exactly like the product defect you were looking for.
+
+**Works:** use the stall only on the web entry, where it holds `CacheHydrationGate`
+for its full `HYDRATION_TIMEOUT` (about 8s) — ample for a screenshot plus
+`getBoundingClientRect` / `getComputedStyle` measurements over the same CDP
+connection. For desktop, do not stall storage: observe the natural boot with the
+in-page sampler above. Either way, disarm with
+`Page.removeScriptToEvaluateOnNewDocument` and reload before capturing the settled
+state, or the comparison shot is taken against a still-crippled runtime.
+
+### The desktop instance pins a previous run's server port, and its saved OAuth login expires
+
+**Situation:** starting an Electron dev instance for a surface that needs the local
+backend (any tRPC-backed panel), in a fresh worktree.
+
+**Doesn't work:** starting the dev server on the port `init-dev-env.sh` allocates
+for this worktree and assuming the app will follow. The desktop app is a thin
+client — `BackendProxyProtocolManager` proxies `app://renderer/trpc/*` to whatever
+`dataSyncConfig.remoteServerUrl` the seeded login snapshot carries, which is the
+port an _earlier_ run allocated. The mismatch surfaces as `app-probe.sh server-auth`
+returning **502** (proxy reached nothing), not as an auth error. And once the port
+matches, the snapshot's OAuth tokens are usually expired anyway — the app shows
+「登录已过期」 and `server-auth` returns **401**, while `auth` still reports
+`isSignedIn: true` from renderer state alone.
+
+**Works:** read the app's own target first, then start the server on that port:
+
+```bash
+agent-browser --cdp 9222 eval '(() => JSON.stringify(window.__LOBE_STORES.electron().dataSyncConfig))()'
+# → {"storageMode":"selfHost","remoteServerUrl":"http://localhost:3111","active":true}
+SERVER_PORT=3111 .agents/acceptance/scripts/init-dev-env.sh dev-next
+```
+
+For the expired login, do **not** drive the OAuth flow. The proxy forwards the
+Electron session's cookies alongside its `Oidc-Auth` header, and the server accepts
+a better-auth session cookie — so mint one for the seeded user and inject it over
+raw CDP:
+
+```bash
+curl -c cookie.jar -H 'Content-Type: application/json' -X POST \
+  "$SERVER_URL/api/auth/sign-in/email" \
+  --data '{"callbackURL":"/","email":"agent-testing@lobehub.com","password":"TestPassword123!"}'
+# then Network.setCookie better-auth.session_token / better-auth.session_data
+# for url http://localhost:<port>, domain localhost, httpOnly, on the renderer target
+```
+
+Gate on `app-probe.sh server-auth` returning `{"authenticated":true,"status":200}` —
+renderer `isSignedIn` alone never proves the server accepted anything.
+
+### `agent.updateAgentConfig` silently drops `agencyConfig.heterogeneousProvider`
+
+**Situation:** turning a test agent into a CLI-agent shape (Claude Code / Codex) so
+the heterogeneous chat input and its quota badges render.
+
+**Doesn't work:** `updateAgentConfigById(id, { agencyConfig: { heterogeneousProvider:
+{ type: 'claude-code', command: 'claude' } } })`. The store's optimistic write makes
+it look applied — reading `agentMap[id].agencyConfig` back returns the provider — but
+the DB row keeps only the sibling keys (`executionTarget` persists, the provider does
+not), so the next full reload drops it and the plain chat input comes back. Reads as
+"the agent isn't hetero" with no error anywhere.
+
+**Works:** seed the shape directly (public API first is the rule; this is the
+documented exception where the write path does not carry the field):
+
+```bash
+docker exec lobehub-agent-testing-postgres psql -U postgres -d postgres -tAc \
+  "update agents set agency_config = '{\"executionTarget\":\"local\",\"heterogeneousProvider\":{\"type\":\"claude-code\",\"command\":\"claude\"}}'::jsonb where id='<agentId>';"
+```
+
+Then cold-load: a plain reload keeps serving the agent config from the tiered SWR
+cache, so the renderer still shows the pre-write value (generic M18). Clear
+`lobechat-swr-cache*` + `lobehub-local-data` through
+`Page.addScriptToEvaluateOnNewDocument` and reload (see "Cold SWR cache" above),
+then assert `agentMap[id].agencyConfig` before drawing any conclusion.
+
 ## Detailed references
 
 - [Probe field notes](./references/probe-field-notes.md) — all historical
