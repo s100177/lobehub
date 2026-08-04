@@ -75,7 +75,10 @@ const lambdaMutation = async <T>(
 export const createLambdaFileStorePort = async (
   auth: RemoteServerAuth,
 ): Promise<FileStorePort | undefined> => {
-  const [serverUrl, accessToken] = await Promise.all([auth.getServerUrl(), auth.getAccessToken()]);
+  // Evaluate separately so a synchronous throw from one callback cannot orphan
+  // a sibling rejected promise. Electron treats that unhandled rejection as fatal.
+  const serverUrl = await auth.getServerUrl();
+  const accessToken = await auth.getAccessToken();
 
   if (!serverUrl || !accessToken) {
     logger.debug('No authed remote server — skipping tool_result image upload');

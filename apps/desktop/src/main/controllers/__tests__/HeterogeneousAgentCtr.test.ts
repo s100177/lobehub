@@ -213,6 +213,17 @@ describe('HeterogeneousAgentCtr', () => {
     await rm(appStoragePath, { force: true, recursive: true });
   });
 
+  it('drops a result image without crashing when the remote server controller is unavailable', async () => {
+    const ctr = new HeterogeneousAgentCtr({ getController: vi.fn(() => undefined) } as any);
+
+    await expect(
+      (ctr as any).uploadResultImage({
+        data: Buffer.from('fake-png').toString('base64'),
+        mediaType: 'image/png',
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   describe('image cache (delegates to shared `normalizeImage`)', () => {
     // Image fetch + cache moved to `@lobechat/heterogeneous-agents/spawn`'s
     // `normalizeImage`. The desktop controller passes its own cacheDir so the

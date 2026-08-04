@@ -38,6 +38,30 @@ describe('createLambdaFileStorePort', () => {
     ).toBeUndefined();
   });
 
+  it('does not orphan a rejection when an auth callback throws synchronously', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandledRejection);
+
+    try {
+      await expect(
+        createLambdaFileStorePort({
+          getAccessToken: () => {
+            throw new TypeError('access token controller unavailable');
+          },
+          getServerUrl: async () => {
+            throw new TypeError('remote server controller unavailable');
+          },
+        }),
+      ).rejects.toThrow('remote server controller unavailable');
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
+  });
+
   it('POSTs a superjson-serialized input to the lambda procedure and deserializes the result', async () => {
     vi.mocked(fetch).mockResolvedValue(trpcOk({ isExist: true, url: 'files/a/b.png' }) as any);
 

@@ -356,7 +356,7 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
   });
   private readonly codexQuotaCache = new QuotaSnapshotCache<CodexQuotaSnapshot>();
 
-  private get remoteServerConfigCtr() {
+  private get remoteServerConfigCtr(): RemoteServerConfigCtr | undefined {
     return this.app.getController(RemoteServerConfigCtr);
   }
 
@@ -367,8 +367,8 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
    */
   private uploadResultImage = createFileStoreImageUploader(() =>
     createLambdaFileStorePort({
-      getAccessToken: () => this.remoteServerConfigCtr.getAccessToken(),
-      getServerUrl: async () => (await this.remoteServerConfigCtr.getRemoteServerUrl()) ?? null,
+      getAccessToken: async () => (await this.remoteServerConfigCtr?.getAccessToken()) ?? null,
+      getServerUrl: async () => (await this.remoteServerConfigCtr?.getRemoteServerUrl()) ?? null,
     }),
   );
 
