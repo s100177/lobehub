@@ -1052,7 +1052,7 @@ describe('HeterogeneousAgentCtr', () => {
 
     it('sniffs image bytes when MIME and URL do not expose a usable extension', async () => {
       const pngBytes = Buffer.concat([
-        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        Buffer.from('89504e470d0a1a0a', 'hex'),
         Buffer.from('PNG_TEST'),
       ]);
       const imageList = [
