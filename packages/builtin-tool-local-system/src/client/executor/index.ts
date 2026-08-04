@@ -170,9 +170,8 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
       ctx,
     );
     if (remoteResult) return remoteResult;
-
     try {
-      const resolvedParams = resolveArgsWithScope(params, 'directory');
+      const resolvedParams = resolveArgsWithScope(params, 'directory', ctx?.workingDirectory);
       const result = await this.runtime.searchFiles({
         ...resolvedParams,
         directory: resolvedParams.directory || '',
@@ -358,10 +357,10 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
   ): Promise<BuiltinToolResult> => {
     const remoteResult = await this.proxyToActiveDevice(LocalSystemApiEnum.globFiles, params, ctx);
     if (remoteResult) return remoteResult;
-
     try {
+      const resolvedScope = resolvePathWithScope(params.scope, ctx?.workingDirectory);
       const result = await this.runtime.globFiles({
-        directory: params.scope,
+        directory: resolvedScope,
         limit:
           Number.isFinite(params.limit) && params.limit && params.limit > 0
             ? Math.floor(params.limit)

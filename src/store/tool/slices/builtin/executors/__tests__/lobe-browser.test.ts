@@ -1,7 +1,13 @@
-import { BrowserApiName, BrowserIdentifier } from '@lobechat/builtin-tool-browser';
+import { BrowserApiName } from '@lobechat/builtin-tool-browser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { invokeExecutor } from '../index';
+import { browserExecutor } from '../lobe-browser';
+
+const invokeBrowserExecutor = (
+  apiName: Parameters<typeof browserExecutor.invoke>[0],
+  params: Record<string, unknown>,
+  ctx: Parameters<typeof browserExecutor.invoke>[2],
+) => browserExecutor.invoke(apiName, params, ctx);
 
 describe('browser executor', () => {
   afterEach(() => {
@@ -20,8 +26,7 @@ describe('browser executor', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await invokeExecutor(
-      BrowserIdentifier,
+    const result = await invokeBrowserExecutor(
       BrowserApiName.navigate,
       { url: 'https://example.com' },
       { messageId: 'tool-message-id', topicId: 'topic-1', toolCallId: 'call-1' },
@@ -61,8 +66,7 @@ describe('browser executor', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await invokeExecutor(
-      BrowserIdentifier,
+    const result = await invokeBrowserExecutor(
       BrowserApiName.submit,
       { selector: '#kw' },
       { messageId: 'tool-message-id', topicId: 'topic-1', toolCallId: 'call-1' },
@@ -98,8 +102,7 @@ describe('browser executor', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await invokeExecutor(
-      BrowserIdentifier,
+    const result = await invokeBrowserExecutor(
       BrowserApiName.hover,
       { selector: '#menu' },
       { messageId: 'tool-message-id', topicId: 'topic-1', toolCallId: 'call-1' },
@@ -144,8 +147,7 @@ describe('browser executor', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await invokeExecutor(
-      BrowserIdentifier,
+    const result = await invokeBrowserExecutor(
       BrowserApiName.inspect,
       {},
       { messageId: 'tool-message-id', topicId: 'topic-1', toolCallId: 'call-1' },
@@ -215,8 +217,7 @@ describe('browser executor', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await invokeExecutor(
-      BrowserIdentifier,
+    const result = await invokeBrowserExecutor(
       BrowserApiName.executePlan,
       {
         authorized: true,
@@ -293,8 +294,7 @@ describe('browser executor', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await invokeExecutor(
-      BrowserIdentifier,
+    const result = await invokeBrowserExecutor(
       BrowserApiName.interrupt,
       { inputType: 'click', reason: 'Automation paused because the user clicked the page.' },
       { messageId: 'tool-message-id', topicId: 'topic-1', toolCallId: 'call-1' },
@@ -356,8 +356,7 @@ describe('browser executor', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await invokeExecutor(
-      BrowserIdentifier,
+    const result = await invokeBrowserExecutor(
       BrowserApiName.cancelTask,
       { reason: 'User cancelled the risky browser task before execution.' },
       { messageId: 'tool-message-id', topicId: 'topic-1', toolCallId: 'call-1' },
@@ -408,8 +407,7 @@ describe('browser executor', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await invokeExecutor(
-      BrowserIdentifier,
+    const result = await invokeBrowserExecutor(
       BrowserApiName.click,
       { selector: '#buy' },
       { messageId: 'tool-message-id', topicId: 'topic-1', toolCallId: 'call-1' },

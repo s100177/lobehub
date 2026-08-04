@@ -764,7 +764,7 @@ export class GatewayActionImpl {
             .updateTopicMetadata(result.topicId, { runningOperation: null })
             .catch(() => {});
           // Also clear the local store copy — the server clear above does NOT touch
-          // the Zustand topic map that useGatewayReconnect reads (LOBE-12055).
+          // the Zustand topic map that useGatewayReconnect reads.
           this.clearLocalRunningOperation({
             agentId: resolvedMessageContext.agentId,
             groupId: resolvedMessageContext.groupId,
@@ -850,7 +850,11 @@ export class GatewayActionImpl {
 
     let token = '';
     if (agentGatewayUrl) {
-      // Get a fresh JWT token (original expired after 5 min).
+      // Get a fresh JWT token (original expired after 5 min). The server throws
+      // TRPCError NOT_FOUND when it has no running operation on this topic — our
+      // local marker is stale (e.g. an error run cleared the server marker but not
+      // the store). Clear it and bail silently so the reconnect SWR fetcher resolves
+      // and does not retry the 404 forever.
       try {
         ({ token } = await aiAgentService.refreshGatewayToken(topicId));
       } catch (error) {
@@ -967,6 +971,8 @@ export class GatewayActionImpl {
         // Clear the persisted marker useGatewayReconnect keys off so a dead op
         // doesn't get reconnected on every reload / task-drawer open.
         topicService.updateTopicMetadata(topicId, { runningOperation: null }).catch(() => {});
+        // Mirror the clear into the local store — the server clear above leaves the
+        // Zustand topic map stale, which useGatewayReconnect keys off.
         this.clearLocalRunningOperation({ agentId: context.agentId, operationId, topicId });
       }
     };
@@ -1054,7 +1060,7 @@ export class GatewayActionImpl {
    * copy, so after an error run (e.g. insufficient credits) the stale marker keeps
    * firing `aiAgentService.refreshGatewayToken(topicId)`, which the server now answers
    * with NOT_FOUND (404 — the server-side marker is already null). Raw SWR retries the
-   * 404 forever and wedges the conversation (LOBE-12055).
+   * 404 forever and wedges the conversation.
    *
    * The `updateTopic` reducer shallow-merges `value.metadata` (`{...currentTopic, ...value}`),
    * so we spread the existing metadata to avoid dropping its other keys. Only dispatch when

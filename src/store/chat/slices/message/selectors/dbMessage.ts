@@ -1,6 +1,7 @@
 import {
   extractActivatedSkillsFromMessages,
   extractActivatedToolIdsFromMessages,
+  extractTodosFromMessages,
 } from '@lobechat/agent-runtime';
 import {
   type StepActivatedSkill,
@@ -228,36 +229,8 @@ export const selectActivatedSkillsFromMessages = (
  * @param messages - Array of chat messages to search
  * @returns The latest todos state or undefined if not found
  */
-export const selectTodosFromMessages = (
-  messages: UIChatMessage[],
-): StepContextTodos | undefined => {
-  // Search from newest to oldest
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-
-    if (msg.role === 'tool' && msg.pluginState?.todos) {
-      const todos = msg.pluginState.todos as { items?: unknown[]; updatedAt?: string };
-
-      // Handle the todos structure: { items: TodoItem[], updatedAt: string }
-      if (typeof todos === 'object' && 'items' in todos && Array.isArray(todos.items)) {
-        return {
-          items: todos.items as StepContextTodos['items'],
-          updatedAt: todos.updatedAt || new Date().toISOString(),
-        };
-      }
-
-      // Legacy format: direct array of TodoItem[]
-      if (Array.isArray(todos)) {
-        return {
-          items: todos as StepContextTodos['items'],
-          updatedAt: new Date().toISOString(),
-        };
-      }
-    }
-  }
-
-  return undefined;
-};
+export const selectTodosFromMessages = (messages: UIChatMessage[]): StepContextTodos | undefined =>
+  extractTodosFromMessages(messages);
 
 /**
  * Select todos from the current agent turn only — messages after the last
