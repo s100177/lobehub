@@ -324,7 +324,7 @@ async function assertRemoteViewerPostsUserInput() {
     assert(box, 'Expected viewer iframe to be visible');
     await page.mouse.click(box.x + 80, box.y + 120);
 
-    await page.waitForFunction(() => document.body.dataset.lastInput === 'click', {
+    await page.waitForFunction(() => document.body.dataset.lastInput === 'click', undefined, {
       timeout: 5000,
     });
     const messages = await page.evaluate(() => window.browserMessages);
@@ -384,8 +384,22 @@ async function assertRemoteViewerPreservesKeyboardOrder() {
         y: (field.result.y / 800) * screenBox.height,
       },
     });
-    await page.keyboard.press('Control+A');
-    await page.keyboard.type('MANUAL_REMOTE_OK');
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const focused = await request(
+        '/evaluate',
+        { code: "document.activeElement?.id === 'kw'" },
+        sessionId,
+      );
+      if (focused.result === true) break;
+      if (attempt === 39) throw new Error('Expected remote click to focus #kw before typing');
+      await delay(50);
+    }
+    await screen.press('Control+A');
+    await screen.pressSequentially('MANUAL_REMOTE_OK');
+    await page
+      .frameLocator('#viewer')
+      .locator('body')
+      .evaluate(() => window.__LOBE_BROWSER_VIEWER__?.waitForInputs());
 
     let value;
     for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -396,7 +410,19 @@ async function assertRemoteViewerPreservesKeyboardOrder() {
       await delay(100);
     }
 
-    assert(value === 'MANUAL_REMOTE_OK', `Expected ordered remote typing, got ${value}`);
+    const viewerDiagnostics = await page.evaluate(() => ({
+      activeElement: document.activeElement?.id,
+      messages: window.browserMessages,
+    }));
+    const viewerFrame = page.frameLocator('#viewer').locator('body');
+    const viewerStatus = await page.frameLocator('#viewer').locator('#status').textContent();
+    const viewerInputError = await viewerFrame.evaluate(() =>
+      window.__LOBE_BROWSER_VIEWER__?.getLastInputError(),
+    );
+    assert(
+      value === 'MANUAL_REMOTE_OK',
+      `Expected ordered remote typing, got ${value}; viewer status=${viewerStatus}; input error=${viewerInputError}; diagnostics=${JSON.stringify(viewerDiagnostics)}`,
+    );
 
     const inspected = await request('/inspect', {}, sessionId);
     const interruptionCount =
@@ -462,9 +488,8 @@ async function assertServerRecordsUserIntervention() {
   );
   assert(
     inputInterrupted.executionState?.phase === 'paused_by_user_intervention' &&
-      inputInterrupted.executionTimeline?.some(
-        (event) => event.action === 'interrupt' && /performed click/.test(event.summary),
-      ),
+      inputInterrupted.executionTimeline?.filter((event) => event.action === 'interrupt').length ===
+        1,
     `Expected viewer input to persist interruption audit, got ${JSON.stringify({
       executionState: inputInterrupted.executionState,
       executionTimeline: inputInterrupted.executionTimeline,
@@ -1114,6 +1139,10 @@ function createBrowserServiceRuntimeDir() {
   cpSync(
     path.resolve(browserServiceDir, 'bridge-session-manager.js'),
     path.resolve(browserServiceRuntimeDir, 'bridge-session-manager.js'),
+  );
+  cpSync(
+    path.resolve(browserServiceDir, 'form-control.js'),
+    path.resolve(browserServiceRuntimeDir, 'form-control.js'),
   );
   cpSync(
     path.resolve(browserServiceDir, 'service-auth.js'),

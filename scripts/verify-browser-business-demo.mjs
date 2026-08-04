@@ -595,6 +595,10 @@ function createBrowserServiceRuntimeDir() {
     path.resolve(browserServiceRuntimeDir, 'bridge-session-manager.js'),
   );
   cpSync(
+    path.resolve(browserServiceDir, 'form-control.js'),
+    path.resolve(browserServiceRuntimeDir, 'form-control.js'),
+  );
+  cpSync(
     path.resolve(browserServiceDir, 'service-auth.js'),
     path.resolve(browserServiceRuntimeDir, 'service-auth.js'),
   );

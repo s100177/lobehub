@@ -2116,6 +2116,14 @@ function renderViewerHtml({ basePath, sessionId, takeover }) {
     let lastPointer = null;
     let lastPointerSentAt = 0;
     let inputQueue = Promise.resolve();
+    let lastInputError = '';
+    const parentOrigin = (() => {
+      try {
+        return document.referrer ? new URL(document.referrer).origin : window.location.origin;
+      } catch {
+        return window.location.origin;
+      }
+    })();
 
     function endpoint(mode) {
       if (basePath === '/' || basePath === '') {
@@ -2145,7 +2153,7 @@ function renderViewerHtml({ basePath, sessionId, takeover }) {
         type: 'user-input',
         inputType: type,
         sessionId,
-      }, window.location.origin);
+      }, parentOrigin);
     }
 
     function sendInput(payload, options = {}) {
@@ -2156,11 +2164,16 @@ function renderViewerHtml({ basePath, sessionId, takeover }) {
             headers: { 'Content-Type': 'application/json' },
             method: 'POST',
           });
-          const frame = response.ok ? await response.json().catch(() => null) : null;
+          if (!response.ok) {
+            throw new Error((await response.text().catch(() => '')) || 'HTTP ' + response.status);
+          }
+          lastInputError = '';
+          const frame = await response.json().catch(() => null);
           if (options.drawResponse !== false && frame) {
             drawFrame(frame, { force: true });
           }
-        } catch {
+        } catch (error) {
+          lastInputError = error instanceof Error ? error.message : String(error);
           statusEl.textContent = 'input failed';
         }
       };
@@ -2172,6 +2185,11 @@ function renderViewerHtml({ basePath, sessionId, takeover }) {
 
       inputQueue = inputQueue.then(run, run);
     }
+
+    window.__LOBE_BROWSER_VIEWER__ = {
+      getLastInputError: () => lastInputError,
+      waitForInputs: () => inputQueue,
+    };
 
     function drawFrame(frame, options = {}) {
       if (frame.pointer?.cursor) {
@@ -2295,7 +2313,7 @@ function renderViewerHtml({ basePath, sessionId, takeover }) {
       canvas.focus();
       lastPointer = canvasPoint(event);
       notifyUserInput('click');
-      sendInput({ type: 'click', ...lastPointer });
+      sendInput({ screenshot: false, type: 'click', ...lastPointer }, { drawResponse: false });
     });
     canvas.addEventListener('dblclick', (event) => {
       canvas.focus();
