@@ -264,9 +264,9 @@ const HomeModeContent = memo<HomeModeContentProps>(({ mode, onSuggestionSelect }
     [inboxTopics.running, myId],
   );
   const useFetchBriefs = useBriefStore((s) => s.useFetchBriefs);
-  const briefsSWR = useFetchBriefs(isLogin);
-  const briefs = useBriefStore(briefListSelectors.briefs);
-  const briefsInit = useBriefStore(briefListSelectors.isBriefsInit);
+  const briefsSWR = useFetchBriefs(isLogin, cacheScope);
+  const briefs = useBriefStore(briefListSelectors.briefs(cacheScope));
+  const briefsInit = useBriefStore(briefListSelectors.isBriefsInit(cacheScope));
   const needsYouCount = useMemo(() => splitBriefs(briefs).needsYou.length, [briefs]);
   const topicRecents = recentsSWR.data ?? [];
 
