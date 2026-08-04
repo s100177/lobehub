@@ -33,6 +33,12 @@ try {
     await page.goto(new URL('/signin', baseUrl).toString(), { waitUntil: 'domcontentloaded' });
     await page.locator('#email').fill(email);
     await page.keyboard.press('Enter');
+
+    const agreementButton = page.getByRole('button', { name: 'Agree and continue' });
+    if (await agreementButton.isVisible().catch(() => false)) {
+      await agreementButton.click();
+    }
+
     await page.locator('#password').waitFor({ timeout: 15_000 });
     await page.locator('#password').fill(password);
     await page.keyboard.press('Enter');
