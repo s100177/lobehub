@@ -10,22 +10,14 @@ const BrowserPortal = memo<BuiltinPortalProps>(
 
     switch (apiName) {
       case BrowserApiName.navigate:
+      case BrowserApiName.snapshot:
       case BrowserApiName.click:
       case BrowserApiName.fill:
-      case BrowserApiName.hover:
-      case BrowserApiName.cancelTask:
-      case BrowserApiName.executePlan:
-      case BrowserApiName.interrupt:
-      case BrowserApiName.submit:
+      case BrowserApiName.press:
+      case BrowserApiName.readPage:
       case BrowserApiName.scroll:
-      case BrowserApiName.screenshot:
-      case BrowserApiName.back:
-      case BrowserApiName.forward: {
+      case BrowserApiName.screenshot: {
         return <BrowserPanel apiName={apiName} sessionId={sessionId} state={state} />;
-      }
-
-      case BrowserApiName.evaluate: {
-        return <BrowserPanel showResult apiName={apiName} sessionId={sessionId} state={state} />;
       }
     }
 

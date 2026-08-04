@@ -44,6 +44,7 @@ const sessions = new Map();
 const sessionCreations = new Map();
 const sessionModes = new Map();
 const sessionOwners = new Map();
+const sessionRefs = new Map();
 const bridgeSessions = new BridgeSessionManager({
   commandTimeoutMs: Number.parseInt(process.env.BRIDGE_COMMAND_TIMEOUT_MS || '15000', 10),
   connectionWaitMs: BRIDGE_CONNECTION_WAIT_MS,
@@ -148,6 +149,44 @@ async function destroySession(sessionId) {
   }
 
   sessions.delete(sessionId);
+  sessionRefs.delete(sessionId);
+}
+
+function buildAccessibilitySnapshot(state, sessionId) {
+  const refs = new Map();
+  const lines = [];
+  let sequence = 0;
+  const add = (role, name, selector, suffix = '') => {
+    if (!selector || refs.has(selector)) return;
+    const ref = `e${++sequence}`;
+    refs.set(ref, selector);
+    lines.push(
+      `- ${role} "${String(name || '')
+        .replaceAll(/\s+/g, ' ')
+        .slice(0, 80)}" [ref=${ref}]${suffix}`,
+    );
+  };
+
+  for (const field of state.pageState?.fields || []) {
+    const role = field.options ? 'combobox' : 'textbox';
+    const value = field.value ? ` [value="${String(field.value).slice(0, 40)}"]` : '';
+    add(role, field.label, field.selector, value);
+  }
+  for (const action of state.pageState?.actions || []) {
+    add('button', action.text, action.selector);
+  }
+
+  sessionRefs.set(sessionId, refs);
+  return {
+    ...state,
+    snapshot: lines.join('\n'),
+  };
+}
+
+function selectorFromArgs(sessionId, args = {}) {
+  if (args.selector) return args.selector;
+  if (!args.ref) return undefined;
+  return sessionRefs.get(sessionId)?.get(args.ref);
 }
 
 async function getOrCreateSession(sessionId) {
@@ -2439,15 +2478,24 @@ app.post('/navigate', sessionMiddleware, async (req, res) => {
 
 app.post('/click', sessionMiddleware, async (req, res) => {
   try {
-    const { selector, timeout = 5000 } = req.body;
-    if (!selector) return res.status(400).json({ error: 'Missing selector' });
+    const { timeout = 5000, x, y } = req.body;
+    const selector = selectorFromArgs(req.sessionId, req.body);
+    if (!selector && (typeof x !== 'number' || typeof y !== 'number')) {
+      return res
+        .status(400)
+        .json({ error: 'Click needs a current snapshot ref, selector, or x/y' });
+    }
 
-    if (isIframeSession(req)) return res.json(await runIframeAction(req, 'click', req.body));
+    if (isIframeSession(req)) {
+      if (!selector)
+        return res.status(400).json({ error: 'Iframe click requires a ref or selector' });
+      return res.json(await runIframeAction(req, 'click', { ...req.body, selector }));
+    }
 
     const session = await getOrCreateSession(req.sessionId);
-    const clicked = await runWithPopupAdoption(session, () =>
-      performSafeClick(session.page, selector, timeout),
-    );
+    const clicked = selector
+      ? await runWithPopupAdoption(session, () => performSafeClick(session.page, selector, timeout))
+      : (await session.page.mouse.click(x, y), { ok: true });
     resetExecutionState(session);
     if (clicked.blocked) {
       recordAction(session, {
@@ -2472,17 +2520,65 @@ app.post('/click', sessionMiddleware, async (req, res) => {
 
 app.post('/fill', sessionMiddleware, async (req, res) => {
   try {
-    const { selector, text, timeout = 5000 } = req.body;
-    if (!selector) return res.status(400).json({ error: 'Missing selector' });
+    const { submit, text, timeout = 5000 } = req.body;
+    const selector = selectorFromArgs(req.sessionId, req.body);
+    if (!selector)
+      return res.status(400).json({ error: 'Fill needs a current snapshot ref or selector' });
 
-    if (isIframeSession(req)) return res.json(await runIframeAction(req, 'fill', req.body));
+    if (isIframeSession(req)) {
+      const state = await runIframeAction(req, 'fill', { ...req.body, selector });
+      if (!submit) return res.json(state);
+      return res.json(await runIframeAction(req, 'press', { key: 'Enter' }));
+    }
 
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
     await performSafeFill(page, selector, text, timeout);
+    if (submit) await page.keyboard.press('Enter');
     resetExecutionState(session);
     recordAction(session, { action: 'fill', summary: `Filled ${selector}`, target: selector });
     res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
+  } catch (err) {
+    sendBridgeError(res, err);
+  }
+});
+
+app.post('/snapshot', sessionMiddleware, async (req, res) => {
+  try {
+    const state = isIframeSession(req)
+      ? await runIframeAction(req, 'inspect', {})
+      : await getPageState((await getOrCreateSession(req.sessionId)).page, {
+          screenshot: false,
+          sessionId: req.sessionId,
+        });
+    res.json(buildAccessibilitySnapshot(state, req.sessionId));
+  } catch (err) {
+    sendBridgeError(res, err);
+  }
+});
+
+app.post('/press', sessionMiddleware, async (req, res) => {
+  try {
+    const { key } = req.body;
+    if (!key) return res.status(400).json({ error: 'Missing key' });
+    if (isIframeSession(req)) return res.json(await runIframeAction(req, 'press', { key }));
+    const session = await getOrCreateSession(req.sessionId);
+    await session.page.keyboard.press(key);
+    res.json(await getPageState(session.page, { screenshot: false, sessionId: req.sessionId }));
+  } catch (err) {
+    sendBridgeError(res, err);
+  }
+});
+
+app.post('/read-page', sessionMiddleware, async (req, res) => {
+  try {
+    const state = isIframeSession(req)
+      ? await runIframeAction(req, 'inspect', {})
+      : await getPageState((await getOrCreateSession(req.sessionId)).page, {
+          screenshot: false,
+          sessionId: req.sessionId,
+        });
+    res.json({ ...state, content: state.pageState?.textSample || '' });
   } catch (err) {
     sendBridgeError(res, err);
   }
@@ -2547,14 +2643,14 @@ app.post('/submit', sessionMiddleware, async (req, res) => {
 
 app.post('/scroll', sessionMiddleware, async (req, res) => {
   try {
-    const { x = 0, y = 0 } = req.body;
-    if (isIframeSession(req)) return res.json(await runIframeAction(req, 'scroll', { x, y }));
+    const { dx = 0, dy = 0 } = req.body;
+    if (isIframeSession(req)) return res.json(await runIframeAction(req, 'scroll', { dx, dy }));
     const session = await getOrCreateSession(req.sessionId);
     const { page } = session;
-    await page.evaluate(({ x, y }) => window.scrollTo(x, y), { x, y });
+    await page.evaluate(({ dx, dy }) => window.scrollBy(dx, dy), { dx, dy });
     await page.waitForTimeout(300);
     resetExecutionState(session);
-    recordAction(session, { action: 'scroll', summary: `Scrolled to x=${x}, y=${y}` });
+    recordAction(session, { action: 'scroll', summary: `Scrolled by dx=${dx}, dy=${dy}` });
     res.json(await getPageState(page, { screenshot: false, sessionId: req.sessionId }));
   } catch (err) {
     sendBridgeError(res, err);

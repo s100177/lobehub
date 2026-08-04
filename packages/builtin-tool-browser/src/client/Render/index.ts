@@ -1,20 +1,15 @@
-import { type BuiltinRender } from '@lobechat/types';
-
 import { BrowserApiName } from '../../types';
-import BrowserCard from './BrowserCard';
+import PageAction from './PageAction';
+import Screenshot from './Screenshot';
+import Snapshot from './Snapshot';
 
-export const BrowserRenders: Record<string, BuiltinRender> = {
-  [BrowserApiName.navigate]: BrowserCard as BuiltinRender,
-  [BrowserApiName.cancelTask]: BrowserCard as BuiltinRender,
-  [BrowserApiName.click]: BrowserCard as BuiltinRender,
-  [BrowserApiName.fill]: BrowserCard as BuiltinRender,
-  [BrowserApiName.hover]: BrowserCard as BuiltinRender,
-  [BrowserApiName.submit]: BrowserCard as BuiltinRender,
-  [BrowserApiName.scroll]: BrowserCard as BuiltinRender,
-  [BrowserApiName.screenshot]: BrowserCard as BuiltinRender,
-  [BrowserApiName.evaluate]: BrowserCard as BuiltinRender,
-  [BrowserApiName.executePlan]: BrowserCard as BuiltinRender,
-  [BrowserApiName.interrupt]: BrowserCard as BuiltinRender,
-  [BrowserApiName.back]: BrowserCard as BuiltinRender,
-  [BrowserApiName.forward]: BrowserCard as BuiltinRender,
+export const BrowserRenders = {
+  [BrowserApiName.click]: PageAction,
+  [BrowserApiName.fill]: PageAction,
+  [BrowserApiName.navigate]: PageAction,
+  [BrowserApiName.press]: PageAction,
+  [BrowserApiName.readPage]: Snapshot,
+  [BrowserApiName.screenshot]: Screenshot,
+  [BrowserApiName.scroll]: PageAction,
+  [BrowserApiName.snapshot]: Snapshot,
 };

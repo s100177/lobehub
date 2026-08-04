@@ -6,10 +6,12 @@
     ".": "./src/index.ts",
     "./bridge": "./src/bridge/index.ts",
     "./client": "./src/client/index.ts",
+    "./client/executor": "./src/client/executor/index.ts",
     "./executionRuntime": "./src/ExecutionRuntime/index.ts"
   },
   "main": "./src/index.ts",
   "dependencies": {
+    "@lobechat/electron-client-ipc": "workspace:*",
     "@lobechat/prompts": "workspace:*"
   },
   "devDependencies": {
@@ -19,7 +21,9 @@
     "@lobehub/ui": "^5",
     "antd": "^6",
     "antd-style": "*",
+    "lucide-react": "*",
     "react": "^19",
-    "react-dom": "^19"
+    "react-dom": "^19",
+    "react-i18next": "*"
   }
 }

@@ -10,4 +10,6 @@ export {
   type ExecutePlanParams,
   type HoverParams,
   type InterruptParams,
+  type PressParams,
 } from './types';
+export * from './types';

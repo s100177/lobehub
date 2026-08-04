@@ -1,100 +1,106 @@
 import {
   BrowserExecutionRuntime,
   BrowserIdentifier,
+  BrowserManifest,
   type BrowserRuntimeService,
   type BrowserState,
 } from '@lobechat/builtin-tool-browser';
 
-import { type ServerRuntimeRegistration } from './types';
+import { deviceGateway } from '@/server/services/deviceGateway';
 
-const getBrowserServiceUrl = (): string | undefined => process.env.BROWSER_SERVICE_URL || undefined;
+import { resolveRunWorkspaceId } from './resolveWorkspaceScope';
+import type { ServerRuntimeRegistration } from './types';
 
 const fetchBrowser = async (
   path: string,
   sessionId: string,
   ownerId: string,
-  body?: object,
-): Promise<any> => {
-  const baseUrl = getBrowserServiceUrl();
-  if (!baseUrl) {
-    throw new Error('BROWSER_SERVICE_URL is not configured');
-  }
+  body: object = {},
+): Promise<BrowserState> => {
+  const baseUrl = process.env.BROWSER_SERVICE_URL;
+  if (!baseUrl) throw new Error('BROWSER_SERVICE_URL is not configured');
 
-  const serviceToken = process.env.BROWSER_SERVICE_TOKEN;
-  const res = await fetch(`${baseUrl}${path}`, {
-    method: 'POST',
+  const response = await fetch(`${baseUrl}${path}`, {
+    body: JSON.stringify(body),
     headers: {
       'Content-Type': 'application/json',
       'X-Browser-Owner-ID': ownerId,
-      ...(serviceToken ? { 'X-Browser-Service-Token': serviceToken } : {}),
+      ...(process.env.BROWSER_SERVICE_TOKEN
+        ? { 'X-Browser-Service-Token': process.env.BROWSER_SERVICE_TOKEN }
+        : {}),
       'X-Session-ID': sessionId,
     },
-    body: body ? JSON.stringify(body) : undefined,
+    method: 'POST',
   });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`Browser service error (${response.status}): ${detail}`);
+  }
+  return response.json();
+};
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Browser service error (${res.status}): ${text}`);
+const createWebRuntime = (context: Parameters<ServerRuntimeRegistration['factory']>[0]) => {
+  if (!context.userId) throw new Error('userId is required for Browser runtime execution');
+  if (!context.topicId) throw new Error('topicId is required for Browser runtime execution');
+
+  const sessionId = `topic:${context.topicId}`;
+  const call = (path: string, args: object = {}) =>
+    fetchBrowser(path, sessionId, context.userId!, args);
+  const service: BrowserRuntimeService = {
+    back: () => call('/back'),
+    cancelTask: (args) => call('/cancel-task', args),
+    click: (args) => call('/click', args),
+    evaluate: (args) => call('/evaluate', args),
+    executePlan: (args) => call('/execute-plan', args),
+    fill: (args) => call('/fill', args),
+    forward: () => call('/forward'),
+    hover: (args) => call('/hover', args),
+    inspect: () => call('/inspect'),
+    interrupt: (args) => call('/interrupt', args),
+    navigate: (args) => call('/navigate', args),
+    press: (args) => call('/press', args),
+    readPage: () => call('/read-page'),
+    screenshot: () => call('/screenshot'),
+    scroll: (args) => call('/scroll', args),
+    snapshot: () => call('/snapshot'),
+    submit: (args) => call('/submit', args),
+  };
+  return new BrowserExecutionRuntime(service, sessionId);
+};
+
+const createDeviceRuntime = (context: Parameters<ServerRuntimeRegistration['factory']>[0]) => {
+  if (!context.userId || !context.activeDeviceId || !context.agentId || !context.topicId) {
+    throw new Error('Browser device proxy requires userId, activeDeviceId, agentId, and topicId');
   }
 
-  return res.json();
+  let workspaceIdPromise: Promise<string | undefined> | undefined;
+  const proxy: Record<string, (args: any) => Promise<any>> = {};
+  for (const api of BrowserManifest.api) {
+    proxy[api.name] = async (args: any = {}) =>
+      deviceGateway.executeToolCall(
+        {
+          deviceId: context.activeDeviceId!,
+          operationId: context.operationId,
+          userId: context.userId!,
+          workspaceId: await (workspaceIdPromise ??= resolveRunWorkspaceId(context)),
+        },
+        {
+          apiName: api.name,
+          arguments: JSON.stringify({
+            ...args,
+            __agentId: context.agentId,
+            __topicId: context.topicId,
+          }),
+          identifier: BrowserIdentifier,
+        },
+        context.executionTimeoutMs,
+      );
+  }
+  return proxy;
 };
 
 export const browserRuntime: ServerRuntimeRegistration = {
-  factory: (context) => {
-    if (!context.userId) {
-      throw new Error('userId is required for Browser runtime execution');
-    }
-
-    const sessionId = context.topicId || context.operationId || 'default';
-    const ownerId = context.userId;
-
-    const service: BrowserRuntimeService = {
-      back: async () => {
-        return fetchBrowser('/back', sessionId, ownerId, {}) as Promise<BrowserState>;
-      },
-      cancelTask: async (args) => {
-        return fetchBrowser('/cancel-task', sessionId, ownerId, args) as Promise<BrowserState>;
-      },
-      click: async (args) => {
-        return fetchBrowser('/click', sessionId, ownerId, args) as Promise<BrowserState>;
-      },
-      evaluate: async (args) => {
-        return fetchBrowser('/evaluate', sessionId, ownerId, args) as Promise<BrowserState>;
-      },
-      executePlan: async (args) => {
-        return fetchBrowser('/execute-plan', sessionId, ownerId, args) as Promise<BrowserState>;
-      },
-      fill: async (args) => {
-        return fetchBrowser('/fill', sessionId, ownerId, args) as Promise<BrowserState>;
-      },
-      forward: async () => {
-        return fetchBrowser('/forward', sessionId, ownerId, {}) as Promise<BrowserState>;
-      },
-      hover: async (args) => {
-        return fetchBrowser('/hover', sessionId, ownerId, args) as Promise<BrowserState>;
-      },
-      inspect: async () => {
-        return fetchBrowser('/inspect', sessionId, ownerId, {}) as Promise<BrowserState>;
-      },
-      interrupt: async (args) => {
-        return fetchBrowser('/interrupt', sessionId, ownerId, args) as Promise<BrowserState>;
-      },
-      navigate: async (args) => {
-        return fetchBrowser('/navigate', sessionId, ownerId, args) as Promise<BrowserState>;
-      },
-      screenshot: async () => {
-        return fetchBrowser('/screenshot', sessionId, ownerId, {}) as Promise<BrowserState>;
-      },
-      scroll: async (args) => {
-        return fetchBrowser('/scroll', sessionId, ownerId, args) as Promise<BrowserState>;
-      },
-      submit: async (args) => {
-        return fetchBrowser('/submit', sessionId, ownerId, args) as Promise<BrowserState>;
-      },
-    };
-
-    return new BrowserExecutionRuntime(service, sessionId);
-  },
+  factory: (context) =>
+    context.activeDeviceId ? createDeviceRuntime(context) : createWebRuntime(context),
   identifier: BrowserIdentifier,
 };

@@ -12,8 +12,11 @@ export const BrowserApiName = {
   interrupt: 'interrupt',
   inspect: 'inspect',
   navigate: 'navigate',
+  press: 'press',
+  readPage: 'readPage',
   screenshot: 'screenshot',
   scroll: 'scroll',
+  snapshot: 'snapshot',
   submit: 'submit',
 } as const;
 
@@ -26,12 +29,17 @@ export interface NavigateParams {
 }
 
 export interface ClickParams {
-  selector: string;
+  ref?: string;
+  selector?: string;
   timeout?: number;
+  x?: number;
+  y?: number;
 }
 
 export interface FillParams {
-  selector: string;
+  ref?: string;
+  selector?: string;
+  submit?: boolean;
   text: string;
   timeout?: number;
 }
@@ -68,8 +76,39 @@ export interface CancelTaskParams {
 }
 
 export interface ScrollParams {
+  dx?: number;
+  dy?: number;
   x?: number;
   y?: number;
+}
+
+export interface PressParams {
+  key: string;
+}
+
+export type BrowserNavigateArgs = NavigateParams;
+export type BrowserClickArgs = ClickParams;
+export type BrowserFillArgs = FillParams;
+export type BrowserPressArgs = PressParams;
+export type BrowserScrollArgs = ScrollParams;
+
+export interface BrowserNavigateState extends BrowserPageState {}
+
+export interface BrowserSnapshotState extends BrowserPageState {
+  snapshot: string;
+}
+
+export interface BrowserClickState extends BrowserPageState {}
+
+export interface BrowserScreenshotState {
+  dataUrl?: string;
+  height?: number;
+  screenshot?: string;
+  width?: number;
+}
+
+export interface BrowserReadPageState extends BrowserPageState {
+  content: string;
 }
 
 export interface EvaluateParams {
@@ -89,8 +128,11 @@ export interface BrowserActionEvent {
     | 'interrupt'
     | 'inspect'
     | 'navigate'
+    | 'press'
+    | 'readPage'
     | 'screenshot'
     | 'scroll'
+    | 'snapshot'
     | 'submit';
   id: string;
   status: 'blocked' | 'error' | 'start' | 'success';

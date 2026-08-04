@@ -105,7 +105,12 @@ describe('extractActivatedToolIdsFromMessages', () => {
   it('extracts and deduplicates tools from flat activator results', () => {
     const messages = [
       createToolMessage({
-        plugin: { apiName: 'activateTools', arguments: '{}', identifier: 'lobe-activator' },
+        plugin: {
+          apiName: 'activateTools',
+          arguments: '{}',
+          identifier: 'lobe-activator',
+          type: 'default',
+        },
         pluginState: {
           activatedTools: [{ identifier: 'lobe-browser' }, { identifier: 'lobe-browser' }],
         },

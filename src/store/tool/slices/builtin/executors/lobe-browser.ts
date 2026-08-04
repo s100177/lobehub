@@ -51,8 +51,11 @@ const createBrowserRuntimeService = (
   interrupt: (args) => callBrowserAction(sessionId, BrowserApiName.interrupt, args, signal),
   inspect: () => callBrowserAction(sessionId, BrowserApiName.inspect, undefined, signal),
   navigate: (args) => callBrowserAction(sessionId, BrowserApiName.navigate, args, signal),
+  press: (args) => callBrowserAction(sessionId, BrowserApiName.press, args, signal),
+  readPage: () => callBrowserAction(sessionId, BrowserApiName.readPage, undefined, signal),
   screenshot: () => callBrowserAction(sessionId, BrowserApiName.screenshot, undefined, signal),
   scroll: (args) => callBrowserAction(sessionId, BrowserApiName.scroll, args, signal),
+  snapshot: () => callBrowserAction(sessionId, BrowserApiName.snapshot, undefined, signal),
   submit: (args) => callBrowserAction(sessionId, BrowserApiName.submit, args, signal),
 });
 
@@ -74,12 +77,12 @@ class BrowserExecutor extends BaseExecutor<typeof BrowserApiName> {
   ): Promise<BuiltinToolResult> => this.runtime(ctx).navigate(params);
 
   click = async (
-    params: { selector: string; timeout?: number },
+    params: { ref?: string; selector?: string; timeout?: number; x?: number; y?: number },
     ctx?: BuiltinToolContext,
   ): Promise<BuiltinToolResult> => this.runtime(ctx).click(params);
 
   fill = async (
-    params: { selector: string; text: string; timeout?: number },
+    params: { ref?: string; selector?: string; submit?: boolean; text: string; timeout?: number },
     ctx?: BuiltinToolContext,
   ): Promise<BuiltinToolResult> => this.runtime(ctx).fill(params);
 
@@ -89,7 +92,7 @@ class BrowserExecutor extends BaseExecutor<typeof BrowserApiName> {
   ): Promise<BuiltinToolResult> => this.runtime(ctx).hover(params);
 
   scroll = async (
-    params: { x?: number; y?: number },
+    params: { dx?: number; dy?: number },
     ctx?: BuiltinToolContext,
   ): Promise<BuiltinToolResult> => this.runtime(ctx).scroll(params);
 
@@ -100,6 +103,15 @@ class BrowserExecutor extends BaseExecutor<typeof BrowserApiName> {
 
   screenshot = async (_params: unknown, ctx?: BuiltinToolContext): Promise<BuiltinToolResult> =>
     this.runtime(ctx).screenshot();
+
+  snapshot = async (_params: unknown, ctx?: BuiltinToolContext): Promise<BuiltinToolResult> =>
+    this.runtime(ctx).snapshot();
+
+  press = async (params: { key: string }, ctx?: BuiltinToolContext): Promise<BuiltinToolResult> =>
+    this.runtime(ctx).press(params);
+
+  readPage = async (_params: unknown, ctx?: BuiltinToolContext): Promise<BuiltinToolResult> =>
+    this.runtime(ctx).readPage();
 
   evaluate = async (
     params: { code: string },

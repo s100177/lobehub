@@ -99,7 +99,8 @@ export const setOpenAIChatCompletionUsageMissingDiagnostics = (
 export interface StreamProtocolChunk {
   data: any;
   id?: string;
-  type: // pure text
+  type:
+    // pure text
     | 'text'
     // base64 format image
     | 'base64_image'
@@ -355,7 +356,7 @@ export const convertIterableToStream = <T>(
 
   // copy from https://github.com/vercel/ai/blob/d3aa5486529e3d1a38b30e3972b4f4c63ea4ae9a/packages/ai/streams/ai-stream.ts#L284
   // and add an error handle
-  const it = iterable[Symbol.asyncIterator]();
+  const it: AsyncIterator<T> = iterable[Symbol.asyncIterator]();
 
   return new ReadableStream<T>({
     async cancel(reason) {
@@ -464,6 +465,7 @@ export function createCallbacksTransformer(
   const textEncoder = new TextEncoder();
   let aggregatedText = '';
   let aggregatedThinking: string | undefined = undefined;
+  let reasoningSignature: string | undefined;
   let usage: ModelUsage | undefined;
   let speed: ModelPerformance | undefined;
   let grounding: any;
@@ -488,6 +490,12 @@ export function createCallbacksTransformer(
         toolsCalling,
         usage,
       };
+      if (aggregatedThinking || reasoningSignature) {
+        data.reasoning = {
+          content: aggregatedThinking,
+          signature: reasoningSignature,
+        };
+      }
       const usageMissingDiagnostics = usage
         ? undefined
         : options?.streamStack?.usageMissingDiagnostics;
@@ -543,6 +551,11 @@ export function createCallbacksTransformer(
 
             aggregatedThinking += data;
             await callbacks.onThinking?.(data);
+            break;
+          }
+
+          case 'reasoning_signature': {
+            reasoningSignature = data;
             break;
           }
 

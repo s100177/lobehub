@@ -13,7 +13,7 @@ export const BROWSER_BRIDGE_VERSION = 1;
 export const BROWSER_BRIDGE_DOCUMENT_ATTRIBUTE = 'data-lobe-browser-bridge';
 
 export type BrowserBridgeAction =
-  'back' | 'click' | 'fill' | 'forward' | 'hover' | 'inspect' | 'scroll' | 'submit';
+  'back' | 'click' | 'fill' | 'forward' | 'hover' | 'inspect' | 'press' | 'scroll' | 'submit';
 
 export interface BrowserBridgeCommand {
   action: BrowserBridgeAction;
@@ -357,8 +357,20 @@ const runCommand = async (command: BrowserBridgeCommand): Promise<BrowserState> 
     return inspectAfterPotentialNavigation();
   }
   if (action === 'scroll') {
-    window.scrollBy(Number(params.x) || 0, Number(params.y) || 0);
+    window.scrollBy(Number(params.dx ?? params.x) || 0, Number(params.dy ?? params.y) || 0);
     return inspect();
+  }
+  if (action === 'press') {
+    const key = String(params.key || '');
+    const target =
+      document.activeElement instanceof HTMLElement ? document.activeElement : document.body;
+    target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key }));
+    target.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key }));
+    if (key === 'Enter') {
+      const form = target.closest('form');
+      if (form instanceof HTMLFormElement) form.requestSubmit();
+    }
+    return inspectAfterPotentialNavigation();
   }
 
   const element = requireElement(params.selector);
@@ -433,7 +445,17 @@ export const installBrowserBridge = (options: BrowserBridgeOptions = {}) => {
   );
   const sendReady = () =>
     send({
-      capabilities: ['click', 'fill', 'hover', 'submit', 'scroll', 'inspect', 'back', 'forward'],
+      capabilities: [
+        'click',
+        'fill',
+        'hover',
+        'submit',
+        'press',
+        'scroll',
+        'inspect',
+        'back',
+        'forward',
+      ],
       title: document.title,
       type: 'ready',
       url: window.location.href,

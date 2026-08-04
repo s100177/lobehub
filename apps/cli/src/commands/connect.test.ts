@@ -1,5 +1,22 @@
+import { GatewayClient } from '@lobechat/device-gateway-client';
 import { Command } from 'commander';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { resolveToken } from '../auth/resolveToken';
+import { removeStatus, spawnDaemon, stopDaemon, writeStatus } from '../daemon/manager';
+import type * as DeviceRegister from '../device/register';
+import { loadSettings, saveSettings } from '../settings';
+import { executeToolCall } from '../tools';
+import { cleanupAllProcesses } from '../tools/shell';
+import { log, setVerbose } from '../utils/logger';
+import { registerConnectCommand } from './connect';
+
+const registerDeviceMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
+vi.mock('../device/register', async (importOriginal) => {
+  const actual = await importOriginal<typeof DeviceRegister>();
+  return { ...actual, registerDevice: registerDeviceMock };
+});
 
 vi.mock('../auth/refresh', () => ({
   getValidToken: vi.fn().mockResolvedValue({
@@ -15,9 +32,13 @@ vi.mock('../auth/resolveToken', () => ({
   }),
 }));
 vi.mock('../settings', () => ({
+  addWorkspaceEnrollment: vi.fn(),
   loadOrCreateConnectionId: vi.fn().mockReturnValue('test-connection-id'),
   loadSettings: vi.fn().mockReturnValue(null),
+  // Default: no persisted workspace shares, so runConnect skips the restore path.
+  loadWorkspaceEnrollments: vi.fn().mockReturnValue([]),
   normalizeUrl: vi.fn((url?: string) => (url ? url.replace(/\/$/, '') : undefined)),
+  removeWorkspaceEnrollment: vi.fn(),
   saveSettings: vi.fn(),
 }));
 
@@ -35,23 +56,6 @@ vi.mock('../utils/logger', () => ({
 
 vi.mock('../tools/shell', () => ({
   cleanupAllProcesses: vi.fn(),
-}));
-
-vi.mock('../device/register', () => ({
-  mintWorkspaceConnectToken: vi.fn().mockResolvedValue({
-    token: 'workspace-token',
-    workspaceId: 'test-workspace',
-  }),
-  registerDevice: vi.fn().mockResolvedValue(undefined),
-  registerWorkspaceDevice: vi.fn().mockResolvedValue(undefined),
-  resolveDeviceIdentity: vi.fn().mockReturnValue({
-    deviceId: 'mock-device-id',
-    identitySource: 'fallback',
-  }),
-  resolveWorkspaceDeviceIdentity: vi.fn().mockReturnValue({
-    deviceId: 'mock-workspace-device-id',
-    identitySource: 'fallback',
-  }),
 }));
 
 let mockRunningPid: number | null = null;
@@ -117,24 +121,6 @@ vi.mock('@lobechat/device-gateway-client', () => ({
     };
   }),
 }));
-
-// eslint-disable-next-line import-x/first
-import { GatewayClient } from '@lobechat/device-gateway-client';
-
-// eslint-disable-next-line import-x/first
-import { resolveToken } from '../auth/resolveToken';
-// eslint-disable-next-line import-x/first
-import { removeStatus, spawnDaemon, stopDaemon, writeStatus } from '../daemon/manager';
-// eslint-disable-next-line import-x/first
-import { loadSettings, saveSettings } from '../settings';
-// eslint-disable-next-line import-x/first
-import { executeToolCall } from '../tools';
-// eslint-disable-next-line import-x/first
-import { cleanupAllProcesses } from '../tools/shell';
-// eslint-disable-next-line import-x/first
-import { log, setVerbose } from '../utils/logger';
-// eslint-disable-next-line import-x/first
-import { registerConnectCommand } from './connect';
 
 describe('connect command', () => {
   let exitSpy: ReturnType<typeof vi.spyOn>;
@@ -246,7 +232,7 @@ describe('connect command', () => {
     expect(executeToolCall).toHaveBeenCalledWith('readLocalFile', '{"path":"/test"}', undefined);
     expect(lastSentToolResponse).toEqual({
       requestId: 'req-1',
-      result: { content: 'tool result', error: undefined, state: undefined, success: true },
+      result: { content: 'tool result', error: undefined, success: true },
     });
   });
 
@@ -297,21 +283,23 @@ describe('connect command', () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it('should refresh and reconnect when auth expires', async () => {
+  it('should refresh token on auth_expired', async () => {
     const program = createProgram();
     await program.parseAsync(['node', 'test', 'connect']);
 
     vi.mocked(resolveToken).mockResolvedValueOnce({
       serverUrl: 'https://app.lobehub.com',
-      token: 'new-tok',
+      token: 'new-token',
       tokenType: 'jwt',
       userId: 'user',
     });
 
+    const mockClient = vi.mocked(GatewayClient).mock.results[0].value;
+
     await clientEventHandlers['auth_expired']?.();
 
-    const mockClient = vi.mocked(GatewayClient).mock.results[0].value;
-    expect(mockClient.updateToken).toHaveBeenCalledWith('new-tok');
+    expect(log.info).toHaveBeenCalledWith(expect.stringContaining('Token refreshed'));
+    expect(mockClient.updateToken).toHaveBeenCalledWith('new-token');
     expect(mockClient.reconnect).toHaveBeenCalled();
     expect(cleanupAllProcesses).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();

@@ -60,7 +60,7 @@ describe('browserRuntime', () => {
         headers: expect.objectContaining({
           'Content-Type': 'application/json',
           'X-Browser-Owner-ID': 'user-1',
-          'X-Session-ID': 'topic-1',
+          'X-Session-ID': 'topic:topic-1',
         }),
         method: 'POST',
       }),

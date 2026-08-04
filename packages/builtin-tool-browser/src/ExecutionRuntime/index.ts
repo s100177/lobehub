@@ -4,18 +4,22 @@ import {
   type BrowserActionEvent,
   type BrowserState,
   type CancelTaskParams,
+  type ClickParams,
   type ExecutePlanParams,
+  type FillParams,
   type HoverParams,
   type InterruptParams,
+  type PressParams,
+  type ScrollParams,
 } from '../types';
 
 export interface BrowserRuntimeService {
   back: () => Promise<BrowserState>;
   cancelTask: (args: CancelTaskParams) => Promise<BrowserState>;
-  click: (args: { selector: string; timeout?: number }) => Promise<BrowserState>;
+  click: (args: ClickParams) => Promise<BrowserState>;
   evaluate: (args: { code: string }) => Promise<BrowserState>;
   executePlan: (args: ExecutePlanParams) => Promise<BrowserState>;
-  fill: (args: { selector: string; text: string; timeout?: number }) => Promise<BrowserState>;
+  fill: (args: FillParams) => Promise<BrowserState>;
   forward: () => Promise<BrowserState>;
   hover: (args: HoverParams) => Promise<BrowserState>;
   inspect: () => Promise<BrowserState>;
@@ -25,8 +29,11 @@ export interface BrowserRuntimeService {
     timeout?: number;
     url: string;
   }) => Promise<BrowserState>;
+  press: (args: PressParams) => Promise<BrowserState>;
+  readPage: () => Promise<BrowserState & { content?: string }>;
   screenshot: () => Promise<BrowserState>;
-  scroll: (args: { x?: number; y?: number }) => Promise<BrowserState>;
+  scroll: (args: ScrollParams) => Promise<BrowserState>;
+  snapshot: () => Promise<BrowserState & { snapshot?: string }>;
   submit: (args: { selector: string; timeout?: number }) => Promise<BrowserState>;
 }
 
@@ -91,56 +98,54 @@ export class BrowserExecutionRuntime {
     }
   }
 
-  async click(args: { selector: string; timeout?: number }): Promise<BuiltinServerRuntimeOutput> {
+  async click(args: ClickParams): Promise<BuiltinServerRuntimeOutput> {
+    const target = args.ref || args.selector || `${args.x},${args.y}`;
     try {
       const state = await this.service.click(args);
       if (state.blocked && state.riskBlock) {
         return {
-          content: `Blocked risky click "${args.selector}": ${state.riskBlock.reason}`,
+          content: `Blocked risky click "${target}": ${state.riskBlock.reason}`,
           state: this.withEvent(
             state,
-            this.createEvent('click', 'blocked', state.riskBlock.reason, args.selector),
+            this.createEvent('click', 'blocked', state.riskBlock.reason, target),
           ),
           success: false,
         };
       }
 
       return {
-        content: `Clicked element "${args.selector}"`,
+        content: `Clicked element "${target}"`,
         state: this.withEvent(
           state,
-          this.createEvent('click', 'success', `Clicked ${args.selector}`, args.selector),
+          this.createEvent('click', 'success', `Clicked ${target}`, target),
         ),
         success: true,
       };
     } catch (error) {
       return {
-        content: `Failed to click "${args.selector}": ${error instanceof Error ? error.message : String(error)}`,
+        content: `Failed to click "${target}": ${error instanceof Error ? error.message : String(error)}`,
         error,
         success: false,
       };
     }
   }
 
-  async fill(args: {
-    selector: string;
-    text: string;
-    timeout?: number;
-  }): Promise<BuiltinServerRuntimeOutput> {
+  async fill(args: FillParams): Promise<BuiltinServerRuntimeOutput> {
     try {
       const state = await this.service.fill(args);
+      const target = args.ref || args.selector || 'field';
 
       return {
-        content: `Filled field "${args.selector}" with "${args.text}"`,
+        content: `Filled field "${target}"${args.submit ? ' and pressed Enter' : ''}`,
         state: this.withEvent(
           state,
-          this.createEvent('fill', 'success', `Filled ${args.selector}`, args.selector),
+          this.createEvent('fill', 'success', `Filled ${target}`, target),
         ),
         success: true,
       };
     } catch (error) {
       return {
-        content: `Failed to fill "${args.selector}": ${error instanceof Error ? error.message : String(error)}`,
+        content: `Failed to fill "${args.ref || args.selector || 'field'}": ${error instanceof Error ? error.message : String(error)}`,
         error,
         success: false,
       };
@@ -168,15 +173,19 @@ export class BrowserExecutionRuntime {
     }
   }
 
-  async scroll(args: { x?: number; y?: number }): Promise<BuiltinServerRuntimeOutput> {
+  async scroll(args: ScrollParams): Promise<BuiltinServerRuntimeOutput> {
     try {
       const state = await this.service.scroll(args);
 
       return {
-        content: `Scrolled to x=${args.x ?? 0}, y=${args.y ?? 0}`,
+        content: `Scrolled by dx=${args.dx ?? args.x ?? 0}, dy=${args.dy ?? args.y ?? 0}`,
         state: this.withEvent(
           state,
-          this.createEvent('scroll', 'success', `Scrolled to x=${args.x ?? 0}, y=${args.y ?? 0}`),
+          this.createEvent(
+            'scroll',
+            'success',
+            `Scrolled by dx=${args.dx ?? args.x ?? 0}, dy=${args.dy ?? args.y ?? 0}`,
+          ),
         ),
         success: true,
       };
@@ -319,6 +328,65 @@ export class BrowserExecutionRuntime {
     } catch (error) {
       return {
         content: `Failed to take screenshot: ${error instanceof Error ? error.message : String(error)}`,
+        error,
+        success: false,
+      };
+    }
+  }
+
+  async snapshot(): Promise<BuiltinServerRuntimeOutput> {
+    try {
+      const state = await this.service.snapshot();
+      const snapshot = typeof state.snapshot === 'string' ? state.snapshot : '';
+      return {
+        content: `Page: ${state.title ?? ''} (${state.url ?? ''})\n${snapshot}`,
+        state: this.withEvent(
+          state,
+          this.createEvent('snapshot', 'success', `Inspected ${state.url ?? 'blank page'}`),
+        ),
+        success: true,
+      };
+    } catch (error) {
+      return {
+        content: `Failed to snapshot page: ${error instanceof Error ? error.message : String(error)}`,
+        error,
+        success: false,
+      };
+    }
+  }
+
+  async press(args: PressParams): Promise<BuiltinServerRuntimeOutput> {
+    try {
+      const state = await this.service.press(args);
+      return {
+        content: `Pressed ${args.key}.`,
+        state: this.withEvent(state, this.createEvent('press', 'success', `Pressed ${args.key}`)),
+        success: true,
+      };
+    } catch (error) {
+      return {
+        content: `Failed to press ${args.key}: ${error instanceof Error ? error.message : String(error)}`,
+        error,
+        success: false,
+      };
+    }
+  }
+
+  async readPage(): Promise<BuiltinServerRuntimeOutput> {
+    try {
+      const state = await this.service.readPage();
+      const content = typeof state.content === 'string' ? state.content : '';
+      return {
+        content: `Page: ${state.title ?? ''} (${state.url ?? ''})\n${content}`,
+        state: this.withEvent(
+          state,
+          this.createEvent('readPage', 'success', `Read ${state.url ?? 'blank page'}`),
+        ),
+        success: true,
+      };
+    } catch (error) {
+      return {
+        content: `Failed to read page: ${error instanceof Error ? error.message : String(error)}`,
         error,
         success: false,
       };
