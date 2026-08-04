@@ -52,13 +52,10 @@ const AgentBuilderProvider = memo<AgentBuilderProviderProps>(
     );
 
     // Get messages from ChatStore based on context
-    const chatKey = useMemo(
-      () => (context ? messageMapKey(context) : null),
-      [context?.agentId, context?.topicId],
-    );
+    const chatKey = useMemo(() => messageMapKey(context), [context]);
 
     const replaceMessages = useChatStore((s) => s.replaceMessages);
-    const messages = useChatStore((s) => (chatKey ? s.dbMessagesMap[chatKey] : undefined));
+    const messages = useChatStore((s) => s.dbMessagesMap[chatKey]);
 
     // Get operation state for reactive updates
     const operationState = useOperationState(context);

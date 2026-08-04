@@ -116,11 +116,8 @@ export class PlanExecutionRuntime {
     params: CreateTodosParams,
     context: PlanRuntimeContext,
   ): Promise<BuiltinToolResult> => {
-    const itemsToAdd: TodoItem[] = params.items
-      ? params.items
-      : params.adds
-        ? params.adds.map((text) => ({ status: 'todo' as const, text }))
-        : [];
+    const itemsToAdd: TodoItem[] =
+      params.items ?? params.adds?.map((text) => ({ status: 'todo' as const, text })) ?? [];
 
     if (itemsToAdd.length === 0) {
       return { content: 'No items provided to add.', success: false };
