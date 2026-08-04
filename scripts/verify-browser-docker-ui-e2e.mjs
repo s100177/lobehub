@@ -76,6 +76,11 @@ async function login(page) {
   await emailInput.fill(testUser.email);
   await page.locator('form button').first().click();
 
+  const agreementButton = page.getByRole('button', { name: 'Agree and continue' });
+  if (await agreementButton.isVisible().catch(() => false)) {
+    await agreementButton.click();
+  }
+
   const passwordInput = page
     .locator('input[id="password"], input[name="password"], input[type="password"]')
     .first();
@@ -109,24 +114,14 @@ async function main() {
     await page.getByText('Browser Docker UI E2E').waitFor({ timeout: 30_000 });
     await page.getByText('Remote', { exact: true }).first().waitFor({ timeout: 30_000 });
     await page.getByText('/browser-e2e/fixture').first().waitFor({ timeout: 30_000 });
-    await page.locator('[aria-label="Browser suggested tasks"]').waitFor({ timeout: 30_000 });
-    await page.locator('[aria-label="Browser authorization card"]').waitFor({ timeout: 30_000 });
-    await page.locator('[aria-label="Browser agent plan"]').waitFor({ timeout: 30_000 });
-    await page.getByText('配置一套合适方案，但停在下单前').waitFor({ timeout: 30_000 });
-    await page.getByText('立即购买').first().waitFor({ timeout: 30_000 });
 
     const iframe = page.locator('iframe[src^="/api/browser/proxy?session="]').first();
     await expectFrameLoaded(iframe);
+    await expectRemoteViewerLive(iframe);
 
-    await page.getByRole('button', { name: /配置一套合适方案，但停在下单前/ }).click();
-    await page.getByRole('button', { name: '帮我操作' }).click();
-    await page.getByText('Task State: risk_blocked').waitFor({ timeout: 30_000 });
-    await page.locator('[aria-label="Browser risk block card"]').waitFor({ timeout: 30_000 });
-    await page.locator('[aria-label="Browser audit timeline"]').waitFor({ timeout: 30_000 });
-    await page
-      .locator('[aria-label="Browser audit timeline"]')
-      .getByText(/Execution stopped before risky step/)
-      .waitFor({ timeout: 30_000 });
+    assert.equal(await page.locator('[aria-label="Browser suggested tasks"]').count(), 0);
+    assert.equal(await page.locator('[aria-label="Browser authorization card"]').count(), 0);
+    assert.equal(await page.locator('[aria-label="Browser agent plan"]').count(), 0);
 
     assert.equal(errors.length, 0, `Unexpected browser errors: ${errors.join('\n')}`);
   } finally {
@@ -140,6 +135,27 @@ async function expectFrameLoaded(iframe) {
   await iframe.waitFor({ state: 'attached', timeout: 30_000 });
   const src = await iframe.getAttribute('src');
   assert(src?.includes('/api/browser/proxy?session='), `Expected browser proxy iframe, got ${src}`);
+}
+
+async function expectRemoteViewerLive(iframe) {
+  const frame = iframe.contentFrame();
+  const canvas = frame.locator('canvas[aria-label="Interactive remote browser"]');
+
+  await frame.getByText('live', { exact: true }).waitFor({ timeout: 30_000 });
+  await canvas.waitFor({ state: 'visible', timeout: 30_000 });
+  await canvas.evaluate(async (element) => {
+    const canvas = element;
+    const deadline = Date.now() + 30_000;
+
+    while (Date.now() < deadline) {
+      const context = canvas.getContext('2d');
+      const pixels = context?.getImageData(0, 0, canvas.width, canvas.height).data;
+      if (pixels?.some((value, index) => index % 4 !== 3 && value !== 0)) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    throw new Error('Remote viewer did not render a nonblank browser frame');
+  });
 }
 
 await main();
